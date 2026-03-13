@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Favorites Central",
+  "version": "1.0",
+  "permissions": ["storage", "activeTab", "tabs"],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ],
+  "commands": {
+    "capture-video": {
+      "suggested_key": { "default": "Ctrl+Shift+S" },
+      "description": "Capture video source URL under mouse"
+    }
+  },
+  "action": {
+    "default_title": "View Saved Videos"
+  }
+}
