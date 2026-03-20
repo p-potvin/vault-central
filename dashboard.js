@@ -289,15 +289,55 @@ const closeModalBtn = document.getElementById("closeModal");
 
 function openModal(rawUrl, embedUrl) {
   modalBody.innerHTML = "";
+  videoModal.classList.add("active");
+
   if (embedUrl) {
     modalBody.innerHTML = `<iframe src="${embedUrl}" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
   } else if (rawUrl.match(/\.(mp4|webm|ogg)$/i)) {
     modalBody.innerHTML = `<video src="${rawUrl}" controls autoplay></video>`;
   } else {
-    window.open(rawUrl, "_blank");
-    return;
+    // Attempt to fetch the URL and extract the raw video source to play it natively!
+    // Often proxying via hidden iframe or direct text scrape.
+    modalBody.innerHTML = `<div style="display:flex; height:100%; align-items:center; justify-content:center; color:white; font-family:sans-serif;">Extracting video source...</div>`;
+    
+    fetch(rawUrl)
+      .then(res => res.text())
+      .then(html => {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+        
+        let videoSrc = "";
+        
+        // 1. Try og:video meta tags
+        const ogMeta = doc.querySelector('meta[property="og:video"], meta[property="og:video:url"], meta[name="twitter:player:stream"]');
+        if (ogMeta && ogMeta.content && ogMeta.content.match(/\.(mp4|webm|ogg)/i)) {
+             videoSrc = ogMeta.content;
+        }
+        
+        // 2. Try looking for native <video> tags
+        if (!videoSrc) {
+            const videoTag = doc.querySelector("video source, video");
+            if (videoTag) {
+                videoSrc = videoTag.src || videoTag.currentSrc || videoTag.getAttribute("src");
+                // Resolve relative URLs using standard URL constructor
+                if (videoSrc) {
+                    try { videoSrc = new URL(videoSrc, rawUrl).href; } catch(e){}
+                }
+            }
+        }
+        
+        if (videoSrc) {
+            modalBody.innerHTML = `<video src="${videoSrc}" controls autoplay></video>`;
+        } else {
+            // Unsuccessful extraction: Fall back to just loading the page inside an iframe
+            modalBody.innerHTML = `<iframe src="${rawUrl}" allow="autoplay; fullscreen" allowfullscreen sandbox="allow-same-origin allow-scripts allow-popups allow-forms"></iframe>`;
+        }
+      })
+      .catch(e => {
+        // Fallback to iframe if fetch fails (e.g., cross-origin issues before manifest reload)
+        modalBody.innerHTML = `<iframe src="${rawUrl}" allow="autoplay; fullscreen" allowfullscreen sandbox="allow-same-origin allow-scripts allow-popups allow-forms"></iframe>`;
+      });
   }
-  videoModal.classList.add("active");
 }
 
 function closeVideoModal() {
@@ -327,10 +367,11 @@ document.addEventListener("click", async (e) => {
   const card = e.target.closest(".card");
   if (card) {
     const url = card.dataset.url;
+    const type = card.dataset.type;
     
-    // Attempt standard embed overlay based on URL
+    // If it's tagged as a video or we can parse a direct embed, intercept it
     const embedUrl = getEmbedUrl(url);
-    if (embedUrl || (url && url.match(/\.(mp4|webm|ogg)$/i))) {
+    if (type === "video" || embedUrl || (url && url.match(/\.(mp4|webm|ogg)$/i))) {
         e.preventDefault();
         openModal(url, embedUrl);
     }
