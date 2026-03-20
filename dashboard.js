@@ -202,9 +202,12 @@ function render() {
         // Keep a ref on dataset for modal parsing
         card.dataset.url = vid.url;
         card.dataset.type = typeBadge;
+          if (vid.rawVideoSrc) {
+              card.dataset.rawsrc = vid.rawVideoSrc;
+          }
 
-        card.innerHTML = `
-          <button data-index="${vid.originalIndex}" class="delete" title="Delete">
+          card.innerHTML = `
+            <button data-index="${vid.originalIndex}" class="delete" title="Delete">
             <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
           </button>
           <div class="thumb-wrapper">
@@ -287,15 +290,26 @@ const videoModal = document.getElementById("videoModal");
 const modalBody = document.getElementById("modalBody");
 const closeModalBtn = document.getElementById("closeModal");
 
-function openModal(rawUrl, embedUrl) {
+function openModal(rawUrl, embedUrl, rawVideoSrc) {
   modalBody.innerHTML = "";
   videoModal.classList.add("active");
 
+  // 1. If we recorded the hot .mp4 source at the exact moment of liking, play it instantly!
+  if (rawVideoSrc) {
+      modalBody.innerHTML = `<video src="${rawVideoSrc}" controls autoplay></video>`;
+      return;
+  }
+
+  // 2. Play standard known embeds
   if (embedUrl) {
     modalBody.innerHTML = `<iframe src="${embedUrl}" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
-  } else if (rawUrl.match(/\.(mp4|webm|ogg)$/i)) {
+  } 
+  // 3. Play direct links
+  else if (rawUrl.match(/\.(mp4|webm|ogg|m3u8)$/i)) {
     modalBody.innerHTML = `<video src="${rawUrl}" controls autoplay></video>`;
-  } else {
+  } 
+  // 4. Try guessing fallback via background fetch
+  else {
     // Attempt to fetch the URL via the background script to bypass CORS restrictions
     modalBody.innerHTML = `<div style="display:flex; height:100%; align-items:center; justify-content:center; color:white; font-family:sans-serif;">Extracting video source...</div>`;
     
@@ -366,12 +380,13 @@ document.addEventListener("click", async (e) => {
   if (card) {
     const url = card.dataset.url;
     const type = card.dataset.type;
+    const rawVideoSrc = card.dataset.rawsrc; // Read the recorded source if available
     
     // If it's tagged as a video or we can parse a direct embed, intercept it
     const embedUrl = getEmbedUrl(url);
-    if (type === "video" || embedUrl || (url && url.match(/\.(mp4|webm|ogg)$/i))) {
+    if (type === "video" || embedUrl || (url && url.match(/\.(mp4|webm|ogg|m3u8)$/i)) || (rawVideoSrc && rawVideoSrc !== "null" && rawVideoSrc !== "undefined")) {
         e.preventDefault();
-        openModal(url, embedUrl);
+        openModal(url, embedUrl, (rawVideoSrc !== "undefined" && rawVideoSrc !== "null") ? rawVideoSrc : null);
     }
   }
 });

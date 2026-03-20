@@ -176,45 +176,71 @@ function extractTitle(el, link) {
 function extractData(el) {
   if (!el) el = document.body;
 
+  let link = el.tagName === "A" ? el : el.closest("a");
   let video = el.tagName === "VIDEO" ? el : el.querySelector("video") || el.closest("video");
   let image = el.tagName === "IMG" ? el : el.querySelector("img") || el.closest("img");
-  let link = el.closest("a");
 
-  let sourceUrl = "";
+  // Aggressively hunt for nearby media if we clicked a blind container overlay
+  if (!video && !image) {
+      let container = el.parentElement;
+      for (let i = 0; i < 3 && container; i++) {
+          if (!video) video = container.querySelector("video");
+          if (!image) image = container.querySelector("img");
+          if (video || image) break;
+          container = container.parentElement;
+      }
+  }
+
+  let sourceUrl = window.location.href;
   let thumb = "";
   let type = "link";
+  let rawVideoSrc = null;
 
-  if (video) {
-    type = "video";
-    let wrappingLink = video.closest("a");
-    if (wrappingLink && wrappingLink.href) {
-      sourceUrl = wrappingLink.href;
-    } else {
-      sourceUrl = window.location.href;
-    }
-    
-    if (video.poster) {
-        thumb = video.poster;
-    } else {
-        let container = video.parentElement;
-        let nearbyImg = container ? container.querySelector("img") : null;
-        if (nearbyImg && nearbyImg.src) {
-            thumb = nearbyImg.src;
-        } else {
-            thumb = captureFrame(video);
-        }
-    }
-  } else if (image) {
-    type = "image";
-    let wrappingLink = image.closest("a");
-    sourceUrl = wrappingLink && wrappingLink.href ? wrappingLink.href : window.location.href;
-    thumb = image.src;
-  } else if (link) {
-    type = "link";
+  // 1. Determine best URL
+  if (link && link.href) {
     sourceUrl = link.href;
-  } else {
-    sourceUrl = window.location.href;
-    type = "link";
+  }
+
+  // 2. Determine best Thumbnail
+  if (image && image.src) {
+      thumb = image.src;
+  } else if (video) {
+      let nearbyImg = video.parentElement ? video.parentElement.querySelector("img") : null;
+      if (nearbyImg && nearbyImg.src) {
+          thumb = nearbyImg.src;
+      } else if (video.poster) {
+          thumb = video.poster;
+      } else {
+          thumb = captureFrame(video);
+      }
+  }
+
+  // 3. Determine Type & Video Source Extraction
+  if (video) {
+      type = "video";
+      
+      // Stop raw extract ONLY if this link is navigating us away to a DIFFERENT page 
+      // (because we want background.js to fetch the real source from that destination page!)
+      let linkIsExternal = link && link.href && link.href.split('#')[0] !== window.location.href.split('#')[0];
+
+      if (!linkIsExternal) {
+          rawVideoSrc = video.src || video.currentSrc;
+          if (rawVideoSrc && rawVideoSrc.startsWith('blob:')) rawVideoSrc = null;
+          if (!rawVideoSrc) {
+              let sourceTag = video.querySelector("source");
+              if (sourceTag) rawVideoSrc = sourceTag.src;
+              if (rawVideoSrc && rawVideoSrc.startsWith('blob:')) rawVideoSrc = null;
+          }
+      } else {
+          // Downgrade to link so background knows to fetch the destination properly
+          type = "link"; 
+      }
+  } else if (image && (!link || link.href === window.location.href)) {
+      type = "image";
+  }
+
+  if (rawVideoSrc && rawVideoSrc.startsWith("/")) {
+      try { rawVideoSrc = new URL(rawVideoSrc, window.location.href).href; } catch(e){}
   }
 
   // Find a smart title
@@ -235,6 +261,7 @@ function extractData(el) {
 
   return {
     url: sourceUrl,
+    rawVideoSrc: rawVideoSrc,
     title: smartTitle,
     thumbnail: thumb,
     timestamp: Date.now(),
