@@ -45,3 +45,27 @@ A simple and lightweight browser extension designed to instantly save your favor
 1. **Capture:** Visit any webpage, hover your mouse cursor over a video or link, and press **Ctrl+Shift+S**.
 2. **View:** Click the "Favorites Central" icon in your browser extension bar to open your dashboard.
 3. **Manage:** In the dashboard, you can browse via thumbnails, click **Open Link** to revisit an item, or press **Delete** to discard it from memory.
+
+## Publishing Privately
+
+If you want to distribute this extension to your devices or a limited group of users without making it publicly searchable on add-on stores, follow these instructions:
+
+### Firefox (Unlisted Extension)
+1. Go to the [Firefox Add-on Developer Hub](https://addons.mozilla.org/developers/).
+2. Click **Submit a New Add-on**.
+3. Select **On your own** (this is the option to keep it private/unlisted, requiring Mozilla signing but not a public listing).
+4. Zip the contents of your `favorites_central` directory (ensure `manifest.json` is at the root of the `.zip` file).
+5. Upload the `.zip` file.
+6. Once it passes automated review, you can download the signed `.xpi` file.
+7. You can now install this `.xpi` file directly in Firefox on any machine.
+
+### Google Chrome (Private Publishing)
+1. Go to the [Chrome Developer Dashboard](https://chrome.google.com/webstore/devconsole).
+2. Pay the one-time $5 developer registration fee if you haven't already.
+3. Click **New Item** and upload a `.zip` file containing your extension.
+4. Fill out the required store listing details (Privacy policy, description, icons).
+5. Under the **Visibility** section in your dashboard, select **Private** or **Unlisted**. 
+   - **Private** means only specific Google accounts you invite can see and install it.
+   - **Unlisted** means anyone with the direct link can install it, but it won't appear in search results.
+6. Submit for review. Once approved, share the link with your allowed users.
+

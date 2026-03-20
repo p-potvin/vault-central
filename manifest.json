@@ -14,7 +14,7 @@
   ],
   "commands": {
     "capture-video": {
-      "suggested_key": { "default": "Ctrl+Shift+S" },
+      "suggested_key": { "default": "Alt+X" },
       "description": "Capture video source URL under mouse"
     }
   },
