@@ -213,9 +213,41 @@ browser.action.onClicked.addListener(() => {
 /**
  * Handle commands (shortcuts)
  */
-browser.commands.onCommand.addListener((command) => {
+browser.commands.onCommand.addListener(async (command) => {
     if (command === "_execute_action") {
         browser.tabs.create({ url: "dashboard.html" });
+    } else if (command === "capture-video") {
+        try {
+            const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+            if (tabs && tabs[0]) {
+                const response = await browser.tabs.sendMessage(tabs[0].id, { action: "get_video_data" });
+                if (response) {
+                    const storage = await browser.storage.local.get("favorites");
+                    const favorites = storage.favorites || [];
+                    const id = Date.now().toString();
+                    
+                    const newFav = {
+                        id,
+                        url: response.url,
+                        title: response.title || "Unknown Title",
+                        thumbnail: response.thumbnail,
+                        videoId: response.videoId,
+                        rawVideoSrc: response.rawVideoSrc,
+                        timestamp: Date.now(),
+                        type: response.type || "link",
+                        duration: response.duration,
+                        views: response.views,
+                        uploaded: response.uploaded,
+                        channel: response.channel
+                    };
+
+                    favorites.push(newFav);
+                    await browser.storage.local.set({ favorites });
+                }
+            }
+        } catch (err) {
+            console.error("[background] Capture command failed:", err);
+        }
     }
 });
 
