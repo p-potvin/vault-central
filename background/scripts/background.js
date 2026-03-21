@@ -222,8 +222,8 @@ browser.commands.onCommand.addListener(async (command) => {
             if (tabs && tabs[0]) {
                 const response = await browser.tabs.sendMessage(tabs[0].id, { action: "get_video_data" });
                 if (response) {
-                    const storage = await browser.storage.local.get("favorites");
-                    const favorites = storage.favorites || [];
+                    const storage = await browser.storage.local.get("savedVideos");
+                    const favorites = storage.savedVideos || [];
                     const id = Date.now().toString();
                     
                     const newFav = {
@@ -242,7 +242,14 @@ browser.commands.onCommand.addListener(async (command) => {
                     };
 
                     favorites.push(newFav);
-                    await browser.storage.local.set({ favorites });
+                    await browser.storage.local.set({ savedVideos: favorites });
+
+                    // Optional: Show a notification to the user
+                    await browser.tabs.sendMessage(tabs[0].id, { 
+                        action: "show_notification", 
+                        type: "success", 
+                        message: "Saved to Favorites!" 
+                    });
                 }
             }
         } catch (err) {
