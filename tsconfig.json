@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "lib": ["ESNext", "DOM", "WebWorker"],
+    "types": ["webextension-polyfill", "chrome", "node"],
+    "jsx": "react-jsx"
+  },
+  "include": ["src/**/*.ts", "background/**/*.ts", "*.ts"]
+}

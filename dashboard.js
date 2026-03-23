@@ -7,7 +7,6 @@ const filterTypeSel = document.getElementById("filterType");
 const sortBySel = document.getElementById("sortBy");
 const sizeSlider = document.getElementById("sizeSlider");
 const themeToggle = document.getElementById("themeToggle");
-
 let state = {
   search: "",
   group: "domain",
@@ -104,14 +103,13 @@ async function init() {
   searchInput.value = state.search;
   groupBySel.value = state.group;
   filterTypeSel.value = state.filter;
-  sortBySel.value = state.sort;
+  sortBySel.value = state.sort;  
   sizeSlider.value = state.size;
   
   // Event listeners
   searchInput.addEventListener("input", e => { state.search = e.target.value.toLowerCase(); saveState(); render(); });
   groupBySel.addEventListener("change", e => { state.group = e.target.value; saveState(); render(); });
   filterTypeSel.addEventListener("change", e => { state.filter = e.target.value; saveState(); render(); });
-  sortBySel.addEventListener("change", e => { state.sort = e.target.value; saveState(); render(); });
   sizeSlider.addEventListener("input", e => { state.size = e.target.value; saveState(); render(); });
 
   render();
@@ -121,7 +119,7 @@ function render() {
   listEl.textContent = "";
   
   // 1. Filter
-  let filtered = allVideos.filter(v => {
+  const filtered = allVideos.filter(v => {
     if (state.filter !== "all" && v.type !== state.filter) return false;
     if (state.search) {
       if (!v.title.toLowerCase().includes(state.search) && !(v.domain || "").toLowerCase().includes(state.search)) {
@@ -149,7 +147,7 @@ function render() {
   });
 
   // 3. Group
-  let groups = {};
+  const groups = {};
   if (state.group === "none") {
     groups["All Items"] = filtered;
   } else {
@@ -166,20 +164,21 @@ function render() {
   let pageSize = Infinity;
   if (state.size !== "1") {
     // Determine the active width by checking the main container width minus ~64px padding
-    const mainWidth = document.querySelector("main").clientWidth - 64; 
-    let minWidth = 220; // default layout-5
+    const mainWidth = document.querySelector("main").clientWidth - 64;
+    let minWidth = 220; // Default layout-5
     switch(state.size) {
-        case "2": minWidth = 100; break;
-        case "3": minWidth = 140; break;
-        case "4": minWidth = 180; break;
-        case "5": minWidth = 220; break;
+      case "2": minWidth = 100; break;
+      case "3": minWidth = 140; break;
+      case "4": minWidth = 180; break;
+      case "5": minWidth = 220; break;
     }
     const columns = Math.max(1, Math.floor((mainWidth + 24) / (minWidth + 24)));
     pageSize = columns * 2; // Display exactly 2 rows
   }
-
+  
   // 4. Render
   for (const [groupName, items] of Object.entries(groups)) {
+
     const isCollapsed = state.collapsedGroups[groupName];
     
     if (state.group !== "none") {
@@ -207,18 +206,18 @@ function render() {
       const groupContainer = document.createElement("div");
       groupContainer.className = `group-container ${layoutClass}`;
       
-      const currentPage = state.groupPages[groupName] || 1;
+      let currentPage = state.groupPages[groupName] || 1;
       const totalPages = Math.ceil(items.length / pageSize);
       const safeCurrentPage = Math.max(1, Math.min(currentPage, totalPages));
       
       // Update state if out of bounds due to array shrink
       if (safeCurrentPage !== currentPage) {
-          state.groupPages[groupName] = safeCurrentPage;
+        state.groupPages[groupName] = safeCurrentPage;
       }
       
       const startIdx = (safeCurrentPage - 1) * pageSize;
       const paginatedItems = items.slice(startIdx, startIdx + pageSize);
-      
+
       paginatedItems.forEach(vid => {
         const card = document.createElement("a");
         card.href = vid.url;
@@ -233,20 +232,20 @@ function render() {
         
         let durationBadge = "";
         if (vid.duration) {
-            durationBadge = `<div class="duration-badge">${vid.duration}</div>`;
+          durationBadge = `<div class="duration-badge">${vid.duration}</div>`;
         }
 
         // Keep a ref on dataset for modal parsing
         card.dataset.url = vid.url;
         card.dataset.type = typeBadge;
           if (vid.rawVideoSrc) {
-              card.dataset.rawsrc = vid.rawVideoSrc;
+            card.dataset.rawsrc = vid.rawVideoSrc;
           }
 
           const deleteBtn = document.createElement("button");
           deleteBtn.dataset.index = vid.originalIndex;
           deleteBtn.className = "delete";
-          deleteBtn.title = "Delete";
+          deleteBtn.title = "Delete";  
           const delSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
           delSvg.setAttribute("viewBox", "0 0 24 24");
           const delPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -262,13 +261,13 @@ function render() {
           thumbImg.alt = "Thumbnail";
           thumbWrapper.appendChild(thumbImg);
           if (vid.duration) {
-              const durationBadgeEl = document.createElement("div");
-              durationBadgeEl.className = "duration-badge";
-              durationBadgeEl.textContent = vid.duration;
-              thumbWrapper.appendChild(durationBadgeEl);
+            const durationBadgeEl = document.createElement("div");
+            durationBadgeEl.className = "duration-badge";
+            durationBadgeEl.textContent = vid.duration;
+            thumbWrapper.appendChild(durationBadgeEl);
           }
           card.appendChild(thumbWrapper);
-
+        
           const cardContent = document.createElement("div");
           cardContent.className = "card-content";
           const titleArea = document.createElement("div");
@@ -276,7 +275,7 @@ function render() {
           const titleEl = document.createElement("div");
           titleEl.className = "title";
           titleEl.title = vid.title;
-          titleEl.textContent = vid.title;
+          titleEl.textContent = vid.title;  
           titleArea.appendChild(titleEl);
 
           const metaInfo = document.createElement("div");
@@ -290,21 +289,21 @@ function render() {
           metaInfo.appendChild(dateSpan);
           titleArea.appendChild(metaInfo);
 
-          if (vid.views || vid.uploaded) {
-              const extraMetaEl = document.createElement("div");
-              extraMetaEl.className = "extra-meta";
-              if (vid.views) {
-                  const viewSpan = document.createElement("span");
-                  viewSpan.textContent = vid.views;
-                  extraMetaEl.appendChild(viewSpan);
-              }
-              if (vid.uploaded) {
-                  const uploadSpan = document.createElement("span");
-                  uploadSpan.textContent = (vid.views ? " • " : "") + vid.uploaded;
-                  extraMetaEl.appendChild(uploadSpan);
-              }
-              titleArea.appendChild(extraMetaEl);
+        if (vid.views || vid.uploaded) {
+          const extraMetaEl = document.createElement("div");
+          extraMetaEl.className = "extra-meta";
+          if (vid.views) {
+            const viewSpan = document.createElement("span");
+            viewSpan.textContent = vid.views;
+            extraMetaEl.appendChild(viewSpan);
           }
+          if (vid.uploaded) {
+            const uploadSpan = document.createElement("span");
+            uploadSpan.textContent = (vid.views ? " • " : "") + vid.uploaded;
+            extraMetaEl.appendChild(uploadSpan);
+          }
+          titleArea.appendChild(extraMetaEl);
+        }
           cardContent.appendChild(titleArea);
           card.appendChild(cardContent);
           
@@ -317,32 +316,32 @@ function render() {
         const pagination = document.createElement("div");
         pagination.className = "pagination";
         
-        const prevBtn = document.createElement("button");
+        const prevBtn = document.createElement("button");  
         prevBtn.className = "page-btn";
         prevBtn.textContent = "Previous";
         prevBtn.disabled = safeCurrentPage === 1;
         prevBtn.onclick = () => { 
           state.groupPages[groupName] = safeCurrentPage - 1; 
-          saveState(); 
-          render(); 
+          saveState();
+          render();
         };
         
         const nextBtn = document.createElement("button");
         nextBtn.className = "page-btn";
         nextBtn.textContent = "Next";
         nextBtn.disabled = safeCurrentPage === totalPages;
-        nextBtn.onclick = () => { 
+        nextBtn.onclick = () => {
           state.groupPages[groupName] = safeCurrentPage + 1; 
-          saveState(); 
-          render(); 
+          saveState();
+          render();
         };
         
         const pageInfo = document.createElement("span");
         pageInfo.textContent = `Page ${safeCurrentPage} of ${totalPages}`;
         
-        pagination.appendChild(prevBtn);
+        pagination.appendChild(prevBtn);  
         pagination.appendChild(pageInfo);
-        pagination.appendChild(nextBtn);
+        pagination.appendChild(nextBtn);  
         listEl.appendChild(pagination);
       }
     }
@@ -351,6 +350,7 @@ function render() {
 
 // --- Video Embed Logic ---
 function getEmbedUrl(url) {
+
   try {
     const stringUrl = String(url);
     if (stringUrl.includes("youtube.com") || stringUrl.includes("youtu.be")) {
@@ -398,7 +398,7 @@ function openModal(rawUrl, embedUrl, rawVideoSrc) {
   // 1. If we recorded the hot .mp4 source at the exact moment of liking, play it instantly!
   if (rawVideoSrc) {
       if (rawVideoSrc.includes(".m3u8")) {
-         // m3u8 links usually have expired signatures! Let's live-fetch a fresh one via the background tab
+         // M3U8 links often have expired signatures! Let's live-fetch a fresh one via the background tab
          const loading = createContainer("");
          const p1 = document.createElement("p");
          p1.textContent = "Fetching fresh HLS playlist (m3u8) to bypass expired signatures...";
@@ -427,7 +427,7 @@ function openModal(rawUrl, embedUrl, rawVideoSrc) {
             input.type = "text";
             input.value = finalSrc;
             input.readOnly = true;
-            input.style.background = "transparent";
+            input.style.background = "transparent";  
             input.style.border = "none";
             input.style.color = "#1f6feb";
             input.style.width = "200px";
@@ -567,6 +567,7 @@ document.addEventListener("click", async (e) => {
         e.preventDefault();
         openModal(url, embedUrl, (rawVideoSrc !== "undefined" && rawVideoSrc !== "null") ? rawVideoSrc : null);
     }
+    
   }
 });
 

@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-vault-bg text-white font-sans antialiased;
+  }
+}
+
+.vault-card {
+  @apply border border-vault-border bg-black/50 backdrop-blur-md rounded-lg overflow-hidden transition-all duration-300;
+}
+
+.vault-card:hover {
+  @apply border-vault-accent/50 shadow-[0_0_15px_-5px_rgba(0,243,255,0.3)];
+}
+
+.vault-btn {
+  @apply px-4 py-2 rounded border border-vault-border bg-transparent text-vault-muted hover:text-vault-accent hover:border-vault-accent transition-all uppercase tracking-widest text-xs font-bold;
+}
