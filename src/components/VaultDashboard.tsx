@@ -161,6 +161,28 @@ export const VaultDashboard: React.FC = () => {
     reader.readAsText(file);
   };
 
+  const handleDelete = async (url: string) => {
+    if (confirm("Are you sure you want to delete this item?")) {
+      const all = await getSavedVideos();
+      const next = all.filter(v => v.url !== url);
+      await saveVideos(next);
+      setItems(next);
+    }
+  };
+
+  const handleEdit = async (video: VideoData) => {
+    const newTitle = window.prompt("Edit Title:", video.title);
+    if (newTitle !== null) {
+      const all = await getSavedVideos();
+      const idx = all.findIndex(v => v.url === video.url);
+      if (idx !== -1) {
+        all[idx].title = newTitle;
+        await saveVideos(all);
+        setItems(all);
+      }
+    }
+  };
+
   const handleWipeVault = async () => {
     if (confirm("Are you sure you want to completely wipe your vault? This cannot be undone.")) {
       await saveVideos([]);
@@ -316,20 +338,22 @@ export const VaultDashboard: React.FC = () => {
     }, {} as Record<string, VideoData[]>);
   }, [sorted, groupBy]);
 
-  const viewClasses = {
-    1: 'grid-cols-1 md:grid-cols-2 lg:grid-cols-2', // Details (List) - adjusted to fit more if needed
-    2: 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5', // Small
-    3: 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4', // Medium
-    4: 'grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3', // Large
-    5: 'grid-cols-1 xl:grid-cols-2', // Biggest
+  const viewClasses: Record<number, string> = {
+    1: 'flex flex-col gap-[1px] w-full', // Details (compact list)
+    2: 'grid-cols-1 md:grid-cols-2 lg:grid-cols-2', // List mode
+    3: 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5', // Small
+    4: 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4', // Medium
+    5: 'grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3', // Large
+    6: 'grid-cols-1 xl:grid-cols-2', // Biggest
   };
 
   const itemsPerPageParams: Record<number, number> = {
-    1: 6, // 1 col initially, 2 in md. Let's say 6.
-    2: 10,
-    3: 8,
-    4: 6,
-    5: 4
+    1: 50, // Compact Details
+    2: 10, // List
+    3: 12, // Small
+    4: 8,  // Medium
+    5: 6,  // Large
+    6: 4   // Biggest
   };
 
   const maxItemsPerRow = itemsPerPageParams[viewSize];
@@ -428,7 +452,7 @@ export const VaultDashboard: React.FC = () => {
           "flex-none bg-vault-cardBg/30 border-r border-vault-border transition-all duration-300 overflow-y-auto z-10 flex flex-col gap-6",
           isSidebarOpen ? "w-64 p-4 opacity-100" : "w-0 p-0 opacity-0 border-r-0"
         )}>
-          <div className="space-y-4 whitespace-nowrap overflow-hidden">
+          <div className="space-y-4">
             {/* View Mode */}
             <div>
               <label className="text-xs font-bold text-vault-muted uppercase tracking-widest flex items-center gap-2 mb-2">
@@ -437,7 +461,7 @@ export const VaultDashboard: React.FC = () => {
               <input 
                 type="range" 
                 min="1" 
-                max="5" 
+                max="6" 
                 value={viewSize} 
                 onChange={(e) => setViewSize(parseInt(e.target.value))}
                 className="w-full accent-vault-accent"
@@ -687,11 +711,15 @@ export const VaultDashboard: React.FC = () => {
                     {displayItems.map((fav, idx) => (
                       <div key={`${fav.url}-${idx}`} className={cn(
                         "vault-card group relative flex transform transition-all hover:shadow-lg overflow-hidden",
-                        viewSize === 1 ? "flex-row items-center gap-4 h-24 p-4 hover:-translate-y-1" : "flex-col h-[380px]"
+                        viewSize === 1 
+                          ? "flex-row items-center gap-2 h-10 px-3 py-1 border-b border-vault-border rounded-none shadow-none hover:bg-vault-cardBg/50" 
+                          : viewSize === 2 
+                            ? "flex-row items-center gap-4 h-24 p-4 hover:-translate-y-1" 
+                            : "flex-col h-[380px]"
                       )}>
                         
                         {/* THUMBNAIL AREA */}
-                        {viewSize !== 1 && (
+                        {viewSize >= 2 && (
                           <div 
                             onClick={(e) => {
                               // If clicking an action button inside the thumb, don't trigger play
@@ -705,7 +733,7 @@ export const VaultDashboard: React.FC = () => {
                                 window.open(fav.url, '_blank');
                               }
                             }}
-                            className="relative w-full h-40 flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb border-b border-vault-border rounded-t-lg"
+                            className={viewSize === 2 ? "relative w-32 h-full flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border" : "relative w-full aspect-video flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb border-b border-vault-border rounded-t-lg"}
                           >
                             {fav.type === 'video' ? (
                               <PreviewThumb video={fav} />
@@ -728,13 +756,13 @@ export const VaultDashboard: React.FC = () => {
 
                             {/* Internal Thumbnail Actions */}
                             <div className="absolute top-2 left-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2">
-                              <button className="thumb-action p-1.5 bg-black/60 hover:bg-vault-accent text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" title="Edit Metadata">
+                              <button onClick={(e) => { e.stopPropagation(); handleEdit(fav); }} className="thumb-action p-1.5 bg-black/60 hover:bg-vault-accent text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" title="Edit Metadata">
                                 <Edit2 size={12} />
                               </button>
                             </div>
                             
                             <div className="absolute top-2 right-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2">
-                              <button className="thumb-action p-1.5 bg-black/60 hover:bg-red-500 text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" title="Delete Item">
+                              <button onClick={(e) => { e.stopPropagation(); handleDelete(fav.url); }} className="thumb-action p-1.5 bg-black/60 hover:bg-red-500 text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" title="Delete Item">
                                 <Trash2 size={12} />
                               </button>
                             </div>
@@ -780,7 +808,16 @@ export const VaultDashboard: React.FC = () => {
                                 {viewSize > 1 ? `#${idx + 1 + (currentPage * itemsPerPage)}` : 'V-ID'}
                               </span>
                             </div>
-                            {/* Removed redundant buttons from here in grid view, kept for detail list if needed but instruction asked for thumb corners */}
+                            {viewSize <= 2 && (
+                                <div className="flex gap-1 ml-auto">
+                                    <button onClick={(e) => { e.stopPropagation(); handleEdit(fav); }} className="vault-btn p-1 flex items-center justify-center border-none hover:bg-vault-cardBg" title="Edit">
+                                    <Edit2 size={14} className="text-vault-muted hover:text-vault-accent" />
+                                    </button>
+                                    <button onClick={(e) => { e.stopPropagation(); handleDelete(fav.url); }} className="vault-btn p-1 flex items-center justify-center border-none hover:bg-vault-cardBg" title="Delete">
+                                    <Trash2 size={14} className="text-vault-muted hover:text-red-500" />
+                                    </button>
+                                </div>
+                            )}
                           </div>
                           
                           <div className={cn("flex-1", viewSize === 1 ? "flex items-center justify-between w-full ml-4" : "flex flex-col")}>

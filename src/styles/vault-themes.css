@@ -1,0 +1,89 @@
+[data-theme="vault-theme-vintage-velvet"] {
+  --vault-bg: #F5F5DC;
+  --vault-text: #1A202C;
+  --vault-border: #e1e1c8;
+  --vault-card-bg: rgba(255,255,255,0.7);
+  --vault-muted: #718096;
+  --vault-accent: #800020;
+  --vault-accent-hover: #6c000c;
+}
+
+[data-theme="vault-theme-cyberpunk-cinder"] {
+  --vault-bg: #073642;
+  --vault-text: #F3F4F6;
+  --vault-border: #1b4a56;
+  --vault-card-bg: rgba(0,0,0,0.5);
+  --vault-muted: #A0AEC0;
+  --vault-accent: #CB4B16;
+  --vault-accent-hover: #df5f2a;
+}
+
+[data-theme="vault-theme-golden-slate"] {
+  --vault-bg: #4A5459;
+  --vault-text: #F3F4F6;
+  --vault-border: #5e686d;
+  --vault-card-bg: rgba(0,0,0,0.5);
+  --vault-muted: #A0AEC0;
+  --vault-accent: #D4AF37;
+  --vault-accent-hover: #e8c34b;
+}
+
+[data-theme="vault-theme-modern-monolith"] {
+  --vault-bg: #FAF9F6;
+  --vault-text: #1A202C;
+  --vault-border: #e6e5e2;
+  --vault-card-bg: rgba(255,255,255,0.7);
+  --vault-muted: #718096;
+  --vault-accent: #333333;
+  --vault-accent-hover: #1f1f1f;
+}
+
+[data-theme="vault-theme-crimson-bloom"] {
+  --vault-bg: #8B0000;
+  --vault-text: #F3F4F6;
+  --vault-border: #9f1414;
+  --vault-card-bg: rgba(0,0,0,0.5);
+  --vault-muted: #A0AEC0;
+  --vault-accent: #FFC0CB;
+  --vault-accent-hover: #ffd4df;
+}
+
+[data-theme="vault-theme-ocean-mist"] {
+  --vault-bg: #D3D3D3;
+  --vault-text: #1A202C;
+  --vault-border: #bfbfbf;
+  --vault-card-bg: rgba(255,255,255,0.7);
+  --vault-muted: #718096;
+  --vault-accent: #006994;
+  --vault-accent-hover: #005580;
+}
+
+[data-theme="vault-theme-neon-void"] {
+  --vault-bg: #222222;
+  --vault-text: #F3F4F6;
+  --vault-border: #363636;
+  --vault-card-bg: rgba(0,0,0,0.5);
+  --vault-muted: #A0AEC0;
+  --vault-accent: #00FFFF;
+  --vault-accent-hover: #14ffff;
+}
+
+[data-theme="vault-theme-royal-tangerine"] {
+  --vault-bg: #4B0082;
+  --vault-text: #F3F4F6;
+  --vault-border: #5f1496;
+  --vault-card-bg: rgba(0,0,0,0.5);
+  --vault-muted: #A0AEC0;
+  --vault-accent: #F28500;
+  --vault-accent-hover: #ff9914;
+}
+
+[data-theme="vault-theme-amethyst-frost"] {
+  --vault-bg: #FDFDFD;
+  --vault-text: #1A202C;
+  --vault-border: #e9e9e9;
+  --vault-card-bg: rgba(255,255,255,0.7);
+  --vault-muted: #718096;
+  --vault-accent: #800080;
+  --vault-accent-hover: #6c006c;
+}

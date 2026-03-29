@@ -18,8 +18,8 @@ export default defineConfig({
           dest: '.',
         },
         {
-          src: 'icons/*',
-          dest: 'icons',
+          src: 'icons',
+          dest: '.',
         },
       ],
     }),
