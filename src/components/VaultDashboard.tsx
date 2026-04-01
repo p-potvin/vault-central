@@ -53,7 +53,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
       console.log(`[VaultAuth] Preview missing after ${elapsed}ms. Retriggering for:`, video.title);
       setIsProcessing(true);
       try {
-        await browser.runtime.sendMessage({
+        const response: any = await browser.runtime.sendMessage({
           action: 'generate_preview',
           data: { 
             url: video.rawVideoSrc || video.url, 
@@ -61,10 +61,22 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
           }
         });
         
-        // Poll briefly for the result
-        const retryBlob = await getPreview(video.url);
-        if (retryBlob) {
-          setPreviewBlob(URL.createObjectURL(retryBlob));
+        if (response && response.success) {
+            // Poll for the result until it appears in DB or timeout (10s)
+            let attempts = 0;
+            const poll = setInterval(async () => {
+                const retryBlob = await getPreview(video.url);
+                if (retryBlob) {
+                    setPreviewBlob(URL.createObjectURL(retryBlob));
+                    setIsProcessing(false);
+                    clearInterval(poll);
+                }
+                if (attempts++ > 20) {
+                    setIsProcessing(false);
+                    clearInterval(poll);
+                }
+            }, 500);
+            return;
         }
       } catch (e) {
         console.error("[VaultAuth] Manual retrigger failed:", e);
@@ -542,7 +554,9 @@ export const VaultDashboard: React.FC = () => {
         {/* SIDEBAR CONTAINER */}
         <div className="flex flex-none relative z-20">
           {/* SIDEBAR */}
-          <aside className={cn(
+          <aside 
+            data-testid="dashboard-sidebar"
+            className={cn(
             "bg-vault-cardBg/30 border-r border-vault-border transition-all duration-300 overflow-y-auto h-full flex flex-col gap-6",
             isSidebarOpen ? "w-64 p-4 opacity-100 visible" : "w-0 p-0 opacity-0 invisible border-none"
           )}>

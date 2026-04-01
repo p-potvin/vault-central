@@ -86,7 +86,14 @@
     - [x] Make main item taller (60px).
     - [x] Fix "V-ID" badge centering.
 
-## 🔮 Phase 8: Future Vault Features
+## 🧹 Phase 8: Optimization & Refactoring [COMPLETED]
+- [x] **Constant Extraction**: Centralized hardcoded strings and config in `src/lib/constants.ts`.
+- [x] **Redundant Deletion**: (Manual) Cleaned up `.js` artifacts and temporary test scripts.
+- [x] **Storage Hardening**: Switched to `STORAGE_KEYS` across `storage-vault` and `background`.
+- [x] **Type Validation**: Implemented Zod schema parsing in storage retrieval for data integrity.
+- [x] **Dashboard Singleton**: Hardened singleton logic using both URL and stored Tab ID.
+
+## 🔮 Phase 9: Future Vault Features
 - [ ] **Vault Portability**: Export/Import JSON logic.
 - [ ] **Multi-Type Support**: Music, Torrents, and Bookmarks.
 

@@ -28,7 +28,7 @@ export const test = base.extend<{
       });
     } else {
       context = await (base as any).chromium.launchPersistentContext('', {
-        headless: true,
+        headless: false,
         args: [
           `--disable-extensions-except=${pathToExtension}`,
           `--load-extension=${pathToExtension}`,
@@ -43,8 +43,34 @@ export const test = base.extend<{
     if (browserName === 'chromium') {
       let [background] = context.serviceWorkers();
       if (!background) {
-        background = await context.waitForEvent('serviceworker');
+        background = await context.waitForEvent('serviceworker', { timeout: 15000 }).catch(() => null);
       }
+      
+      if (!background) {
+        // Fallback: search for extension page in pages
+        const pages = context.pages();
+        const extPage = pages.find(p => p.url().startsWith('chrome-extension://'));
+        if (extPage) {
+           const extensionId = extPage.url().split('/')[2];
+           await use(extensionId);
+           return;
+        }
+        
+        // Final fallback: Try to wait for any background page or service worker
+        const backgroundPage = await context.waitForEvent('page', {
+          predicate: p => p.url().startsWith('chrome-extension://'),
+          timeout: 10000
+        }).catch(() => null);
+        
+        if (backgroundPage) {
+          const extensionId = backgroundPage.url().split('/')[2];
+          await use(extensionId);
+          return;
+        }
+        
+        throw new Error('Could not find extension ID via service worker or background page');
+      }
+      
       const extensionId = background.url().split('/')[2];
       await use(extensionId);
     } else {

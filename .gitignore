@@ -2,5 +2,6 @@ node_modules
 package/
 .github/
 .git/
-temp*
-test*
+test-results/
+coverage/
+playwright-report

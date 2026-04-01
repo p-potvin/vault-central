@@ -61,10 +61,11 @@ const PinPopup: React.FC = () => {
       await savePinSettings(updated);
       setIsLocked(false);
       
+      // Notify background and open dashboard directly
+      browser.runtime.sendMessage({ action: "open_dashboard" });
+
       // Success animation then close/redirect?
-      // Proton logic: "Successfully entered PIN logs you in but does not open dashboard"
-      // Usually popup closes or shows "Vault Unlocked"
-      setTimeout(() => window.close(), 500);
+      setTimeout(() => window.close(), 200);
     } else {
       setError(true);
       setPin(new Array(pinSettings.length).fill(''));

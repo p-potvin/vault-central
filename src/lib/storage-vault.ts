@@ -1,5 +1,6 @@
 import browser from 'webextension-polyfill';
-import { StorageSchema, StorageData, VideoData, PinSettings } from '../types/schemas';
+import { StorageSchema, StorageData, VideoData, PinSettings, VideoDataSchema } from '../types/schemas';
+import { STORAGE_KEYS, VAULT_CONFIG } from './constants';
 
 /**
  * [VaultAuth] Storage Vault Utility
@@ -8,17 +9,18 @@ import { StorageSchema, StorageData, VideoData, PinSettings } from '../types/sch
  */
 
 export async function getPinSettings(): Promise<PinSettings> {
-  const data: { pinSettings?: PinSettings } = await browser.storage.local.get("pinSettings");
+  const data: { [key: string]: any } = await browser.storage.local.get(STORAGE_KEYS.PIN_SETTINGS);
+  const settings = data[STORAGE_KEYS.PIN_SETTINGS];
   const defaults: PinSettings = {
     enabled: false,
-    length: 4,
-    lockTimeout: 3600000, // 1 hour
+    length: VAULT_CONFIG.DEFAULT_PIN_LENGTH,
+    lockTimeout: VAULT_CONFIG.DEFAULT_LOCK_TIMEOUT, // 1 hour
   };
-  return { ...defaults, ...data.pinSettings };
+  return { ...defaults, ...settings };
 }
 
 export async function savePinSettings(settings: PinSettings): Promise<void> {
-  await browser.storage.local.set({ pinSettings: settings });
+  await browser.storage.local.set({ [STORAGE_KEYS.PIN_SETTINGS]: settings });
 }
 
 export async function isVaultLocked(): Promise<boolean> {
@@ -28,7 +30,7 @@ export async function isVaultLocked(): Promise<boolean> {
   if (!settings.lastUnlocked) return true;
   
   // "Never" lock
-  if (settings.lockTimeout === -1) return false;
+  if (settings.lockTimeout === VAULT_CONFIG.NEVER_LOCK_TIMEOUT) return false;
   
   const elapsed = Date.now() - settings.lastUnlocked;
   return elapsed > settings.lockTimeout;
@@ -42,8 +44,8 @@ export async function getSavedVideos(ignoreLock = false): Promise<VideoData[]> {
   }
 
   try {
-    const rawData: { savedVideos?: VideoData[] } = await browser.storage.local.get("savedVideos");
-    const videos = rawData.savedVideos || [];
+    const rawData: { [key: string]: any } = await browser.storage.local.get(STORAGE_KEYS.SAVED_VIDEOS);
+    const videos = rawData[STORAGE_KEYS.SAVED_VIDEOS] || [];
     
     if (!Array.isArray(videos)) return [];
     
@@ -55,23 +57,35 @@ export async function getSavedVideos(ignoreLock = false): Promise<VideoData[]> {
       })
       .map((v: unknown) => {
         const item = v as Partial<VideoData>;
-        return {
-          url: String(item.url),
-          rawVideoSrc: item.rawVideoSrc || null,
-          title: String(item.title || 'Untitled'),
-          thumbnail: item.thumbnail || undefined,
-          timestamp: Number(item.timestamp || Date.now()),
-          type: (item.type === 'video' || item.type === 'image') ? item.type : 'link',
-          domain: String(item.domain || 'Unknown'),
-          duration: item.duration || null,
-          views: item.views || null,
-          uploaded: item.uploaded || null,
-          originalIndex: item.originalIndex,
-          author: item.author || null,
-          likes: item.likes || null,
-          date: item.date || null,
-          tags: Array.isArray(item.tags) ? item.tags : []
-        } as VideoData;
+        try {
+          return VideoDataSchema.parse({
+            ...item,
+            url: String(item.url),
+            timestamp: Number(item.timestamp || Date.now()),
+            type: (item.type === 'video' || item.type === 'image' || item.type === 'link' || item.type === 'audio' || item.type === 'torrent') ? item.type : 'link',
+            domain: String(item.domain || 'Unknown'),
+            tags: Array.isArray(item.tags) ? item.tags : []
+          });
+        } catch (e) {
+          // Fallback if Zod fails in specific environments or data is slightly corrupted
+          return {
+            url: String(item.url),
+            rawVideoSrc: item.rawVideoSrc || null,
+            title: String(item.title || 'Untitled'),
+            thumbnail: item.thumbnail || undefined,
+            timestamp: Number(item.timestamp || Date.now()),
+            type: (item.type === 'video' || item.type === 'image') ? item.type : 'link',
+            domain: String(item.domain || 'Unknown'),
+            duration: item.duration || null,
+            views: item.views || null,
+            uploaded: item.uploaded || null,
+            originalIndex: item.originalIndex,
+            author: item.author || null,
+            likes: item.likes || null,
+            date: item.date || null,
+            tags: Array.isArray(item.tags) ? item.tags : []
+          } as VideoData;
+        }
       });
     return validVideos;
   } catch (error) {
@@ -85,7 +99,7 @@ export async function getSavedVideos(ignoreLock = false): Promise<VideoData[]> {
  */
 export async function saveVideos(videos: VideoData[]): Promise<void> {
   try {
-    await browser.storage.local.set({ savedVideos: videos });
+    await browser.storage.local.set({ [STORAGE_KEYS.SAVED_VIDEOS]: videos });
   } catch (error) {
     console.error("[VaultAuth] Failed to save videos:", error);
     throw new Error("Persistence error: Industrial-Cyber integrity compromised.");

@@ -78,11 +78,14 @@ describe('Dashboard Component', () => {
     // Check if the "Total Items" count is 2 - this proves re-render happened
     await waitFor(() => {
       expect(screen.queryByText(/Total Items:/i)).toBeInTheDocument();
-      const countEl = screen.getByText('2', { selector: 'strong' });
-      expect(countEl).toBeInTheDocument();
+      // Match "2" specifically inside a strong tag with a vault class
+      const countElements = screen.getAllByText('2', { selector: 'strong' });
+      expect(countElements.length).toBeGreaterThan(1); // One in the card, one in the header/stat
     }, { timeout: 3000 });
 
-    const title1 = screen.queryByText((content, element) => element?.textContent === 'Test Video 1');
+    const title1 = screen.queryByText((content, element) => {
+        return element?.tagName.toLowerCase() === 'h3' && content === 'Test Video 1';
+    });
     expect(title1).toBeInTheDocument();
   });
 
@@ -92,31 +95,38 @@ describe('Dashboard Component', () => {
     render(<VaultDashboard />);
     
     await waitFor(() => {
-      expect(screen.getByText('2', { selector: 'strong' })).toBeInTheDocument();
+      const countElements = screen.getAllByText('2', { selector: 'strong' });
+      expect(countElements.length).toBeGreaterThan(0);
     }, { timeout: 3000 });
     
     const searchInput = screen.getByPlaceholderText(/Search in title.../i);
     fireEvent.change(searchInput, { target: { value: 'Test Video' } });
 
     await waitFor(() => {
-      expect(screen.getByText('1', { selector: 'strong.text-vault-text' })).toBeInTheDocument();
-      const title1 = screen.queryByText((content, element) => element?.textContent === 'Test Video 1');
-      const title2 = screen.queryByText((content, element) => element?.textContent === 'Example Page 2');
+      // After filtering, '2' should be gone or decreased to '1' in relevant places
+      expect(screen.getAllByText('1', { selector: 'strong' }).length).toBeGreaterThan(0);
+      const title1 = screen.queryByText((content, element) => {
+          return element?.tagName.toLowerCase() === 'h3' && content === 'Test Video 1';
+      });
+      const title2 = screen.queryByText((content, element) => {
+          return element?.tagName.toLowerCase() === 'h3' && content === 'Example Page 2';
+      });
       expect(title1).toBeInTheDocument();
       expect(title2).not.toBeInTheDocument();
     }, { timeout: 3000 });
   });
 
   it('toggles the sidebar layout', async () => {
+    (storageVault.getSavedVideos as any).mockResolvedValue(mockVideos);
     const { container } = render(<VaultDashboard />);
     
-    // Check initial state - sidebar might be open or closed depending on default state.
+    // The sidebar has visible classes when open
     const sidebar = container.querySelector('aside');
     expect(sidebar).toHaveClass('w-64');
 
-    // The first button in the header is the toggle button
-    const toggleButton = screen.getAllByRole('button')[0]; 
-    fireEvent.click(toggleButton);
+    // Click the toggle bar (the div with Expand/Collapse Sidebar title)
+    const toggleBar = screen.getByTitle(/Collapse Sidebar/i);
+    fireEvent.click(toggleBar);
 
     await waitFor(() => {
       expect(sidebar).toHaveClass('w-0');

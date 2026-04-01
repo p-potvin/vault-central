@@ -1,5 +1,6 @@
 import browser from 'webextension-polyfill';
 import { VideoDataSchema } from '../types/schemas';
+import { STORAGE_KEYS, NOTIFICATION_CONFIG } from '../lib/constants';
 /**
  * [VaultAuth] Content Script (Modernized)
  * --------------------------------------
@@ -36,10 +37,24 @@ function addHeartIndicator(el) {
     heart.className = "vault-heart-indicator";
     // UI/UX Sync Icon (Cloud Check)
     heart.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" 
-             style="width: 14px; height: 14px; filter: drop-shadow(0 0 4px rgba(34,197,94,0.4)); background: rgba(0,0,0,0.7); padding: 4px; border-radius: 4px;">
-            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" fill="#22c55e"></path>
-            <path d="M17.5 19l2 2 4-4" stroke="white" stroke-width="3"></path>
+        <style>
+            .vault-heart-indicator svg {
+                width: 14px;
+                height: 14px;
+                background: #22c55e;
+                padding: 4px;
+                border-radius: 4px;
+                fill: white;
+                stroke: white;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            }
+            .vault-heart-indicator:hover svg {
+                border: 2px dashed white;
+                padding: 2px;
+            }
+        </style>
+        <svg viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path>
         </svg>
     `;
     Object.assign(heart.style, {
@@ -47,7 +62,7 @@ function addHeartIndicator(el) {
         top: "4px",
         left: "4px",
         zIndex: "2147483647",
-        pointerEvents: "none",
+        pointerEvents: "auto",
         transition: "transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)"
     });
     el.appendChild(heart);
@@ -57,8 +72,8 @@ function addHeartIndicator(el) {
  */
 async function highlightVaultItems() {
     try {
-        const storage = await browser.storage.local.get("savedVideos");
-        const savedVideos = (storage.savedVideos || []);
+        const storage = await browser.storage.local.get(STORAGE_KEYS.SAVED_VIDEOS);
+        const savedVideos = (storage[STORAGE_KEYS.SAVED_VIDEOS] || []);
         if (savedVideos.length === 0)
             return;
         const savedUrls = new Set(savedVideos.map((v) => v.url));
@@ -76,12 +91,31 @@ async function highlightVaultItems() {
 /**
  * Industrial Notification System (Modernized)
  */
-function showVaultNotification(type, message) {
-    const existing = document.getElementById("vault-notification-portal");
-    if (existing)
-        existing.remove();
-    const el = document.createElement("div");
-    el.id = "vault-notification-portal";
+const activeNotifications = new Map();
+const MAX_CONCURRENT_NOTIFICATIONS = 10;
+function showVaultNotification(type, message, id) {
+    const portalId = id || `vault-notification-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    // If we have an existing notification with this ID (e.g. updating processing -> success), reuse it
+    let el = activeNotifications.get(portalId);
+    const isUpdate = !!el;
+    if (!el) {
+        // Enforce maximum concurrent notifications
+        if (activeNotifications.size >= MAX_CONCURRENT_NOTIFICATIONS) {
+            const result = activeNotifications.keys().next();
+            const oldestKey = result.value;
+            if (oldestKey !== undefined) {
+                const oldestEl = activeNotifications.get(oldestKey);
+                if (oldestEl) {
+                    oldestEl.remove();
+                    activeNotifications.delete(oldestKey);
+                }
+            }
+        }
+        el = document.createElement("div");
+        el.id = portalId;
+        activeNotifications.set(portalId, el);
+        document.body.appendChild(el);
+    }
     // Icon Mapping
     const iconMap = {
         success: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width: 18px; height: 18px; color: #10b981; margin-right: 8px;"><polyline points="20 6 9 17 4 12"></polyline></svg>`,
@@ -102,11 +136,19 @@ function showVaultNotification(type, message) {
         processing: { bg: "#3b82f6", border: "#2563eb" }
     };
     const theme = themeMap[type] || themeMap.error;
+    // Calculate vertical offset based on position in map
+    const entries = Array.from(activeNotifications.entries());
+    const index = entries.findIndex(([id]) => id === portalId);
+    // Fallback if not found yet (newly created)
+    const renderIndex = index === -1 ? activeNotifications.size - 1 : index;
+    const bottomOffset = 24 + (renderIndex * NOTIFICATION_CONFIG.STACK_OFFSET);
     Object.assign(el.style, {
         position: "fixed",
-        bottom: "24px",
+        bottom: `${bottomOffset}px`,
         right: "24px",
         padding: "14px 24px",
+        height: "50px",
+        boxSizing: "border-box",
         borderRadius: "4px",
         borderLeft: `4px solid ${theme.border}`,
         backgroundColor: "rgba(11, 15, 25, 0.98)",
@@ -116,37 +158,54 @@ function showVaultNotification(type, message) {
         letterSpacing: "0.5px",
         fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
         boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4)",
-        zIndex: "2147483647",
+        zIndex: NOTIFICATION_CONFIG.Z_INDEX.toString(),
         transition: "all 0.5s cubic-bezier(0.19, 1, 0.22, 1)",
-        opacity: "0",
-        transform: "translateX(100%)",
+        opacity: isUpdate ? "1" : "0",
+        transform: isUpdate ? "translateX(0)" : "translateX(100%)",
         pointerEvents: "none",
         backdropFilter: "blur(12px)"
     });
-    document.body.appendChild(el);
-    requestAnimationFrame(() => {
-        el.style.opacity = "1";
-        el.style.transform = "translateX(0)";
-    });
+    if (!isUpdate) {
+        requestAnimationFrame(() => {
+            if (el) {
+                el.style.opacity = "1";
+                el.style.transform = "translateX(0)";
+            }
+        });
+    }
     // Auto-remove unless it's processing
     if (type !== 'processing') {
         setTimeout(() => {
-            el.style.opacity = "0";
-            el.style.transform = "translateX(100%)";
-            setTimeout(() => el.remove(), 500);
-        }, 4000);
+            if (activeNotifications.has(portalId)) {
+                const currentEl = activeNotifications.get(portalId);
+                if (currentEl) {
+                    currentEl.style.opacity = "0";
+                    currentEl.style.transform = "translateX(100%)";
+                    setTimeout(() => {
+                        currentEl.remove();
+                        activeNotifications.delete(portalId);
+                        // Shift others down
+                        updateNotificationOffsets();
+                    }, 500);
+                }
+            }
+        }, NOTIFICATION_CONFIG.DURATION);
     }
     // Contextual indicator updates
-    if (lastHoveredElement) {
-        const target = lastHoveredElement.closest("a") || lastHoveredElement;
-        if (type === 'success')
-            addHeartIndicator(target);
-        if (type === 'removed') {
-            const heart = target.querySelector(".vault-heart-indicator");
-            if (heart)
-                heart.remove();
-        }
+    const target = portalId?.startsWith('capture-') ? null : (lastHoveredElement?.closest("a") || lastHoveredElement);
+    if (type === 'success' && target)
+        addHeartIndicator(target);
+    if (type === 'removed' && target) {
+        const heart = target.querySelector(".vault-heart-indicator");
+        if (heart)
+            heart.remove();
     }
+}
+function updateNotificationOffsets() {
+    Array.from(activeNotifications.entries()).forEach(([id, el], index) => {
+        const bottomOffset = 24 + (index * NOTIFICATION_CONFIG.STACK_OFFSET);
+        el.style.bottom = `${bottomOffset}px`;
+    });
 }
 /**
  * Extract rich metadata from surrounding DOM nodes
@@ -307,7 +366,7 @@ function attemptExtraction(el) {
     }
     if (type === 'link') {
         const urlWithoutQuery = url.split('?')[0];
-        if (urlWithoutQuery.match(/\.(mp4|webm|mkv|m3u8)$/i))
+        if (urlWithoutQuery.match(/\.(mp4|webm|mkv|m3u8|ts)$/i))
             type = 'video';
         else if (urlWithoutQuery.match(/\.(jpg|jpeg|png|gif|webp)$/i))
             type = 'image';
@@ -387,7 +446,8 @@ async function startCaptureFlow() {
         showVaultNotification("error", "Could not identify content");
         return;
     }
-    showVaultNotification("processing", `Infiltrating: ${data.title?.substring(0, 20)}...`);
+    const notificationId = `capture-${Date.now()}`;
+    showVaultNotification("processing", `Infiltrating: ${data.title?.substring(0, 20)}...`, notificationId);
     try {
         const response = (await browser.runtime.sendMessage({
             action: "process_capture",
@@ -396,19 +456,19 @@ async function startCaptureFlow() {
         if (uiTarget)
             removeIndicators(uiTarget);
         if (response && response.success) {
-            showVaultNotification("success", "Item secured in vault");
+            showVaultNotification("success", "Item secured in vault", notificationId);
             if (uiTarget)
                 addHeartIndicator(uiTarget);
         }
         else {
-            showVaultNotification("error", response?.message || "Capture operation failed");
+            showVaultNotification("error", response?.message || "Capture operation failed", notificationId);
         }
     }
     catch (e) {
         console.error("[VaultAuth] Capture flow failed:", e);
         if (uiTarget)
             removeIndicators(uiTarget);
-        showVaultNotification("error", "Communication error with background.");
+        showVaultNotification("error", "Communication error with background.", notificationId);
     }
 }
 /**

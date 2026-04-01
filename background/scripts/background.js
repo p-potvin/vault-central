@@ -1,5 +1,6 @@
 import browser from 'webextension-polyfill';
 import { getSavedVideos, saveVideos } from '../../src/lib/storage-vault';
+import { STORAGE_KEYS } from '../../src/lib/constants';
 /**
  * [VaultAuth] Background Extraction Logic
  * ---------------------------------------
@@ -51,11 +52,12 @@ async function doTabExtraction(targetUrl) {
             globalTimeoutId = setTimeout(() => {
                 cleanup(latestM3u8 ? { src: latestM3u8, metadata: defaultMetadata } : null, "Global isolation timeout reached (16s)");
             }, 16000);
-            // 1. Network intercept for .m3u8 (HLS Bypass)
+            // 1. Network intercept for .m3u8 and .ts (HLS/TS streams)
             if (browser.webRequest) {
                 webRequestListener = (details) => {
-                    if (details.tabId === scraperTabId && details.url.includes('.m3u8')) {
-                        console.log("[VaultAuth] Intercepted HLS stream:", details.url);
+                    const lowercaseUrl = details.url.toLowerCase();
+                    if (details.tabId === scraperTabId && (lowercaseUrl.includes('.m3u8') || lowercaseUrl.includes('.ts'))) {
+                        console.log("[VaultAuth] Intercepted stream:", details.url);
                         latestM3u8 = details.url;
                         // We don't resolve immediately; keep listening until script injection or timeout
                     }
@@ -149,7 +151,7 @@ async function doTabExtraction(targetUrl) {
                                     }
                                 }
                                 if (!bestSrc) {
-                                    const wildcards = document.querySelectorAll('[src*=".mp4"], [src*=".m3u8"], [src*=".webm"]');
+                                    const wildcards = document.querySelectorAll('[src*=".mp4"], [src*=".m3u8"], [src*=".webm"], [src*=".ts"]');
                                     for (const w of Array.from(wildcards)) {
                                         const src = w.src;
                                         if (src && !src.startsWith('blob:')) {
@@ -203,7 +205,20 @@ async function doTabExtraction(targetUrl) {
 async function openDashboard() {
     const url = browser.runtime.getURL('dashboard-v2.html');
     const tabs = await browser.tabs.query({});
-    const dashboardTab = tabs.find(t => t.url && t.url.startsWith(url));
+    // Check for existing dashboard by stored ID or URL fallback
+    const { [STORAGE_KEYS.ACTIVE_TAB_ID]: storedTabId } = await browser.storage.local.get(STORAGE_KEYS.ACTIVE_TAB_ID);
+    let dashboardTab;
+    if (storedTabId && typeof storedTabId === 'number') {
+        try {
+            dashboardTab = await browser.tabs.get(storedTabId);
+        }
+        catch (e) {
+            // Tab likely closed
+        }
+    }
+    if (!dashboardTab) {
+        dashboardTab = tabs.find(t => t.url && t.url.startsWith(url));
+    }
     if (dashboardTab && dashboardTab.id) {
         // If already open, focus it
         await browser.tabs.update(dashboardTab.id, { active: true });
@@ -211,10 +226,15 @@ async function openDashboard() {
         if (dashboardTab.windowId) {
             await browser.windows.update(dashboardTab.windowId, { focused: true });
         }
+        // Update stored ID
+        await browser.storage.local.set({ [STORAGE_KEYS.ACTIVE_TAB_ID]: dashboardTab.id });
     }
     else {
         // Otherwise create new
-        await browser.tabs.create({ url });
+        const newTab = await browser.tabs.create({ url });
+        if (newTab.id) {
+            await browser.storage.local.set({ [STORAGE_KEYS.ACTIVE_TAB_ID]: newTab.id });
+        }
     }
 }
 /**
@@ -224,29 +244,27 @@ async function runCapturePipeline(data, tabId, windowId) {
     try {
         const targetUrl = data.url;
         let finalSrc = data.url;
-        // Simple check if we should try deep extraction
-        if (!finalSrc.endsWith('.mp4') && !finalSrc.endsWith('.webm') && !finalSrc.endsWith('.m3u8')) {
-            const extracted = await doTabExtraction(targetUrl);
-            if (extracted && extracted.src) {
-                finalSrc = extracted.src;
-                if (extracted.metadata) {
-                    if (extracted.metadata.thumbnail)
-                        data.thumbnail = extracted.metadata.thumbnail;
-                    if (extracted.metadata.duration)
-                        data.duration = extracted.metadata.duration;
-                    if (extracted.metadata.title)
-                        data.title = extracted.metadata.title;
-                    if (extracted.metadata.tags && extracted.metadata.tags.length > 0)
-                        data.tags = extracted.metadata.tags;
-                    if (extracted.metadata.author)
-                        data.author = extracted.metadata.author;
-                    if (extracted.metadata.views)
-                        data.views = extracted.metadata.views;
-                    if (extracted.metadata.likes)
-                        data.likes = extracted.metadata.likes;
-                    if (extracted.metadata.date)
-                        data.date = extracted.metadata.date;
-                }
+        // Perform deep extraction to get better metadata and resolve potential HTML containers
+        const extracted = await doTabExtraction(targetUrl);
+        if (extracted && extracted.src) {
+            finalSrc = extracted.src;
+            if (extracted.metadata) {
+                if (extracted.metadata.thumbnail)
+                    data.thumbnail = extracted.metadata.thumbnail;
+                if (extracted.metadata.duration)
+                    data.duration = extracted.metadata.duration;
+                if (extracted.metadata.title)
+                    data.title = extracted.metadata.title;
+                if (extracted.metadata.tags && extracted.metadata.tags.length > 0)
+                    data.tags = extracted.metadata.tags;
+                if (extracted.metadata.author)
+                    data.author = extracted.metadata.author;
+                if (extracted.metadata.views)
+                    data.views = extracted.metadata.views;
+                if (extracted.metadata.likes)
+                    data.likes = extracted.metadata.likes;
+                if (extracted.metadata.date)
+                    data.date = extracted.metadata.date;
             }
         }
         data.rawVideoSrc = finalSrc;
@@ -260,7 +278,7 @@ async function runCapturePipeline(data, tabId, windowId) {
                 console.warn("[VaultAuth] Failed to capture visible tab for thumbnail", captureErr);
             }
         }
-        const saved = await getSavedVideos();
+        const saved = await getSavedVideos(true);
         // Check if item already exists based on URL to prevent duplicates
         if (saved.some(v => v.url === data.url)) {
             return { success: false, message: "Item already in vault" };

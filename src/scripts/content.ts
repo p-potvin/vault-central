@@ -1,5 +1,6 @@
 import browser from 'webextension-polyfill';
 import { VideoData, VideoDataSchema } from '../types/schemas';
+import { STORAGE_KEYS, NOTIFICATION_CONFIG } from '../lib/constants';
 
 /**
  * [VaultAuth] Content Script (Modernized)
@@ -43,10 +44,24 @@ function addHeartIndicator(el: HTMLElement) {
     
     // UI/UX Sync Icon (Cloud Check)
     heart.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" 
-             style="width: 14px; height: 14px; filter: drop-shadow(0 0 4px rgba(34,197,94,0.4)); background: rgba(0,0,0,0.7); padding: 4px; border-radius: 4px;">
-            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" fill="#22c55e"></path>
-            <path d="M17.5 19l2 2 4-4" stroke="white" stroke-width="3"></path>
+        <style>
+            .vault-heart-indicator svg {
+                width: 14px;
+                height: 14px;
+                background: #22c55e;
+                padding: 4px;
+                border-radius: 4px;
+                fill: white;
+                stroke: white;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            }
+            .vault-heart-indicator:hover svg {
+                border: 2px dashed white;
+                padding: 2px;
+            }
+        </style>
+        <svg viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path>
         </svg>
     `;
 
@@ -55,7 +70,7 @@ function addHeartIndicator(el: HTMLElement) {
         top: "4px",
         left: "4px",
         zIndex: "2147483647",
-        pointerEvents: "none",
+        pointerEvents: "auto",
         transition: "transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)"
     });
 
@@ -67,8 +82,8 @@ function addHeartIndicator(el: HTMLElement) {
  */
 async function highlightVaultItems() {
     try {
-        const storage = await browser.storage.local.get("savedVideos");
-        const savedVideos = (storage.savedVideos || []) as VideoData[];
+        const storage = await browser.storage.local.get(STORAGE_KEYS.SAVED_VIDEOS);
+        const savedVideos = (storage[STORAGE_KEYS.SAVED_VIDEOS] || []) as VideoData[];
         
         if (savedVideos.length === 0) return;
 
@@ -101,11 +116,14 @@ function showVaultNotification(type: 'success' | 'removed' | 'error' | 'processi
     if (!el) {
         // Enforce maximum concurrent notifications
         if (activeNotifications.size >= MAX_CONCURRENT_NOTIFICATIONS) {
-            const oldestKey = activeNotifications.keys().next().value;
-            const oldestEl = activeNotifications.get(oldestKey);
-            if (oldestEl) {
-                oldestEl.remove();
-                activeNotifications.delete(oldestKey);
+            const result = activeNotifications.keys().next();
+            const oldestKey = result.value;
+            if (oldestKey !== undefined) {
+                const oldestEl = activeNotifications.get(oldestKey);
+                if (oldestEl) {
+                    oldestEl.remove();
+                    activeNotifications.delete(oldestKey);
+                }
             }
         }
         el = document.createElement("div");
@@ -139,8 +157,12 @@ function showVaultNotification(type: 'success' | 'removed' | 'error' | 'processi
     const theme = themeMap[type] || themeMap.error;
 
     // Calculate vertical offset based on position in map
-    const index = Array.from(activeNotifications.keys()).indexOf(portalId);
-    const bottomOffset = 24 + (index * 60);
+    const entries = Array.from(activeNotifications.entries());
+    const index = entries.findIndex(([id]) => id === portalId);
+    
+    // Fallback if not found yet (newly created)
+    const renderIndex = index === -1 ? activeNotifications.size - 1 : index;
+    const bottomOffset = 24 + (renderIndex * NOTIFICATION_CONFIG.STACK_OFFSET);
 
     Object.assign(el.style, {
         position: "fixed",
@@ -158,7 +180,7 @@ function showVaultNotification(type: 'success' | 'removed' | 'error' | 'processi
         letterSpacing: "0.5px",
         fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
         boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4)",
-        zIndex: "2147483647",
+        zIndex: NOTIFICATION_CONFIG.Z_INDEX.toString(),
         transition: "all 0.5s cubic-bezier(0.19, 1, 0.22, 1)",
         opacity: isUpdate ? "1" : "0",
         transform: isUpdate ? "translateX(0)" : "translateX(100%)",
@@ -168,8 +190,10 @@ function showVaultNotification(type: 'success' | 'removed' | 'error' | 'processi
 
     if (!isUpdate) {
         requestAnimationFrame(() => {
-            el!.style.opacity = "1";
-            el!.style.transform = "translateX(0)";
+            if (el) {
+                el.style.opacity = "1";
+                el.style.transform = "translateX(0)";
+            }
         });
     }
 
@@ -177,16 +201,19 @@ function showVaultNotification(type: 'success' | 'removed' | 'error' | 'processi
     if (type !== 'processing') {
         setTimeout(() => {
             if (activeNotifications.has(portalId)) {
-                el!.style.opacity = "0";
-                el!.style.transform = "translateX(100%)";
-                setTimeout(() => {
-                    el!.remove();
-                    activeNotifications.delete(portalId);
-                    // Shift others down
-                    updateNotificationOffsets();
-                }, 500);
+                const currentEl = activeNotifications.get(portalId);
+                if (currentEl) {
+                    currentEl.style.opacity = "0";
+                    currentEl.style.transform = "translateX(100%)";
+                    setTimeout(() => {
+                        currentEl.remove();
+                        activeNotifications.delete(portalId);
+                        // Shift others down
+                        updateNotificationOffsets();
+                    }, 500);
+                }
             }
-        }, 4000);
+        }, NOTIFICATION_CONFIG.DURATION);
     }
 
     // Contextual indicator updates
@@ -200,7 +227,7 @@ function showVaultNotification(type: 'success' | 'removed' | 'error' | 'processi
 
 function updateNotificationOffsets() {
     Array.from(activeNotifications.entries()).forEach(([id, el], index) => {
-        const bottomOffset = 24 + (index * 60);
+        const bottomOffset = 24 + (index * NOTIFICATION_CONFIG.STACK_OFFSET);
         el.style.bottom = `${bottomOffset}px`;
     });
 }
@@ -369,7 +396,7 @@ function attemptExtraction(el: HTMLElement | null): VideoData | Partial<VideoDat
     }
     if (type === 'link') {
         const urlWithoutQuery = url.split('?')[0];
-        if (urlWithoutQuery.match(/\.(mp4|webm|mkv|m3u8)$/i)) type = 'video';
+        if (urlWithoutQuery.match(/\.(mp4|webm|mkv|m3u8|ts)$/i)) type = 'video';
         else if (urlWithoutQuery.match(/\.(jpg|jpeg|png|gif|webp)$/i)) type = 'image';
         else if (urlWithoutQuery.match(/\.(mp3|wav|flac|ogg)$/i)) type = 'audio';
         else if (urlWithoutQuery.match(/\.torrent$/i) || url.startsWith('magnet:')) type = 'torrent';

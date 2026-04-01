@@ -32,50 +32,53 @@ browser.runtime.onMessage.addListener(async (message) => {
 });
 async function processVideoPreview(url, duration) {
     const fm = await loadFFmpeg();
-    const inputName = 'input.mp4';
-    const outputName = 'preview.webm';
-    // Load the file into ffmpeg memory
-    await fm.writeFile(inputName, await fetchFile(url));
-    /**
-     * Logic: 10 chunks of 2 seconds.
-     * If duration <= 20, just take the whole thing.
-     * Otherwise, we'll create a filter complex to select fragments.
-     */
-    if (duration <= 20) {
-        await fm.exec([
-            '-i', inputName,
-            '-t', '20',
-            '-vf', 'scale=426:240',
-            '-an',
-            '-c:v', 'libvpx-vp9',
-            '-crf', '40',
-            '-b:v', '0',
-            outputName
-        ]);
-    }
-    else {
-        // Generate 10 segments of 2s spaced out
-        const segmentDuration = 2;
-        // Calculate interval between starts of 2s segments
-        // 10 * 2 = 20s total, we need (duration - 20) / 9 intervals
-        const interval = (duration - 20) / 9;
-        let filter = '';
-        for (let i = 0; i < 10; i++) {
-            const start = i * (interval + segmentDuration);
-            filter += `between(t,${start},${start + segmentDuration})+`;
+    const inputName = `input_${Date.now()}.mp4`; // Shared FS fix
+    const outputName = `preview_${Date.now()}.webm`;
+    let resultBlob = null;
+    try {
+        const fileData = await fetchFile(url);
+        await fm.writeFile(inputName, fileData);
+        if (duration <= 20) {
+            await fm.exec([
+                '-i', inputName,
+                '-t', '20',
+                '-vf', 'scale=426:240',
+                '-an',
+                '-c:v', 'libvpx-vp9',
+                '-crf', '40',
+                '-b:v', '0',
+                outputName
+            ]);
         }
-        filter = filter.slice(0, -1);
-        await fm.exec([
-            '-i', inputName,
-            '-vf', `select='${filter}',setpts=N/FRAME_RATE/TB,scale=426:240`,
-            '-an',
-            '-c:v', 'libvpx-vp9',
-            '-crf', '40',
-            '-b:v', '0',
-            outputName
-        ]);
+        else {
+            const segmentDuration = 2;
+            const interval = (duration - 20) / 9;
+            let filter = '';
+            for (let i = 0; i < 10; i++) {
+                const start = i * (interval + segmentDuration);
+                filter += `between(t,${start},${start + segmentDuration})+`;
+            }
+            filter = filter.slice(0, -1);
+            await fm.exec([
+                '-i', inputName,
+                '-vf', `select='${filter}',setpts=N/FRAME_RATE/TB,scale=426:240`,
+                '-an',
+                '-c:v', 'libvpx-vp9',
+                '-crf', '40',
+                '-b:v', '0',
+                outputName
+            ]);
+        }
+        const data = await fm.readFile(outputName);
+        const dataArray = (data instanceof Uint8Array) ? data : new Uint8Array(data);
+        resultBlob = new Blob([dataArray], { type: 'video/webm' });
     }
-    const data = await fm.readFile(outputName);
-    const dataArray = (data instanceof Uint8Array) ? data : new Uint8Array(data);
-    return new Blob([dataArray], { type: 'video/webm' });
+    finally {
+        try {
+            await fm.deleteFile(inputName);
+            await fm.deleteFile(outputName);
+        }
+        catch (e) { }
+    }
+    return resultBlob;
 }
