@@ -372,16 +372,23 @@ interface LinkCandidate {
 }
 
 /**
- * Searches children → the element itself → parents → siblings for the best
- * media/video link. Candidates are scored and the highest score wins.
+ * Searches for the best media/video link using this priority order:
+ *   1. The element itself
+ *   2. The immediate parent
+ *   3. Children of the original element
+ *   4. Further parents (up the ancestor chain)
+ *   5. Immediate siblings
  *
- * Priority ladder (score basis):
- *   <video> element               tag bonus 200
- *   <source> element              tag bonus 150
- *   <a> with video URL            tag bonus 0 + url score 100
- *   custom attribute video URL    tag bonus –10 + url score 100
- *   <a> with any link             tag bonus 0 + url score ≥ 20
- *   other media (img/audio)       tag bonus –30 + url score ≥ 30
+ * Candidates are scored and the highest score wins.
+ *
+ * Score components:
+ *   <video> element               tag bonus +200
+ *   <source> element              tag bonus +150
+ *   URL with video file extension url score +100
+ *   URL with streaming manifest   url score +90
+ *   <a> tag                       tag bonus 0 (neutral)
+ *   <img> tag                     tag bonus –30
+ *   other element                 tag bonus –50
  */
 function findBestLink(baseEl: HTMLElement): { url: string; el: Element } | null {
     const candidates: LinkCandidate[] = [];
@@ -414,28 +421,35 @@ function findBestLink(baseEl: HTMLElement): { url: string; el: Element } | null 
         if (score > 0) candidates.push({ url, score, el });
     }
 
-    // 1. Children of the hovered element
-    baseEl.querySelectorAll('a, video, source, [href], [src]').forEach(child => addCandidate(child, 50));
+    // 1. The element itself (highest priority)
+    addCandidate(baseEl, 100);
 
-    // 2. The element itself
-    addCandidate(baseEl, 70);
+    // 2. Immediate parent
+    const immediateParent = baseEl.parentElement;
+    if (immediateParent && immediateParent !== document.body) {
+        addCandidate(immediateParent, 80);
+    }
 
-    // 3. Walk up the ancestor chain; also scan each ancestor's direct children (siblings)
-    let ancestor = baseEl.parentElement;
-    let ancestorScore = 60;
-    for (let depth = 0; depth < 6 && ancestor && ancestor !== document.body; depth++) {
+    // 3. Children of the original element
+    baseEl.querySelectorAll('a, video, source, [href], [src]').forEach(child => addCandidate(child, 60));
+
+    // 4. Further parents (ancestor chain, skipping the immediate parent already added)
+    let ancestor = immediateParent?.parentElement ?? null;
+    let ancestorScore = 50;
+    for (let depth = 0; depth < 5 && ancestor && ancestor !== document.body; depth++) {
         addCandidate(ancestor, ancestorScore);
-
-        // Siblings (direct children of this ancestor that are not the base subtree)
-        Array.from(ancestor.children).forEach(sibling => {
-            if (!sibling.contains(baseEl) && sibling !== baseEl) {
-                addCandidate(sibling, 40);
-                sibling.querySelectorAll('a, video, source').forEach(child => addCandidate(child, 35));
-            }
-        });
-
         ancestor = ancestor.parentElement;
         ancestorScore -= 5;
+    }
+
+    // 5. Immediate siblings (direct children of the immediate parent that are not the base element)
+    if (immediateParent) {
+        Array.from(immediateParent.children).forEach(sibling => {
+            if (sibling !== baseEl) {
+                addCandidate(sibling, 30);
+                sibling.querySelectorAll('a, video, source').forEach(child => addCandidate(child, 25));
+            }
+        });
     }
 
     if (candidates.length === 0) return null;
