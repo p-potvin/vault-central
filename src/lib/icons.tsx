@@ -21,6 +21,7 @@ function createExtensionSafeIcon(IconComponent: React.ComponentType<LucideProps>
 // --- Vault Dashboard Icons ---
 
 // Dashboard/Sidebar
+export const VaultWaresIcon = createExtensionSafeIcon(LucideIcons.ShieldCheckIcon); // for view mode
 export const ViewModeIcon = createExtensionSafeIcon(LucideIcons.SlidersHorizontal); // for view mode
 export const ThemeIcon = createExtensionSafeIcon(LucideIcons.Palette); // for theme
 export const SettingsIcon = createExtensionSafeIcon(LucideIcons.Settings); // for settings/advanced

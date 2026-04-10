@@ -502,8 +502,7 @@ export const VaultDashboard: React.FC = () => {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-3">
             <div className="text-vault-accent">
-              {/* ...existing code... */}
-              <Icons.ViewModeIcon size={24} strokeWidth={2.5} />
+              <Icons.VaultWaresIcon size={26} strokeWidth={2.5} />
             </div>
             <div className="leading-tight">
               <h1 className="text-xl font-bold tracking-tight flex items-center gap-1">

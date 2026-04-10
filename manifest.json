@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "Favorites Central",
-  "version": "2.0.0",
-  "description": "The ultimate video saver. Organize and access all your favorite video sources from any website in one central location.",
+  "name": "Vault Central",
+  "version": "3.2.0",
+  "description": "The ultimate video saver. Organize and access all your favorite videos from any website in one central location.",
   "browser_specific_settings": {
     "gecko": {
-      "id": "favorites-central@p-potvin",
+      "id": "vault-central@p-potvin",
       "data_collection_permissions": {
         "required": ["none"]
       }
@@ -27,7 +27,7 @@
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
   "action": {
-    "default_title": "Open Favorites Central",
+    "default_title": "Open Vault Central",
     "default_popup": "pin-entry.html",
     "default_icon": {
       "16": "icons/icon16.png",

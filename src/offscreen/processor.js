@@ -32,40 +32,55 @@ browser.runtime.onMessage.addListener(async (message) => {
 });
 async function processVideoPreview(url, duration) {
     const fm = await loadFFmpeg();
-    const inputName = `input_${Date.now()}.mp4`; // Shared FS fix
+    const inputName = `input_${Date.now()}.mp4`;
     const outputName = `preview_${Date.now()}.webm`;
     let resultBlob = null;
     try {
+        // WARNING: This will crash the WASM instance if the file is too large (e.g., > 500MB).
+        // Rely on the content script's Canvas MediaRecorder whenever possible.
         const fileData = await fetchFile(url);
         await fm.writeFile(inputName, fileData);
+        const baseEncodingArgs = [
+            '-an', // No audio
+            '-c:v', 'libvpx', // VP8 is significantly faster in WASM than VP9
+            '-crf', '40',
+            '-b:v', '0',
+            '-cpu-used', '5', // Speed optimization for VPx encoders
+            '-deadline', 'realtime',
+            '-threads', '4'
+        ];
         if (duration <= 20) {
             await fm.exec([
                 '-i', inputName,
                 '-t', '20',
                 '-vf', 'scale=426:240',
-                '-an',
-                '-c:v', 'libvpx-vp9',
-                '-crf', '40',
-                '-b:v', '0',
+                ...baseEncodingArgs,
                 outputName
             ]);
         }
         else {
             const segmentDuration = 2;
-            const interval = (duration - 20) / 9;
-            let filter = '';
-            for (let i = 0; i < 10; i++) {
-                const start = i * (interval + segmentDuration);
-                filter += `between(t,${start},${start + segmentDuration})+`;
+            const numSegments = 10;
+            const interval = (duration - 20) / (numSegments - 1);
+            const inputArgs = [];
+            let filterString = '';
+            // Use Input Seeking (-ss before -i) to jump directly to timestamps without decoding
+            for (let i = 0; i < numSegments; i++) {
+                const startTimestamp = (i * interval).toFixed(2);
+                inputArgs.push('-ss', startTimestamp, '-t', segmentDuration.toString(), '-i', inputName);
+                // Add scale filter to each segment before concatenation to ensure uniform size
+                filterString += `[${i}:v]scale=426:240,setpts=PTS-STARTPTS[v${i}]; `;
             }
-            filter = filter.slice(0, -1);
+            // Concat the scaled segments
+            for (let i = 0; i < numSegments; i++) {
+                filterString += `[v${i}]`;
+            }
+            filterString += `concat=n=${numSegments}:v=1:a=0[outv]`;
             await fm.exec([
-                '-i', inputName,
-                '-vf', `select='${filter}',setpts=N/FRAME_RATE/TB,scale=426:240`,
-                '-an',
-                '-c:v', 'libvpx-vp9',
-                '-crf', '40',
-                '-b:v', '0',
+                ...inputArgs,
+                '-filter_complex', filterString,
+                '-map', '[outv]',
+                ...baseEncodingArgs,
                 outputName
             ]);
         }
