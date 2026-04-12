@@ -54,6 +54,7 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
 
     let scraperTabId: number | undefined = undefined;
     let webRequestListener: ((details: browser.WebRequest.OnBeforeRequestDetailsType) => void) | null = null;
+    let tabUpdateListener: ((tabId: number, info: browser.Tabs.OnUpdatedChangeInfoType) => void) | null = null;
     let globalTimeoutId: ReturnType<typeof setTimeout> | null = null;
     let scraperWindowId: number | undefined = undefined;
 
@@ -80,6 +81,14 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
                 }
             }
 
+            if (tabUpdateListener) {
+                try {
+                    browser.tabs.onUpdated.removeListener(tabUpdateListener);
+                } catch (e) {
+                    logger.warn("[doTabExtraction] Error removing tabUpdateListener:", e);
+                }
+            }
+
             if (scraperTabId !== undefined) {
                 try {
                     await browser.tabs.remove(scraperTabId);
@@ -90,16 +99,15 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
         };
 
         try {
+            // BUG FIX: Do NOT call browser.tabs.hide() on a newly-created tab.
+            // Chrome's API explicitly states: "Tabs hidden since creation are never loaded."
+            // Calling hide() immediately after create() suspends the tab before it can load,
+            // so the tabUpdateListener waiting for status='complete' never fires, and
+            // the 35s global timeout becomes the only exit — causing the user to see nothing
+            // until they manually focus the tab (which resumes loading).
+            // Creating with active: false is sufficient to avoid stealing focus without suspending the tab.
             const scraperTab = await browser.tabs.create({ url: targetUrl, active: false });
-            logger.log("[doTabExtraction] Scraper tab created. tabId:", scraperTab.id, "windowId:", scraperTab.windowId);
-            if (scraperTab.id !== undefined) {
-                try {
-                    await browser.tabs.hide(scraperTab.id);
-                    logger.log("[doTabExtraction] Scraper tab hidden.");
-                } catch (e) {
-                    logger.warn("[doTabExtraction] Could not hide scraper tab (may not be supported):", e);
-                }
-            }
+            logger.log("[doTabExtraction] Scraper tab created. tabId:", scraperTab.id, "windowId:", scraperTab.windowId, "| NOTE: NOT hiding tab — hiding a tab since creation prevents it from loading in Chrome.");
             
             scraperTabId = scraperTab.id;
             scraperWindowId = scraperTab.windowId;
@@ -127,14 +135,37 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
                 logger.warn("[doTabExtraction] browser.webRequest is not available - network interception disabled.");
             }
 
-            const tabUpdateListener = (tabId: number, info: browser.Tabs.OnUpdatedChangeInfoType) => {
+            // BUG FIX (race condition): tabs.onUpdated listener is attached after tabs.create(),
+            // so a page that loads instantly from cache can fire status='complete' before the
+            // listener is registered and injectScript() would never be called.
+            // Fix: attach the listener first, then also check the current tab status in case
+            // the page already finished loading while we were setting up.
+            tabUpdateListener = (tabId: number, info: browser.Tabs.OnUpdatedChangeInfoType) => {
                 if (tabId === scraperTabId && info.status === 'complete') {
-                    logger.log("[doTabExtraction] Scraper tab loaded (status=complete). Injecting script...");
-                    browser.tabs.onUpdated.removeListener(tabUpdateListener);
+                    logger.log("[doTabExtraction] Scraper tab loaded (status=complete) via onUpdated. Injecting script...");
+                    browser.tabs.onUpdated.removeListener(tabUpdateListener!);
+                    tabUpdateListener = null;
                     injectScript();
                 }
             };
             browser.tabs.onUpdated.addListener(tabUpdateListener);
+
+            // Check if the tab already reached 'complete' before our listener was attached
+            // (can happen for cached pages or very fast redirects).
+            browser.tabs.get(scraperTab.id!).then(tab => {
+                if (tab.status === 'complete') {
+                    logger.log("[doTabExtraction] Tab was already 'complete' before listener attached (cache hit). Injecting immediately.");
+                    if (tabUpdateListener) {
+                        browser.tabs.onUpdated.removeListener(tabUpdateListener);
+                        tabUpdateListener = null;
+                    }
+                    injectScript();
+                } else {
+                    logger.log("[doTabExtraction] Tab status on post-create check:", tab.status, "— waiting for onUpdated...");
+                }
+            }).catch(e => {
+                logger.warn("[doTabExtraction] Could not check post-create tab status:", e);
+            });
 
             const injectScript = async () => {
                 if (injectionStarted || isResolved || scraperTabId === undefined) {
