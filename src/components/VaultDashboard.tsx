@@ -4,6 +4,7 @@ import { getPinSettings, getSavedVideos, savePinSettings, saveVideos } from '../
 import { getPreview } from '../lib/dexie-store';
 import { VAULT_THEMES, getThemeClass } from '../lib/themes'; // Added for binary previews
 import { type VideoData } from '../types/schemas';
+import { STORAGE_KEYS } from '../lib/constants';
 import * as Icons from '../lib/icons';
 import { cn } from '../lib/utils';
 import React, { useEffect, useState, useMemo, useRef } from 'react';
@@ -21,9 +22,13 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
   useEffect(() => {
     let active = true;
     const checkPreview = async () => {
+      console.log("[PreviewThumb] Checking IndexedDB for preview. url:", video.url);
       const blob = await getPreview(video.url);
       if (blob && active) {
+        console.log("[PreviewThumb] Preview found in IndexedDB. Setting blob URL.");
         setPreviewBlob(URL.createObjectURL(blob));
+      } else {
+        console.log("[PreviewThumb] No preview in IndexedDB yet for:", video.url);
       }
     };
     checkPreview();
@@ -34,11 +39,15 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
     setIsHovering(true);
     
     // Check if we already have it in state
-    if (previewBlob) return;
+    if (previewBlob) {
+      console.log("[PreviewThumb] onMouseEnter: preview already in state. Skipping.");
+      return;
+    }
 
     // Check if it exists in the database
     const blob = await getPreview(video.url);
     if (blob) {
+      console.log("[PreviewThumb] onMouseEnter: preview found in IndexedDB on hover.");
       setPreviewBlob(URL.createObjectURL(blob));
       return;
     }
@@ -49,9 +58,10 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
      */
     const now = Date.now();
     const elapsed = now - video.timestamp;
+    console.log("[PreviewThumb] onMouseEnter: no preview. elapsed since save:", elapsed, "ms. rawVideoSrc:", video.rawVideoSrc);
     
     if (elapsed > 30000 && !isProcessing) {
-      // ...existing code...
+      console.log("[PreviewThumb] onMouseEnter: >30s elapsed and no preview. Retriggering generate_preview...");
       setIsProcessing(true);
       try {
         const response: any = await browser.runtime.sendMessage({
@@ -61,6 +71,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
             duration: typeof video.duration === 'number' ? video.duration : 60 
           }
         });
+        console.log("[PreviewThumb] generate_preview response:", response);
         
         if (response && response.success) {
             // Poll for the result until it appears in DB or timeout (10s)
@@ -68,19 +79,23 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
             const poll = setInterval(async () => {
                 const retryBlob = await getPreview(video.url);
                 if (retryBlob) {
+                    console.log("[PreviewThumb] Preview appeared in IndexedDB after", attempts, "poll attempts.");
                     setPreviewBlob(URL.createObjectURL(retryBlob));
                     setIsProcessing(false);
                     clearInterval(poll);
                 }
                 if (attempts++ > 20) {
+                    console.warn("[PreviewThumb] Polling timed out (20 attempts). Preview still missing.");
                     setIsProcessing(false);
                     clearInterval(poll);
                 }
             }, 500);
             return;
+        } else {
+            console.warn("[PreviewThumb] generate_preview returned unsuccessful response:", response);
         }
       } catch (e) {
-        // ...existing code...
+        console.error("[PreviewThumb] Error sending generate_preview message:", e);
       } finally {
         setIsProcessing(false);
       }
@@ -322,18 +337,26 @@ export const VaultDashboard: React.FC = () => {
     if (savedSortOrder) setSortOrder(savedSortOrder as 'asc' | 'desc');
 
     const load = async () => {
+      console.log("[VaultDashboard] Loading vault data...");
       const settings = await getPinSettings();
       setPinSettings(settings);
+      console.log("[VaultDashboard] PIN settings loaded. enabled:", settings.enabled);
 
       const all = await getSavedVideos();
+      console.log("[VaultDashboard] Vault loaded.", all?.length ?? 0, "items.");
       setItems(all || []);
     };
     load();
     
     // Listen for browser sync updates
     const handleStorageChange = (changes: any, areaName: string) => {
-      if (areaName === 'local' && changes.vault_videos) {
-        setItems(changes.vault_videos.newValue || []);
+      console.log("[VaultDashboard] storage.onChanged fired. areaName:", areaName, "| changed keys:", Object.keys(changes).join(', '));
+      // BUG FIX: was checking changes.vault_videos but the actual key is STORAGE_KEYS.SAVED_VIDEOS ('savedVideos').
+      // This listener was never firing when vault items were saved.
+      if (areaName === 'local' && changes[STORAGE_KEYS.SAVED_VIDEOS]) {
+        const newValue = changes[STORAGE_KEYS.SAVED_VIDEOS].newValue || [];
+        console.log("[VaultDashboard] savedVideos storage change detected. New count:", newValue.length);
+        setItems(newValue);
       }
     };
     if (browser.storage && browser.storage.onChanged) {
