@@ -9,6 +9,8 @@ import { STORAGE_KEYS, NOTIFICATION_CONFIG } from '../lib/constants';
  * and user notifications with a security-first approach.
  */
 
+const LOG_PREFIX = "[VaultAuth:content]";
+
 let lastHoveredElement: HTMLElement | null = null;
 let mutationTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -18,7 +20,7 @@ document.addEventListener("mousemove", (e: MouseEvent) => {
 
 document.addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.altKey && (e.key === "x" || e.key === "X" || e.code === "KeyX")) {
-        console.log("[VaultAuth] Alt+X shortcut detected");
+        console.log(`${LOG_PREFIX} Alt+X shortcut detected. lastHoveredElement:`, lastHoveredElement?.tagName, lastHoveredElement?.className?.substring(0, 40));
         e.preventDefault();
         e.stopPropagation();
         startCaptureFlow();
@@ -26,7 +28,11 @@ document.addEventListener("keydown", (e: KeyboardEvent) => {
 }, { capture: true });
 
 function addHeartIndicator(el: HTMLElement) {
-    if (!el || el.querySelector(".vault-heart-indicator")) return;
+    if (!el || el.querySelector(".vault-heart-indicator")) {
+        console.log(`${LOG_PREFIX} addHeartIndicator: skipped (already present or no element).`);
+        return;
+    }
+    console.log(`${LOG_PREFIX} addHeartIndicator: adding to element`, el.tagName, el.className?.substring(0, 40));
 
     const style = window.getComputedStyle(el);
     if (style.position === "static") {
@@ -70,22 +76,27 @@ function addHeartIndicator(el: HTMLElement) {
  * Scans the page for saved videos and marks them
  */
 async function highlightVaultItems() {
+    console.log(`${LOG_PREFIX} highlightVaultItems: scanning page for saved URLs...`);
     try {
         const storage = await browser.storage.local.get(STORAGE_KEYS.SAVED_VIDEOS);
         const savedVideos = (storage[STORAGE_KEYS.SAVED_VIDEOS] || []) as VideoData[];
+        console.log(`${LOG_PREFIX} highlightVaultItems: found ${savedVideos.length} saved items in vault.`);
         
         if (savedVideos.length === 0) return;
 
         const savedUrls = new Set(savedVideos.map((v: VideoData) => v.url));
         const links = document.querySelectorAll("a");
+        let marked = 0;
 
         links.forEach(link => {
             if (savedUrls.has(link.href)) {
                 addHeartIndicator(link as HTMLElement);
+                marked++;
             }
         });
+        console.log(`${LOG_PREFIX} highlightVaultItems: marked ${marked} links out of ${links.length} found on page.`);
     } catch (e) {
-        console.error("[VaultAuth] Highlight failure:", e);
+        console.error(`${LOG_PREFIX} Highlight failure:`, e);
     }
 }
 
@@ -223,16 +234,20 @@ function updateNotificationOffsets() {
 
 function captureVideoFrame(video: HTMLVideoElement): string | null {
     try {
+        console.log(`${LOG_PREFIX} captureVideoFrame: attempting capture. videoWidth=${video.videoWidth}, videoHeight=${video.videoHeight}, readyState=${video.readyState}`);
         const canvas = document.createElement('canvas');
         canvas.width = video.videoWidth || 640;
         canvas.height = video.videoHeight || 360;
         const ctx = canvas.getContext('2d');
         if (ctx) {
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            return canvas.toDataURL('image/jpeg', 0.6);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+            console.log(`${LOG_PREFIX} captureVideoFrame: success. dataUrl length=${dataUrl.length}`);
+            return dataUrl;
         }
+        console.warn(`${LOG_PREFIX} captureVideoFrame: canvas.getContext('2d') returned null.`);
     } catch (e) {
-        console.warn("[VaultAuth] Failed to capture video frame:", e);
+        console.warn(`${LOG_PREFIX} Failed to capture video frame:`, e);
     }
     return null;
 }
@@ -326,31 +341,49 @@ function getBestTarget(element: HTMLElement | null): { url: string, isDirectVide
         localMeta: extractSurroundingMetadata(element)
     };
 
-    if (!element) return result;
+    console.log(`${LOG_PREFIX} getBestTarget: element=`, element?.tagName, element?.className?.substring(0, 40));
+    console.log(`${LOG_PREFIX} getBestTarget: localMeta=`, result.localMeta);
+
+    if (!element) {
+        console.warn(`${LOG_PREFIX} getBestTarget: no element. Falling back to window.location.href:`, result.url);
+        return result;
+    }
 
     const video = element.closest('video') || element.querySelector('video');
     if (video) {
+        console.log(`${LOG_PREFIX} getBestTarget: found <video> element. Attempting frame capture.`);
         result.fallbackThumbnail = captureVideoFrame(video as HTMLVideoElement);
     } else if (element.tagName.toLowerCase() === 'img') {
         result.fallbackThumbnail = (element as HTMLImageElement).src;
+        console.log(`${LOG_PREFIX} getBestTarget: element is <img>. fallbackThumbnail src length=${result.fallbackThumbnail?.length ?? 0}`);
     } else {
         const img = element.querySelector('img');
-        if (img) result.fallbackThumbnail = img.src;
+        if (img) {
+            result.fallbackThumbnail = img.src;
+            console.log(`${LOG_PREFIX} getBestTarget: found child <img>. fallbackThumbnail src length=${result.fallbackThumbnail?.length ?? 0}`);
+        } else {
+            console.log(`${LOG_PREFIX} getBestTarget: no <video> or <img> found under element. fallbackThumbnail will be null.`);
+        }
     }
 
     const anchor = element.closest('a');
     if (anchor && anchor.href) {
         result.url = anchor.href;
-        if (scoreUrl(anchor.href) >= 1000) result.isDirectVideo = true;
+        const score = scoreUrl(anchor.href);
+        if (score >= 1000) result.isDirectVideo = true;
+        console.log(`${LOG_PREFIX} getBestTarget: resolved URL from anchor href:`, result.url, "| score:", score, "| isDirectVideo:", result.isDirectVideo);
         return result;
     }
 
     if (video) {
-        const src = video.src || video.querySelector('source')?.src;
+        const src = (video as HTMLVideoElement).src || (video as HTMLVideoElement).querySelector('source')?.src;
         if (src && !src.startsWith('blob:')) {
             result.url = src;
             result.isDirectVideo = true;
+            console.log(`${LOG_PREFIX} getBestTarget: resolved URL from video.src:`, result.url);
             return result;
+        } else {
+            console.warn(`${LOG_PREFIX} getBestTarget: video.src is a blob or empty:`, (video as HTMLVideoElement).src);
         }
     }
 
@@ -370,6 +403,9 @@ function getBestTarget(element: HTMLElement | null): { url: string, isDirectVide
         nearbyLinks.sort((a, b) => scoreUrl(b.href) - scoreUrl(a.href));
         result.url = nearbyLinks[0].href;
         if (scoreUrl(result.url) >= 1000) result.isDirectVideo = true;
+        console.log(`${LOG_PREFIX} getBestTarget: resolved URL from coordinate fallback:`, result.url, "| score:", scoreUrl(result.url));
+    } else {
+        console.warn(`${LOG_PREFIX} getBestTarget: no anchor found via coordinates. Using window.location.href:`, result.url);
     }
 
     return result;
@@ -377,6 +413,7 @@ function getBestTarget(element: HTMLElement | null): { url: string, isDirectVide
 
 function startCaptureFlow() {    
     const target = getBestTarget(lastHoveredElement);
+    console.log(`${LOG_PREFIX} startCaptureFlow: resolved target URL:`, target.url, "| isDirectVideo:", target.isDirectVideo, "| fallbackThumbnail present:", !!target.fallbackThumbnail, "(len:", target.fallbackThumbnail?.length ?? 0, ")");
 
     const notificationId = `capture-${Date.now()}`;
     showVaultNotification("processing", `Infiltrating: ${target.localMeta.title?.substring(0, 20)}...`, notificationId);
@@ -396,15 +433,16 @@ export interface TargetPayload {
 }
 
 function attemptExtraction(target: TargetPayload, notificationId?: string) {
-    console.log("[VaultAuth] Attempting extraction for:", target.url);
+    console.log(`${LOG_PREFIX} attemptExtraction: url=${target.url} | isDirectVideo=${target.isDirectVideo} | thumbnail present=${!!target.fallbackThumbnail} (len=${target.fallbackThumbnail?.length ?? 0})`);
     
     const isLocalCapture = target.url === window.location.href || target.isDirectVideo;
+    console.log(`${LOG_PREFIX} attemptExtraction: isLocalCapture=${isLocalCapture} (target.url === window.location.href: ${target.url === window.location.href})`);
     
     let safeHostname = window.location.hostname;
     try {
         safeHostname = new URL(target.url).hostname;
     } catch (e) {
-        console.warn("[VaultAuth] Invalid URL passed to extraction:", target.url);
+        console.warn(`${LOG_PREFIX} attemptExtraction: Invalid URL passed to extraction:`, target.url);
     }
 
     const metaDataPayload = isLocalCapture ? {
@@ -426,11 +464,14 @@ function attemptExtraction(target: TargetPayload, notificationId?: string) {
         ...metaDataPayload
     };
 
+    console.log(`${LOG_PREFIX} attemptExtraction: sending process_capture. title="${payload.title}" | author="${payload.author}" | thumbnail len=${payload.thumbnail.length} | tags=${payload.tags?.length ?? 0}`);
+
     browser.runtime.sendMessage({
         action: "process_capture",
         data: payload
     }).then((res: unknown) => {
         const response = res as { success?: boolean; message?: string } | undefined;
+        console.log(`${LOG_PREFIX} attemptExtraction: background responded:`, response);
         if (!response) {
             showVaultNotification('error', 'Extension background offline', notificationId);
             return;
@@ -442,21 +483,23 @@ function attemptExtraction(target: TargetPayload, notificationId?: string) {
             showVaultNotification('error', response.message || 'Failed to capture', notificationId);
         }
     }).catch((e: Error) => {
-        console.error("[VaultAuth] Message passing error:", e);
+        console.error(`${LOG_PREFIX} attemptExtraction: Message passing error:`, e);
         showVaultNotification('error', 'Connection to Vault lost', notificationId);
     });
 }
 
 browser.runtime.onMessage.addListener((request: any, sender: any) => {
+    console.log(`${LOG_PREFIX} onMessage: received action="${request.action || request.type}"`);
     if (request.action === "ping") return Promise.resolve(true);
     
     if (request.action === "extract_video") {
-        console.log("[VaultAuth] Forcing extraction from DOM...");
+        console.log(`${LOG_PREFIX} onMessage: extract_video requested. Forcing extraction from DOM...`);
         const target = getBestTarget(lastHoveredElement);
         return Promise.resolve(attemptExtraction(target));
     }
 
     if (request.type === "capture-video" || request.action === "capture-video") {
+        console.log(`${LOG_PREFIX} onMessage: capture-video triggered from background command.`);
         startCaptureFlow();
         return Promise.resolve(true);
     }
@@ -465,16 +508,21 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
 
 const observer = new MutationObserver(() => {
     if (mutationTimeout) clearTimeout(mutationTimeout);
-    mutationTimeout = setTimeout(highlightVaultItems, 1200);
+    mutationTimeout = setTimeout(() => {
+        console.log(`${LOG_PREFIX} MutationObserver: DOM changed. Rescanning for saved items...`);
+        highlightVaultItems();
+    }, 1200);
 });
 
 if (document.body) {
     observer.observe(document.body, { childList: true, subtree: true });
+    console.log(`${LOG_PREFIX} MutationObserver attached. Running initial highlightVaultItems.`);
     highlightVaultItems();
 } else {
     window.addEventListener("DOMContentLoaded", () => {
         if (document.body) {
             observer.observe(document.body, { childList: true, subtree: true });
+            console.log(`${LOG_PREFIX} DOMContentLoaded: MutationObserver attached. Running initial highlightVaultItems.`);
             highlightVaultItems();
         }
     });
