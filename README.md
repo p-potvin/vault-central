@@ -1,6 +1,6 @@
 # 🛡️ Vault Central
 
-A security-first, high-performance browser extension designed to instantly vault your favorite videos and links. Built with TypeScript, Zod, and Vite for maximum integrity and cross-browser compatibility (Chrome & Firefox).
+A privacy-first, high-performance browser extension designed to instantly vault your favorite videos and links. Add a PIN to instantly encrypt your data locally. Your data never leaves your device. Built with TypeScript, Zod, and Vite for maximum integrity and cross-browser compatibility (Chrome & Firefox).
 
 ---
 
@@ -55,10 +55,12 @@ Before starting, ensure you have the following installed on your computer:
 ---
 
 ## 🔒 Security Policy
-This version of Vault Central follows the **VaultWares "Security-First" Standard**:
+This version of Vault Central follows the **VaultWares "Privacy-First" Standard**:
+*   **Privacy**: Further protect your data with a 4-6 number PIN that you can set to lock your dashboard after a certain time
 *   **Data Integrity**: Every piece of data extracted from the web is validated via Zod schemas to prevent XSS attacks.
 *   **Isolation**: Uses background tab isolation for HLS (`.m3u8`) stream interception.
 *   **Zero External Tracking**: All data stays within your browser's local storage.
+*   **Encryption**: Encrypt your data by enabling the PIN in the dashboard settings
 
 ---
 
