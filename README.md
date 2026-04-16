@@ -1,6 +1,6 @@
 # 🛡️ Vault Central
 
-A security-first, high-performance browser extension designed to instantly vault your favorite videos and links. Built with TypeScript, Zod, and Vite for maximum integrity and cross-browser compatibility (Chrome & Firefox).
+A privacy-first browser extension that lets you quickly save your favorite videos and links. Privacy comes first (your vault stays on your device), security is a close second (to protect that privacy), and functionality is the third pillar (fast, simple, and reliable). Built with TypeScript, Zod, and Vite for cross-browser compatibility (Chrome & Firefox).
 
 ---
 
@@ -54,15 +54,14 @@ Before starting, ensure you have the following installed on your computer:
 
 ---
 
-## 🔒 Security Policy
-This version of Vault Central follows the **VaultWares "Security-First" Standard**:
-*   **Data Integrity**: Every piece of data extracted from the web is validated via Zod schemas to prevent XSS attacks.
-*   **Isolation**: Uses background tab isolation for HLS (`.m3u8`) stream interception.
-*   **Zero External Tracking**: All data stays within your browser's local storage.
+## 🧭 Privacy & Security Policy
+This version of Vault Central follows the **VaultWares privacy-first standard** (privacy → security → functionality):
+*   **Privacy First**: No external tracking. Your saved items stay in your browser’s local storage unless you choose to move them elsewhere.
+*   **Security Second**: Data extracted from the web is validated with Zod schemas to reduce the risk of XSS and malformed inputs.
+*   **Functionality Third**: Quick shortcuts and a simple UI so the extension is easy to use day-to-day.
 
 ---
 
 ## 👨‍💻 Developer Commands
 *   `npm run build`: Compile TypeScript and bundle for production (outputs to `/dist`).
 *   `npm run dev`: Start Vite in development mode for live debugging.
-

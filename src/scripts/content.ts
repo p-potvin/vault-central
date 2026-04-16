@@ -6,7 +6,7 @@ import { STORAGE_KEYS, NOTIFICATION_CONFIG } from '../lib/constants';
  * [VaultAuth] Content Script (Modernized)
  * --------------------------------------
  * Handles DOM-based video detection, visual status indicators (Hearts),
- * and user notifications with a security-first approach.
+ * and user notifications with a privacy-first approach (security in service of privacy).
  */
 
 const LOG_PREFIX = "[VaultAuth:content]";

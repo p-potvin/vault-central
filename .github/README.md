@@ -1,7 +1,7 @@
 # 🛡️ VaultWares
-**High-Security Digital Asset & Hardware Marketplace**
+**Privacy-First Digital Asset & Hardware Marketplace**
 
-VaultWares is a premium e-commerce platform built with a "Security-First" philosophy. It leverages a modern, type-safe stack to deliver a seamless shopping experience for high-value digital and physical assets. It also handles a vast array of projects in many different spheres. This is a general guideline to apply when coding under the VaultWares umbrella. Only use what applies to your application.
+VaultWares builds consumer-facing products with a simple order of priorities: **individuals' privacy first**, **security second**, and **functionality third**. We use modern, type-safe tools to deliver a smooth experience for high-value digital and physical goods, but we don’t treat “security” as a substitute for privacy. Privacy is about limiting and controlling data; security is how we protect what exists. We aim to strike a practical balance and avoid fear-driven choices that quietly erode privacy. This is a general guideline to apply when coding under the VaultWares umbrella. Only use what applies to your application.
 
 ## 🚀 Tech Stack
 ### This is a flexible and incomplete list
@@ -19,10 +19,10 @@ VaultWares is a premium e-commerce platform built with a "Security-First" philos
 3. **Set up Environment:** Create a `.env.local` with your Supabase keys.
 4. **Run Development:** `npm run dev`
 
-## 🔒 Security Principles
-- **Row Level Security (RLS):** Enabled on all Supabase tables.
-- **Server-Side Validation:** All transactions validated via Zod schemas.
-- **Minimalist Footprint:** Zero-dependency policy for non-essential features.
+## 🧭 Principles (Privacy → Security → Functionality)
+- **Privacy First:** Default to minimal data collection, clear consent, and no hidden tracking. Keep personal data out of logs and analytics unless it’s truly necessary.
+- **Security Second:** Use proven defenses (RLS/least-privilege, input validation, safe storage) to protect privacy and prevent misuse.
+- **Functionality Third:** Keep the product simple, understandable, and accessible for non-technical users.
 
 ## 🎨 Design Language
 - **View STYLE.md**
