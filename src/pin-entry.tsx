@@ -2,8 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import browser from 'webextension-polyfill';
 import { getPinSettings, savePinSettings, isVaultLocked } from './lib/storage-vault';
+import { getThemeClass, VAULT_THEMES } from './lib/themes';
 import * as Icons from './lib/icons';
 import './styles/globals.css';
+import './styles/vault-themes.css';
 
 
 const PinPopup: React.FC = () => {
@@ -12,6 +14,14 @@ const PinPopup: React.FC = () => {
   const [error, setError] = useState(false);
   const [isLocked, setIsLocked] = useState(true);
   const inputsRef = useRef<(HTMLInputElement | null)[]>([]);
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('vault-theme');
+    const themeNum = savedTheme ? parseInt(savedTheme, 10) : 10;
+    const mode = VAULT_THEMES[themeNum]?.mode || 'light';
+    document.documentElement.setAttribute('data-theme', getThemeClass(themeNum));
+    document.documentElement.classList.toggle('dark', mode === 'dark');
+  }, []);
 
   useEffect(() => {
     const load = async () => {
@@ -82,22 +92,8 @@ const PinPopup: React.FC = () => {
   // but if popup opens, we handle it.
   if (!pinSettings.enabled) {
     return (
-      <div className="w-[320px] p-6 bg-[#0b0f19] text-white flex flex-col items-center gap-4 border border-[#1e293b]">
-        <style>{`
-          .vault-btn {
-            background: #1e293b;
-            border: 1px solid #334155;
-            color: #94a3b8;
-            transition: all 0.2s;
-          }
-          .vault-btn:hover {
-            background: #2563eb;
-            border-color: #3b82f6;
-            color: white;
-            box-shadow: 0 0 20px -5px rgba(59, 130, 246, 0.5);
-          }
-        `}</style>
-        <Icons.FingerprintIcon size={32} className="text-[#3b82f6]" />
+      <div className="w-[320px] p-6 bg-vault-bg text-vault-text flex flex-col items-center gap-4 border border-vault-border">
+        <Icons.FingerprintIcon size={32} className="text-vault-accent" />
         <p className="text-[10px] font-mono uppercase tracking-[0.2em] font-bold">Vault Unsecured</p>
         <button
           onClick={() => {
@@ -114,24 +110,10 @@ const PinPopup: React.FC = () => {
 
   if (!isLocked) {
     return (
-      <div className="w-[320px] p-6 bg-[#0b0f19] text-white flex flex-col items-center gap-4 animate-in fade-in duration-500 border border-[#1e293b]">
-        <style>{`
-          .vault-btn {
-            background: #1e293b;
-            border: 1px solid #334155;
-            color: #94a3b8;
-            transition: all 0.2s;
-          }
-          .vault-btn:hover {
-            background: #2563eb;
-            border-color: #3b82f6;
-            color: white;
-            box-shadow: 0 0 20px -5px rgba(59, 130, 246, 0.5);
-          }
-        `}</style>
-        <Icons.UnlockIcon size={32} className="text-[#10b981] animate-pulse" />
-        <p className="text-[10px] font-mono uppercase tracking-[0.2em] font-bold text-[#10b981]">Vault Unlocked</p>
-        <div className="w-full h-px bg-[#1e293b]" />
+      <div className="w-[320px] p-6 bg-vault-bg text-vault-text flex flex-col items-center gap-4 animate-in fade-in duration-200 border border-vault-border">
+        <Icons.UnlockIcon size={32} className="text-vault-success" />
+        <p className="text-[10px] font-mono uppercase tracking-[0.2em] font-bold text-vault-success">Vault Unlocked</p>
+        <div className="w-full h-px bg-vault-border" />
         <button
           onClick={() => {
             browser.runtime.sendMessage({ action: "open_dashboard" });
