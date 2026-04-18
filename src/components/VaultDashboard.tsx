@@ -629,7 +629,7 @@ export const VaultDashboard: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-vault-bg text-vault-text font-sans antialiased transition-colors duration-500">
+    <div className="flex flex-col h-screen overflow-hidden bg-vault-bg text-vault-text font-sans antialiased transition-colors duration-200">
       
       {/* HEADER */}
       <header style={{ backgroundColor: 'var(--vault-card-bg)' }} className="flex-none h-16 flex items-center justify-between px-4 md:px-6 z-20 backdrop-blur-md border-b border-vault-border shadow-sm relative">
@@ -1062,7 +1062,7 @@ export const VaultDashboard: React.FC = () => {
                               <SafeThumbImg
                                 src={fav.thumbnail}
                                 alt={fav.title || 'Saved item thumbnail'}
-                                className="w-full h-full object-cover transition-transform duration-500 group-hover/thumb:scale-105"
+                                className="w-full h-full object-cover transition-transform duration-200 group-hover/thumb:scale-105"
                               />
                             )}
 
@@ -1582,14 +1582,14 @@ export const VaultDashboard: React.FC = () => {
       {playingVideo && (
         <div 
           className={cn(
-            "fixed inset-0 z-50 flex items-center justify-center transition-all duration-700",
+            "fixed inset-0 z-50 flex items-center justify-center transition-all duration-200",
             isDimmed ? "bg-black/98" : "bg-black/80 backdrop-blur-sm"
           )}
           onClick={() => { setPlayingVideo(null); setIsDimmed(false); }}
         >
           <div 
             className={cn(
-              "w-[90vw] max-w-5xl bg-vault-cardBg border border-vault-border rounded-lg shadow-2xl flex flex-col overflow-hidden transition-transform duration-500",
+              "w-[90vw] max-w-5xl bg-vault-cardBg border border-vault-border rounded-lg shadow-2xl flex flex-col overflow-hidden transition-transform duration-200",
               playingVideo ? "scale-100 opacity-100" : "scale-95 opacity-0"
             )}
             onClick={e => e.stopPropagation()} // Prevent close on click inside
