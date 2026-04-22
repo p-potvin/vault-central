@@ -1,5 +1,7 @@
 # 🛠 VaultWares Enterprise-wide Guidelines for Programming Projects
 
+VaultWares builds consumer-facing tools with a clear order of priorities: **Individuals' Privacy first**, **Security second**, and **Functionality third**. Privacy and security are related but not interchangeable: privacy is about limiting and controlling data, while security is how we protect what exists. We aim to strike a practical balance and avoid fear-driven “security” theater that bad actors exploit and that quietly undermines privacy.
+
 ## 1. Core Tech Stack (varies by project, needs, and team preferences)
 
 **- Everything must be integrated with Google Cloud Services: Run, Deploy, Build, SQL Tools, etc.**
@@ -60,7 +62,11 @@
 
 ## 4. Specific Constraints for Gemini
 
-**- Security First: Follow OWASP Principles. Always sanitize user inputs. If writing SQL or Supabase queries, ensure Row Level Security (RLS) is considered.**
+**- Privacy First (Primary): Minimize personal data collection, avoid hidden tracking/fingerprinting, and keep personal data out of logs/analytics by default. Prefer explicit consent and privacy-preserving defaults.**
+
+**- Security (Second): Follow OWASP principles. Always validate and sanitize user input. If writing SQL or Supabase queries, ensure Row Level Security (RLS) and least-privilege access are considered.**
+
+**- Functionality (Third): Keep flows understandable for non-technical users. Make the safe choice the easy choice, and prefer clarity over cleverness.**
 
 **- Error Handling: Use a centralized error-boundary pattern. Don't just console.log(error); provide user-friendly feedback using a Toast component.**
 
