@@ -7,7 +7,7 @@ import { type VideoData } from '../types/schemas';
 import { STORAGE_KEYS } from '../lib/constants';
 import * as Icons from '../lib/icons';
 import { cn } from '../lib/utils';
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useDeferredValue } from 'react';
 
 /**
  * Preview Player Component
@@ -185,6 +185,7 @@ const SafeThumbImg: React.FC<{
 export const VaultDashboard: React.FC = () => {
   const [items, setItems] = useState<VideoData[]>([]);
   const [search, setSearch] = useState('');
+  const deferredSearch = useDeferredValue(search);
   const [searchField, setSearchField] = useState<keyof VideoData>('title');
   const [currentTheme, setCurrentTheme] = useState<number>(10);
   
@@ -490,10 +491,10 @@ export const VaultDashboard: React.FC = () => {
 
   const filtered = useMemo(() => {
     return items.filter(f => {
-      if (!search) return true;
+      if (!deferredSearch) return true;
       const targetValue = f[searchField];
       if (targetValue === null || targetValue === undefined) return false;
-      const searchStr = search.toLowerCase();
+      const searchStr = deferredSearch.toLowerCase();
       
       if (Array.isArray(targetValue)) {
         return targetValue.some(v => v.toString().toLowerCase().includes(searchStr));
@@ -501,7 +502,7 @@ export const VaultDashboard: React.FC = () => {
       
       return targetValue.toString().toLowerCase().includes(searchStr);
     });
-  }, [items, search, searchField]);
+  }, [items, deferredSearch, searchField]);
 
   const sorted = useMemo(() => {
     const compareBy = (
