@@ -1,3 +1,7 @@
 ## 2026-04-21 - [useDeferredValue for filtering]
 **Learning:** useDeferredValue provides an easy win for large list filtering when typing in inputs without having to implement debouncing.
 **Action:** Use useDeferredValue for filtering lists to keep UI responsive on typing.
+
+## 2024-04-23 - Prevent main-thread blocking in expensive list filters
+**Learning:** Filtering lists while typing can cause massive input latency if the list is long, since React will re-render and re-calculate synchronously on every keystroke. Also, running string manipulations like `.toLowerCase()` inside an `O(N)` loop on every render is incredibly inefficient.
+**Action:** Use React 19's `useDeferredValue` on the raw string state to keep inputs fast and responsive, and ensure the `.toLowerCase()` call is hoisted *outside* the `filter` loop so it only evaluates once per render instead of `N` times.

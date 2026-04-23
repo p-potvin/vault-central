@@ -492,11 +492,13 @@ export const VaultDashboard: React.FC = () => {
   };
 
   const filtered = useMemo(() => {
+    if (!effectiveSearch) return items;
+
+    const searchStr = effectiveSearch.toLowerCase();
+
     return items.filter(f => {
-      if (!effectiveSearch) return true;
       const targetValue = f[searchField];
       if (targetValue === null || targetValue === undefined) return false;
-      const searchStr = effectiveSearch.toLowerCase();
       
       if (Array.isArray(targetValue)) {
         return targetValue.some(v => v.toString().toLowerCase().includes(searchStr));
