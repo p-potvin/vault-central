@@ -6,7 +6,7 @@ import { VAULT_THEMES, getThemeClass } from '../lib/themes'; // Added for binary
 import { STORAGE_KEYS } from '../lib/constants';
 import * as Icons from '../lib/icons';
 import { cn } from '../lib/utils';
-import { useEffect, useState, useMemo, useRef } from 'react';
+import { useEffect, useState, useMemo, useRef, useDeferredValue } from 'react';
 /**
  * Preview Player Component
  * Handles the "YouTube-style" 10x2s hover preview
@@ -113,6 +113,9 @@ const SafeThumbImg = ({ src, alt, className, compact }) => {
 export const VaultDashboard = () => {
     const [items, setItems] = useState([]);
     const [search, setSearch] = useState('');
+    const deferredSearch = useDeferredValue(search);
+    // When search is cleared, use the immediate value so the list resets instantly.
+    const effectiveSearch = search === '' ? search : deferredSearch;
     const [searchField, setSearchField] = useState('title');
     const [currentTheme, setCurrentTheme] = useState(10);
     // Sidebar states
@@ -390,18 +393,18 @@ export const VaultDashboard = () => {
     };
     const filtered = useMemo(() => {
         return items.filter(f => {
-            if (!search)
+            if (!effectiveSearch)
                 return true;
             const targetValue = f[searchField];
             if (targetValue === null || targetValue === undefined)
                 return false;
-            const searchStr = search.toLowerCase();
+            const searchStr = effectiveSearch.toLowerCase();
             if (Array.isArray(targetValue)) {
                 return targetValue.some(v => v.toString().toLowerCase().includes(searchStr));
             }
             return targetValue.toString().toLowerCase().includes(searchStr);
         });
-    }, [items, search, searchField]);
+    }, [items, effectiveSearch, searchField]);
     const sorted = useMemo(() => {
         const compareBy = (a, b, key, order) => {
             if (key === 'DateDesc')

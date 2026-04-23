@@ -63,22 +63,22 @@ async function processVideoPreview(url, duration) {
             const numSegments = 10;
             const interval = (duration - 20) / (numSegments - 1);
             const inputArgs = [];
-            let filterString = '';
+            const filterParts = [];
             // Use Input Seeking (-ss before -i) to jump directly to timestamps without decoding
             for (let i = 0; i < numSegments; i++) {
                 const startTimestamp = (i * interval).toFixed(2);
                 inputArgs.push('-ss', startTimestamp, '-t', segmentDuration.toString(), '-i', inputName);
                 // Add scale filter to each segment before concatenation to ensure uniform size
-                filterString += `[${i}:v]scale=426:240,setpts=PTS-STARTPTS[v${i}]; `;
+                filterParts.push(`[${i}:v]scale=426:240,setpts=PTS-STARTPTS[v${i}]; `);
             }
             // Concat the scaled segments
             for (let i = 0; i < numSegments; i++) {
-                filterString += `[v${i}]`;
+                filterParts.push(`[v${i}]`);
             }
-            filterString += `concat=n=${numSegments}:v=1:a=0[outv]`;
+            filterParts.push(`concat=n=${numSegments}:v=1:a=0[outv]`);
             await fm.exec([
                 ...inputArgs,
-                '-filter_complex', filterString,
+                '-filter_complex', filterParts.join(''),
                 '-map', '[outv]',
                 ...baseEncodingArgs,
                 outputName
