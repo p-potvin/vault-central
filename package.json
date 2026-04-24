@@ -1,7 +1,7 @@
 {
   "name": "vault-central",
   "version": "3.2.0",
-  "description": "A simple and lightweight browser extension designed to instantly save your favorite videos and links while browsing. By utilizing a quick keyboard shortcut, you can effortlessly capture the video or link directly under your mouse cursor and store it in a neatly organized dashboard.",
+  "description": "VaultWares Vault Central — a privacy-first browser extension that instantly saves videos and links under your cursor into an AES-256-encrypted local vault, complete with a fully themed dashboard, HLS stream interception, FFmpeg preview generation, and optional PIN lock.",
   "main": "content.js",
   "scripts": {
     "dev": "vite",
@@ -14,7 +14,7 @@
     "type": "git",
     "url": "git+https://github.com/p-potvin/vault-central.git"
   },
-  "keywords": ["Videos", "Favorites", "Bookmarks", "Save", "Dashboard", "Customization", "Secured"],
+  "keywords": ["browser-extension", "video-vault", "privacy-first", "vaultwares", "videos", "favorites", "bookmarks", "save", "dashboard", "customization", "secured", "hls", "m3u8", "indexed-db", "aes-256"],
   "author": "VaultWares",
   "license": "ISC",
   "bugs": {
