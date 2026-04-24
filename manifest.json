@@ -3,9 +3,7 @@
   "name": "VaultWares — Vault Central",
   "short_name": "Vault Central",
   "version": "3.2.0",
-  "description": "Privacy-first video vault by VaultWares. One keystroke saves any video or link under your cursor — encrypted locally, never shared.",
-  "author": "VaultWares",
-  "homepage_url": "https://github.com/p-potvin/vault-central",
+  "description": "A privacy-first video vault. Save and revisit favorite videos from around the web without hidden tracking.",
   "browser_specific_settings": {
     "gecko": {
       "id": "vault-central@p-potvin",

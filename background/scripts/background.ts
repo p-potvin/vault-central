@@ -40,547 +40,361 @@ export interface ExtractionResult {
     src: string | null;
     metadata: {
         title: string;
-        thumbnail: string;
+        thumbnail: string; // Used for the WebM or JPEG base64
         duration: number;
         author: string;
         views: string;
         tags: string[];
         likes: string;
         date: string;
-        description: string;
-        actors: string[];
-        quality: string;
     };
 }
 
-// ─── Network Intercept Scoring ──────────────────────────────────────────────
-// Higher score = more desirable source. We strongly prefer HLS master playlists
-// and direct mp4/webm files over everything else.
-
-function scoreNetworkUrl(url: string): number {
-    const low = url.toLowerCase();
-    // Master m3u8 (contains "master" or is the first m3u8 hit)
-    if (low.includes('.m3u8') && (low.includes('master') || low.includes('playlist'))) return 1000;
-    // Any m3u8
-    if (low.includes('.m3u8')) return 900;
-    // Direct video files
-    if (/\.(mp4)(\?|$)/.test(low)) return 800;
-    if (/\.(webm)(\?|$)/.test(low)) return 700;
-    if (/\.(flv|mkv|mov|avi|wmv)(\?|$)/.test(low)) return 600;
-    // MPEG-DASH manifests
-    if (low.includes('.mpd')) return 850;
-    // TS segments are low priority (we want the manifest, not chunks)
-    if (/\.(ts)(\?|$)/.test(low) && !low.includes('.m3u8')) return 100;
-    return 0;
-}
-
-// ─── Silent Tab Extraction ──────────────────────────────────────────────────
-// Opens the target URL in a truly hidden, muted tab inside a minimised window.
-// Simultaneously intercepts network requests (for m3u8/mp4) and injects a
-// scraper script that aggressively extracts the main video source + metadata.
-
 async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | null> {
-    logger.log("[doTabExtraction] Starting silent extraction for:", targetUrl);
+    logger.log("[doTabExtraction] Starting extraction for:", targetUrl);
 
-    let scraperTabId: number | undefined;
-    let scraperWindowId: number | undefined;
-    let ownWindow = false;  // did we create a dedicated window?
+    let scraperTabId: number | undefined = undefined;
     let webRequestListener: ((details: browser.WebRequest.OnBeforeRequestDetailsType) => void) | null = null;
     let tabUpdateListener: ((tabId: number, info: browser.Tabs.OnUpdatedChangeInfoType) => void) | null = null;
     let globalTimeoutId: ReturnType<typeof setTimeout> | null = null;
-
-    const defaultMetadata: ExtractionResult['metadata'] = {
-        title: "", thumbnail: "", duration: 0, author: "", views: "",
-        tags: [], likes: "", date: "", description: "", actors: [], quality: ""
-    };
+    let scraperWindowId: number | undefined = undefined;
 
     return new Promise(async (resolve) => {
         let isResolved = false;
-        // Collected network-intercepted URLs, scored
-        const interceptedUrls: { url: string; score: number }[] = [];
+        let latestM3u8: string | null = null;
         let injectionStarted = false;
 
-        // ── Cleanup helper ──────────────────────────────────────────────
+        const defaultMetadata = { title: "", thumbnail: "", duration: 0, author: "", views: "", tags: [], likes: "", date: "" };
+        logger.log("[doTabExtraction] defaultMetadata initialized (thumbnail will be empty unless scraped)");
+
         const cleanup = async (result: ExtractionResult | null, reason: string) => {
             if (isResolved) return;
             isResolved = true;
-            logger.log(`[doTabExtraction] Cleanup. reason="${reason}" src=${result?.src ?? 'null'} thumb=${result?.metadata?.thumbnail?.length ?? 0}`);
 
+            logger.log(`[doTabExtraction] Cleanup triggered. Reason: ${reason}. TabID: ${scraperTabId}. Result src: ${result?.src ?? 'null'}. Thumbnail present: ${!!result?.metadata?.thumbnail}, thumbnail length: ${result?.metadata?.thumbnail?.length ?? 0}`);
             if (globalTimeoutId) clearTimeout(globalTimeoutId);
 
             if (webRequestListener && browser.webRequest) {
-                try { browser.webRequest.onBeforeRequest.removeListener(webRequestListener); } catch (_) {}
-            }
-            if (tabUpdateListener) {
-                try { browser.tabs.onUpdated.removeListener(tabUpdateListener); } catch (_) {}
+                try {
+                    browser.webRequest.onBeforeRequest.removeListener(webRequestListener);
+                } catch (e) {
+                    logger.warn("Error removing webRequest listener:", e);
+                }
             }
 
-            // Close scraper tab/window
-            if (ownWindow && scraperWindowId !== undefined) {
-                try { await browser.windows.remove(scraperWindowId); } catch (_) {}
-            } else if (scraperTabId !== undefined) {
-                try { await browser.tabs.remove(scraperTabId); } catch (_) {}
+            if (tabUpdateListener) {
+                try {
+                    browser.tabs.onUpdated.removeListener(tabUpdateListener);
+                } catch (e) {
+                    logger.warn("[doTabExtraction] Error removing tabUpdateListener:", e);
+                }
+            }
+
+            if (scraperTabId !== undefined) {
+                try {
+                    await browser.tabs.remove(scraperTabId);
+                } catch (e) {}
             }
 
             resolve(result);
         };
 
-        // Helper: best intercepted URL so far
-        const bestIntercepted = (): string | null => {
-            if (interceptedUrls.length === 0) return null;
-            interceptedUrls.sort((a, b) => b.score - a.score);
-            return interceptedUrls[0].url;
-        };
-
         try {
-            // ── Step 1: Create a silent, minimised window ───────────────
-            // Strategy: create a new minimised window with the target URL.
-            // This is truly "hidden" — no visible flash. The tab inside loads
-            // normally because Chromium doesn't throttle minimised windows the
-            // same way it does inactive tabs.
-            //
-            // Fallback: if windows.create fails (Firefox Android, etc.), fall
-            // back to creating a background tab in the current window and
-            // immediately switching focus back.
+            // BUG FIX: Do NOT call browser.tabs.hide() on a newly-created tab.
+            // Chrome's API explicitly states: "Tabs hidden since creation are never loaded."
+            // Also, to bypass autoplay/decode throttling on inactive tabs, we briefly
+            // spawn it as active, and immediately switch back to the original tab.
+            const queryTabs = await browser.tabs.query({ active: true, currentWindow: true });
+            const prevActiveTabId = queryTabs.length > 0 ? queryTabs[0].id : undefined;
 
-            let scraperTab: browser.Tabs.Tab;
-            try {
-                const win = await browser.windows.create({
-                    url: targetUrl,
-                    state: 'minimized',
-                    focused: false,
-                    type: 'normal',
-                });
-                scraperTab = win.tabs![0];
-                scraperWindowId = win.id;
-                ownWindow = true;
-                logger.log("[doTabExtraction] Created minimised window. winId:", win.id, "tabId:", scraperTab.id);
-            } catch (winErr) {
-                logger.warn("[doTabExtraction] windows.create failed, falling back to tab:", winErr);
-                const queryTabs = await browser.tabs.query({ active: true, currentWindow: true });
-                const prevActiveTabId = queryTabs[0]?.id;
-                scraperTab = await browser.tabs.create({ url: targetUrl, active: true });
-                scraperWindowId = scraperTab.windowId;
-                // Flip focus back immediately
-                if (prevActiveTabId && scraperTab.id !== prevActiveTabId) {
-                    setTimeout(async () => {
-                        try { await browser.tabs.update(prevActiveTabId, { active: true }); } catch (_) {}
-                    }, 50);
-                }
-            }
-
+            const scraperTab = await browser.tabs.create({ url: targetUrl, active: true });
+            logger.log("[doTabExtraction] Scraper tab created. tabId:", scraperTab.id, "windowId:", scraperTab.windowId, "| active: true (to bypass media throttle)");
+            
             scraperTabId = scraperTab.id;
+            scraperWindowId = scraperTab.windowId;
 
-            // Mute the tab to prevent any audio
-            if (scraperTabId !== undefined) {
-                try { await browser.tabs.update(scraperTabId, { muted: true }); } catch (_) {}
+            if (prevActiveTabId && scraperTabId !== prevActiveTabId) {
+                // Instantly flip back to the user's active tab. The scraper tab will have been
+                // momentarily active, which is enough to satisfy Chromium's media autoplay policy 
+                // in most cases WITHOUT visibly flashing the screen given it's async.
+                setTimeout(async () => {
+                    try {
+                        logger.log("[doTabExtraction] Flipping focus back to original tab:", prevActiveTabId);
+                        await browser.tabs.update(prevActiveTabId, { active: true });
+                    } catch(e) {}
+                }, 50);
             }
 
-            // ── Step 2: Global timeout ──────────────────────────────────
             globalTimeoutId = setTimeout(() => {
-                const best = bestIntercepted();
-                logger.warn("[doTabExtraction] Timeout (30s). bestIntercepted:", best);
-                cleanup(best ? { src: best, metadata: defaultMetadata } : null, "Timeout");
-            }, 30000);
+                logger.warn("[doTabExtraction] Global timeout reached after 35s. latestM3u8:", latestM3u8);
+                cleanup(latestM3u8 ? { src: latestM3u8, metadata: defaultMetadata } : null, "Timeout reached");
+            }, 35000); // Extended timeout for WebM generation
 
-            // ── Step 3: Network interception ────────────────────────────
             if (browser.webRequest) {
                 webRequestListener = (details) => {
-                    if (details.tabId !== scraperTabId) return;
-                    const score = scoreNetworkUrl(details.url);
-                    if (score > 0) {
-                        logger.log("[doTabExtraction] Network intercept:", details.url.substring(0, 120), "score:", score);
-                        interceptedUrls.push({ url: details.url, score });
+                    const lowercaseUrl = details.url.toLowerCase();
+                    if (details.tabId === scraperTabId) {
+                        const isStream = lowercaseUrl.includes('.m3u8') || lowercaseUrl.includes('manifest') || lowercaseUrl.includes('.ts');
+                        const isDirectVideo = /\.(mp4|webm|flv|mkv|mov)(\?|$)/.test(lowercaseUrl);
+                        if (isStream || isDirectVideo) {
+                            logger.log("[doTabExtraction] Network intercept:", details.url, "| isStream:", isStream, "| isDirectVideo:", isDirectVideo);
+                            if (!latestM3u8 || isStream) latestM3u8 = details.url;
+                        }
                     }
                 };
-                browser.webRequest.onBeforeRequest.addListener(
-                    webRequestListener,
-                    { urls: ["<all_urls>"], tabId: scraperTabId }
-                );
+                browser.webRequest.onBeforeRequest.addListener(webRequestListener, { urls: ["<all_urls>"], tabId: scraperTabId });
                 logger.log("[doTabExtraction] webRequest listener attached for tabId:", scraperTabId);
+            } else {
+                logger.warn("[doTabExtraction] browser.webRequest is not available - network interception disabled.");
             }
 
-            // ── Step 4: Define the scraper injection function ────────────
-            const injectScraper = async () => {
-                if (injectionStarted || isResolved || scraperTabId === undefined) return;
-                injectionStarted = true;
-                logger.log("[doTabExtraction] Injecting scraper into tabId:", scraperTabId);
-
-                try {
-                    const results = await browser.scripting.executeScript({
-                        target: { tabId: scraperTabId! },
-                        func: async () => {
-                            // ═══════════════════════════════════════════
-                            // INJECTED SCRAPER — runs in the video page
-                            // ═══════════════════════════════════════════
-                            const _delay = (ms: number) => new Promise(r => setTimeout(r, ms));
-
-                            // ── Metadata helpers ────────────────────
-                            const getMeta = (prop: string, name?: string): string => {
-                                const selectors = [`meta[property="${prop}"]`];
-                                if (name) selectors.push(`meta[name="${name}"]`);
-                                for (const sel of selectors) {
-                                    const el = document.querySelector(sel);
-                                    if (el) return (el as HTMLMetaElement).content || "";
-                                }
-                                return "";
-                            };
-
-                            const getTextFrom = (...selectors: string[]): string => {
-                                for (const sel of selectors) {
-                                    try {
-                                        const el = document.querySelector(sel);
-                                        if (el && el.textContent) return el.textContent.trim().replace(/\s+/g, ' ');
-                                    } catch (_) {}
-                                }
-                                return "";
-                            };
-
-                            const getAllText = (...selectors: string[]): string[] => {
-                                const results: string[] = [];
-                                for (const sel of selectors) {
-                                    try {
-                                        document.querySelectorAll(sel).forEach(el => {
-                                            const t = el.textContent?.trim();
-                                            if (t) results.push(t);
-                                        });
-                                    } catch (_) {}
-                                }
-                                return results;
-                            };
-
-                            // ── LD+JSON extraction ──────────────────
-                            const parseLdJson = (): Record<string, any> => {
-                                const scripts = document.querySelectorAll('script[type="application/ld+json"]');
-                                for (const s of Array.from(scripts)) {
-                                    try {
-                                        const data = JSON.parse(s.textContent || '');
-                                        // Can be an array or single object
-                                        const items = Array.isArray(data) ? data : [data];
-                                        for (const item of items) {
-                                            if (item['@type'] === 'VideoObject' || item['@type'] === 'Movie' || item['@type'] === 'Clip') return item;
-                                            // Check nested
-                                            if (item.video && typeof item.video === 'object') return item.video;
-                                            if (item.mainEntity && typeof item.mainEntity === 'object') return item.mainEntity;
-                                        }
-                                    } catch (_) {}
-                                }
-                                return {};
-                            };
-
-                            // ── Click play buttons / activate players ──
-                            const activatePlayers = async () => {
-                                const selectors = [
-                                    '.vjs-big-play-button', '.ytp-large-play-button',
-                                    'button[aria-label*="Play"]', 'button[aria-label*="play"]',
-                                    'button[title*="Play"]', 'button[title*="play"]',
-                                    '[class*="play-button"]', '[class*="play_button"]',
-                                    '[class*="playBtn"]', '[class*="play-btn"]',
-                                    '.fp-play', '.mhp-play', '.plyr__control--overlaid',
-                                    '[data-plyr="play"]',
-                                ];
-                                for (const sel of selectors) {
-                                    try {
-                                        const els = document.querySelectorAll(sel);
-                                        for (const el of Array.from(els)) {
-                                            (el as HTMLElement).click();
-                                            await _delay(300);
-                                        }
-                                    } catch (_) {}
-                                }
-                                // Also try playing any video element directly
-                                document.querySelectorAll('video').forEach(v => {
-                                    v.muted = true;
-                                    v.play().catch(() => {});
-                                });
-                            };
-
-                            // ── Capture JPEG frame ──────────────────
-                            const captureFrame = async (video: HTMLVideoElement): Promise<string | null> => {
-                                try {
-                                    video.muted = true;
-                                    // Seek to ~10% of duration for a better frame
-                                    if (video.duration && isFinite(video.duration) && video.duration > 5) {
-                                        video.currentTime = Math.min(video.duration * 0.1, 30);
-                                    } else if (video.currentTime === 0) {
-                                        video.currentTime = 3;
-                                    }
-                                    await new Promise<void>((resolve) => {
-                                        const onSeeked = () => { video.removeEventListener('seeked', onSeeked); resolve(); };
-                                        video.addEventListener('seeked', onSeeked);
-                                        setTimeout(() => resolve(), 2000);
-                                    });
-                                    await _delay(500);
-                                    const canvas = document.createElement('canvas');
-                                    canvas.width = video.videoWidth || 640;
-                                    canvas.height = video.videoHeight || 360;
-                                    const ctx = canvas.getContext('2d');
-                                    if (!ctx) return null;
-                                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                                    return canvas.toDataURL('image/jpeg', 0.65);
-                                } catch (_) { return null; }
-                            };
-
-                            // ── Find the main video element ─────────
-                            const findMainVideo = (): { src: string | null; el: HTMLVideoElement | null } => {
-                                const videos = Array.from(document.querySelectorAll('video'));
-                                if (videos.length === 0) return { src: null, el: null };
-
-                                let bestEl: HTMLVideoElement | null = null;
-                                let bestSrc: string | null = null;
-                                let bestScore = -1;
-
-                                for (const v of videos) {
-                                    const rect = v.getBoundingClientRect();
-                                    let score = rect.width * rect.height;
-                                    const idClass = (v.id + ' ' + v.className + ' ' + (v.closest('[class]')?.className || '')).toLowerCase();
-
-                                    // Boost known player patterns
-                                    if (/player|main|primary|hero|video-js|vjs|jwplayer|fp-engine|html5-main/.test(idClass)) score += 2_000_000;
-                                    // Boost if it has a src and is playing or has loaded
-                                    if (v.readyState >= 2) score += 500_000;
-                                    if (!v.paused) score += 500_000;
-                                    // Penalise tiny preview/ad players
-                                    if (rect.width < 200 || rect.height < 150) score -= 1_000_000;
-
-                                    // Try to get a direct (non-blob) src
-                                    let src: string | null = null;
-                                    if (v.src && !v.src.startsWith('blob:')) {
-                                        src = v.src;
-                                    } else {
-                                        const sources = Array.from(v.querySelectorAll('source'));
-                                        for (const s of sources) {
-                                            if (s.src && !s.src.startsWith('blob:')) { src = s.src; break; }
-                                        }
-                                    }
-
-                                    if (score > bestScore) {
-                                        bestScore = score;
-                                        bestEl = v;
-                                        bestSrc = src;
-                                    }
-                                }
-
-                                return { src: bestSrc, el: bestEl };
-                            };
-
-                            // ── Parse time strings ──────────────────
-                            const parseTime = (s: string): number => {
-                                if (!s) return 0;
-                                // "PT1H2M3S" ISO 8601 duration
-                                const iso = s.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
-                                if (iso) return (parseInt(iso[1]||'0'))*3600 + (parseInt(iso[2]||'0'))*60 + (parseInt(iso[3]||'0'));
-                                // "1:23:45" or "23:45"
-                                const parts = s.match(/(\d+):(\d{2})(?::(\d{2}))?/);
-                                if (!parts) return parseFloat(s) || 0;
-                                if (parts[3]) return parseInt(parts[1])*3600 + parseInt(parts[2])*60 + parseInt(parts[3]);
-                                return parseInt(parts[1])*60 + parseInt(parts[2]);
-                            };
-
-                            // ═══════════════════════════════════════
-                            // MAIN EXTRACTION LOGIC
-                            // ═══════════════════════════════════════
-
-                            // Phase 1: Activate any lazy players
-                            await activatePlayers();
-                            await _delay(2000);
-
-                            // Phase 2: LD+JSON structured data
-                            const ld = parseLdJson();
-
-                            // Phase 3: Aggressive metadata collection
-                            const meta: Record<string, any> = {
-                                title: "",
-                                thumbnail: "",
-                                duration: 0,
-                                author: "",
-                                views: "",
-                                tags: [] as string[],
-                                likes: "",
-                                date: "",
-                                description: "",
-                                actors: [] as string[],
-                                quality: "",
-                            };
-
-                            // Title: LD+JSON > og:title > <title>
-                            meta.title = ld.name || ld.headline
-                                || getMeta("og:title", "title")
-                                || getMeta("twitter:title")
-                                || getTextFrom('h1', 'h2.title', '.video-title', '[class*="title"]')
-                                || document.title || "";
-
-                            // Description
-                            meta.description = ld.description
-                                || getMeta("og:description", "description")
-                                || getMeta("twitter:description")
-                                || getTextFrom('.video-description', '[class*="description"]', '.desc')
-                                || "";
-
-                            // Author / uploader / channel
-                            meta.author = (typeof ld.author === 'object' ? ld.author?.name : ld.author)
-                                || ld.uploadedBy || ld.creator
-                                || getMeta("og:site_name", "author")
-                                || getMeta("article:author")
-                                || getTextFrom(
-                                    '.channel-name', '.uploader', '.username', '.author',
-                                    '[class*="channel"]', '[class*="uploader"]', '[class*="author"]',
-                                    '[class*="user-name"]', '[class*="username"]',
-                                    'a[href*="/channel/"]', 'a[href*="/user/"]',
-                                    'a[href*="/model/"]', 'a[href*="/pornstar/"]',
-                                    '.video-info .name', '.owner a',
-                                )
-                                || "";
-
-                            // Thumbnail: og:image > LD+JSON > we'll capture later
-                            meta.thumbnail = getMeta("og:image", "image")
-                                || getMeta("twitter:image")
-                                || ld.thumbnailUrl
-                                || (Array.isArray(ld.thumbnail) ? ld.thumbnail[0]?.url : ld.thumbnail?.url)
-                                || "";
-
-                            // Duration
-                            if (ld.duration) meta.duration = parseTime(String(ld.duration));
-                            if (!meta.duration) {
-                                const ogDur = getMeta("video:duration");
-                                if (ogDur) meta.duration = parseFloat(ogDur) || 0;
-                            }
-
-                            // Views
-                            meta.views = String(ld.interactionCount || ld.viewCount || "")
-                                || getTextFrom('.views', '[class*="views"]', '[class*="view-count"]', '.video-views', '.cnt-number')
-                                || "";
-
-                            // Likes
-                            meta.likes = getTextFrom(
-                                '.likes', '[class*="likes"]', '[class*="like-count"]',
-                                '.rating-likes', '.vote-count', '[class*="thumb-up"] + *'
-                            ) || "";
-
-                            // Tags / categories
-                            const ogTags = getMeta("og:video:tag", "keywords");
-                            const ldTags = Array.isArray(ld.keywords) ? ld.keywords : (typeof ld.keywords === 'string' ? ld.keywords.split(',') : []);
-                            const domTags = getAllText('.tag a', '.tags a', '[class*="tag-list"] a', '[class*="categories"] a', '.category a');
-                            meta.tags = [...new Set([
-                                ...ldTags.map((t: string) => t.trim()),
-                                ...(ogTags ? ogTags.split(',').map(s => s.trim()) : []),
-                                ...domTags,
-                            ])].filter(Boolean);
-
-                            // Date
-                            meta.date = ld.datePublished || ld.uploadDate
-                                || getMeta("article:published_time")
-                                || getMeta("og:updated_time")
-                                || getTextFrom('.date', '[class*="date"]', 'time', '[datetime]')
-                                || "";
-
-                            // Actors / performers (adult/movie sites)
-                            const ldActors = Array.isArray(ld.actor) ? ld.actor.map((a: any) => typeof a === 'object' ? a.name : a) : [];
-                            const domActors = getAllText(
-                                '.pornstar a', '.model a', '.actor a',
-                                '[class*="pornstar"] a', '[class*="model"] a',
-                                '[class*="performer"] a', '.cast a',
-                            );
-                            meta.actors = [...new Set([...ldActors, ...domActors])].filter(Boolean);
-
-                            // Quality / resolution
-                            meta.quality = getTextFrom(
-                                '.quality', '[class*="quality"]', '[class*="resolution"]',
-                                '.hd-label', '.quality-badge'
-                            ) || "";
-
-                            // Phase 4: Find the main video + capture frame
-                            let { src: bestSrc, el: bestEl } = findMainVideo();
-
-                            // If no video yet, wait a bit more and retry
-                            if (!bestEl) {
-                                await _delay(3000);
-                                await activatePlayers();
-                                await _delay(2000);
-                                const retry = findMainVideo();
-                                bestSrc = retry.src;
-                                bestEl = retry.el;
-                            }
-
-                            // Get duration from the video element if we don't have it yet
-                            if (bestEl && (!meta.duration || meta.duration === 0)) {
-                                if (bestEl.duration && isFinite(bestEl.duration)) {
-                                    meta.duration = bestEl.duration;
-                                }
-                            }
-
-                            // Capture a JPEG frame from the video (better than og:image)
-                            if (bestEl) {
-                                const frame = await captureFrame(bestEl);
-                                if (frame) meta.thumbnail = frame;
-                            }
-
-                            return { src: bestSrc, metadata: meta };
-                        }
-                    });
-
-                    const foundResult = results[0]?.result as ExtractionResult | undefined;
-                    const bestNet = bestIntercepted();
-                    logger.log("[doTabExtraction] Scraper done. domSrc:", foundResult?.src ?? 'null',
-                        "| networkBest:", bestNet?.substring(0, 80) ?? 'null',
-                        "| thumb:", foundResult?.metadata?.thumbnail?.length ?? 0);
-
-                    // Merge: network-intercepted src takes priority (it's the real stream URL)
-                    const finalResult: ExtractionResult = {
-                        src: bestNet || foundResult?.src || null,
-                        metadata: foundResult?.metadata ?? defaultMetadata,
-                    };
-
-                    // If no thumbnail from scraper, try captureTab/captureVisibleTab
-                    if (!finalResult.metadata.thumbnail && scraperTabId !== undefined) {
-                        try {
-                            logger.log("[doTabExtraction] No thumbnail. Attempting captureTab fallback.");
-                            await browser.tabs.update(scraperTabId, { active: true });
-                            await new Promise(r => setTimeout(r, 600));
-                            const captureTabFn = (browser.tabs as any).captureTab;
-                            const snap = captureTabFn
-                                ? await captureTabFn(scraperTabId, { format: "jpeg", quality: 30 })
-                                : await browser.tabs.captureVisibleTab(scraperWindowId as number, { format: "jpeg", quality: 30 });
-                            if (snap) finalResult.metadata.thumbnail = snap;
-                        } catch (e) {
-                            logger.warn("[doTabExtraction] captureTab fallback failed:", e);
-                        }
-                    }
-
-                    cleanup(finalResult, finalResult.src ? "Extraction success" : "No src found");
-
-                } catch (e) {
-                    logger.error("[doTabExtraction] Injection error:", e);
-                    // Even on injection failure, we may have network-intercepted URLs
-                    const best = bestIntercepted();
-                    cleanup(best ? { src: best, metadata: defaultMetadata } : null, "Injection error (network fallback)");
-                }
-            };
-
-            // ── Step 5: Wait for page load, then inject scraper ─────────
+            // BUG FIX (race condition): tabs.onUpdated listener is attached after tabs.create(),
+            // so a page that loads instantly from cache can fire status='complete' before the
+            // listener is registered and injectScript() would never be called.
+            // Fix: attach the listener first, then also check the current tab status in case
+            // the page already finished loading while we were setting up.
             tabUpdateListener = (tabId: number, info: browser.Tabs.OnUpdatedChangeInfoType) => {
                 if (tabId === scraperTabId && info.status === 'complete') {
-                    if (tabUpdateListener) {
-                        browser.tabs.onUpdated.removeListener(tabUpdateListener);
-                        tabUpdateListener = null;
-                    }
-                    injectScraper();
+                    logger.log("[doTabExtraction] Scraper tab loaded (status=complete) via onUpdated. Injecting script...");
+                    browser.tabs.onUpdated.removeListener(tabUpdateListener!);
+                    tabUpdateListener = null;
+                    injectScript();
                 }
             };
             browser.tabs.onUpdated.addListener(tabUpdateListener);
 
-            // Race-condition guard: tab may already be complete
-            try {
-                const tab = await browser.tabs.get(scraperTab.id!);
+            // Check if the tab already reached 'complete' before our listener was attached
+            // (can happen for cached pages or very fast redirects).
+            browser.tabs.get(scraperTab.id!).then(tab => {
                 if (tab.status === 'complete') {
+                    logger.log("[doTabExtraction] Tab was already 'complete' before listener attached (cache hit). Injecting immediately.");
                     if (tabUpdateListener) {
                         browser.tabs.onUpdated.removeListener(tabUpdateListener);
                         tabUpdateListener = null;
                     }
-                    injectScraper();
+                    injectScript();
+                } else {
+                    logger.log("[doTabExtraction] Tab status on post-create check:", tab.status, "— waiting for onUpdated...");
                 }
-            } catch (_) {}
+            }).catch(e => {
+                logger.warn("[doTabExtraction] Could not check post-create tab status:", e);
+            });
 
+            const injectScript = async () => {
+                if (injectionStarted || isResolved || scraperTabId === undefined) {
+                    logger.warn("[doTabExtraction] injectScript called but skipped. injectionStarted:", injectionStarted, "isResolved:", isResolved, "scraperTabId:", scraperTabId);
+                    return;
+                }
+                injectionStarted = true;
+                logger.log("[doTabExtraction] Executing injection script in tabId:", scraperTabId);
+
+                try {
+                    const results = await browser.scripting.executeScript({
+                        target: { tabId: scraperTabId },
+                        func: async () => {
+                            const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+                            const captureWebMPreview = async (video: HTMLVideoElement): Promise<string | null> => {
+                                try {
+                                    video.muted = true;
+                                    video.playsInline = true;
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = video.videoWidth || 640;
+                                    canvas.height = video.videoHeight || 360;
+                                    const ctx = canvas.getContext('2d');
+                                    
+                                    const stream = canvas.captureStream(20);
+                                    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+                                    const chunks: Blob[] = [];
+                                    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+                                    
+                                    recorder.start();
+                                    
+                                    const duration = (video.duration && isFinite(video.duration) && video.duration > 0) ? video.duration : 60;
+                                    const segments = 10;
+                                    const segmentLength = 2000;
+                                    
+                                    for (let i = 0; i < segments; i++) {
+                                        video.currentTime = (duration / segments) * i;
+                                        await new Promise((r) => {
+                                            const seeked = () => { video.removeEventListener('seeked', seeked); r(null); };
+                                            video.addEventListener('seeked', seeked);
+                                            setTimeout(r, 1000);
+                                        });
+                                        
+                                        await video.play().catch(() => {});
+                                        
+                                        const start = Date.now();
+                                        while (Date.now() - start < segmentLength) {
+                                            if (ctx) ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                            await delay(50); // Pump frames to bypass background throttle
+                                        }
+                                    }
+                                    
+                                    video.pause();
+                                    recorder.stop();
+                                    
+                                    return await new Promise((resolve) => {
+                                        recorder.onstop = () => {
+                                            const blob = new Blob(chunks, { type: 'video/webm' });
+                                            const reader = new FileReader();
+                                            reader.onloadend = () => resolve(reader.result as string);
+                                            reader.readAsDataURL(blob);
+                                        };
+                                    });
+                                } catch (e) {
+                                    return null;
+                                }
+                            };
+
+                            const captureJpegFrame = async (video: HTMLVideoElement): Promise<string | null> => {
+                                try {
+                                    if (video.currentTime === 0) video.currentTime = 5;
+                                    await delay(800);
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = video.videoWidth || 640;
+                                    canvas.height = video.videoHeight || 360;
+                                    const ctx = canvas.getContext('2d');
+                                    if (ctx) {
+                                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                        return canvas.toDataURL('image/jpeg', 0.5);
+                                    }
+                                } catch (e) { return null; }
+                                return null;
+                            };
+
+                            const clickAllPlayers = async () => {
+                                const selectors = [
+                                    'video', 'iframe', 'button[aria-label*="Play"]', 
+                                    '.vjs-big-play-button', '.ytp-large-play-button', 
+                                    '[class^="media-player"]', '[role="button"]'
+                                ];
+                                for (const selector of selectors) {
+                                    try {
+                                        const elements = document.querySelectorAll(selector);
+                                        for (const el of Array.from(elements)) {
+                                            if (el instanceof HTMLVideoElement) {
+                                                el.muted = true;
+                                                el.play().catch(() => {});
+                                            } else {
+                                                (el as HTMLElement).focus();
+                                                (el as HTMLElement).click();
+                                            }
+                                            await delay(200);
+                                        }
+                                    } catch (e) {}
+                                }
+                            };
+
+                            const findBestVideoAndMeta = async () => {
+                                const metadata = { title: document.title, thumbnail: "", duration: 0, author: "", views: "", tags: [] as string[], likes: "", date: "" };
+                                
+                                const getMeta = (prop: string, name: string) => {
+                                    const el = document.querySelector(`meta[property="${prop}"], meta[name="${name}"]`);
+                                    return el ? (el as HTMLMetaElement).content : "";
+                                };
+
+                                metadata.title = getMeta("og:title", "title") || metadata.title;
+                                metadata.thumbnail = getMeta("og:image", "image") || "";
+                                metadata.author = getMeta("og:site_name", "author");
+                                metadata.tags = (getMeta("og:video:tag", "keywords") || '').split(',').map(s => s.trim());
+
+                                const videos = Array.from(document.querySelectorAll('video'));
+                                let bestSrc: string | null = null;
+                                let maxScore = -1;
+                                let bestVideoEl: HTMLVideoElement | null = null;
+
+                                for (const v of videos) {
+                                    const rect = v.getBoundingClientRect();
+                                    let score = rect.width * rect.height;
+                                    const idClass = (v.id + " " + v.className).toLowerCase();
+                                    if (idClass.match(/player|main|primary|hero|video-js|vjs|jwplayer/)) score += 1000000;
+
+                                    if (v.src && !v.src.startsWith('blob:')) {
+                                        if (score > maxScore) { maxScore = score; bestSrc = v.src; bestVideoEl = v; if (!isNaN(v.duration)) metadata.duration = v.duration; }
+                                    } else {
+                                        const sources = Array.from(v.querySelectorAll('source'));
+                                        for (const s of sources) {
+                                            if (s.src && !s.src.startsWith('blob:')) {
+                                                if (score > maxScore) { maxScore = score; bestSrc = s.src; bestVideoEl = v; if (!isNaN(v.duration)) metadata.duration = v.duration; }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (bestVideoEl) {
+                                    const webm = await captureWebMPreview(bestVideoEl);
+                                    if (webm) {
+                                        metadata.thumbnail = webm;
+                                    } else {
+                                        const jpeg = await captureJpegFrame(bestVideoEl);
+                                        if (jpeg) metadata.thumbnail = jpeg;
+                                    }
+                                }
+
+                                return { src: bestSrc, metadata };
+                            };
+
+                            let result = await findBestVideoAndMeta();
+                            if (!result.src && !result.metadata.thumbnail.startsWith('data:video')) {
+                                await delay(2500);
+                                await clickAllPlayers();
+                                await delay(3000);
+                                result = await findBestVideoAndMeta();
+                            }
+                            return result;
+                        }
+                    });
+
+                    const foundResult = results[0]?.result as ExtractionResult | undefined;
+                    logger.log("[doTabExtraction] Injected script result - src:", foundResult?.src ?? 'null', "| thumbnail length:", foundResult?.metadata?.thumbnail?.length ?? 0, "| latestM3u8:", latestM3u8 ?? 'null');
+
+                    // BUG FIX: captureTab expects a tabId, NOT a windowId.
+                    // Previously this passed scraperWindowId (window ID) to captureTab which
+                    // silently failed, leaving the thumbnail empty.
+                    if (!foundResult?.metadata?.thumbnail && scraperTabId !== undefined) {
+                        try {
+                            logger.log("[doTabExtraction] No thumbnail from injected script. Attempting captureTab fallback on tabId:", scraperTabId);
+                            await browser.tabs.update(scraperTabId, { active: true });
+                            await new Promise(r => setTimeout(r, 800));
+                            // captureTab is Firefox-specific; captureVisibleTab is cross-browser.
+                            // We prefer captureTab(tabId) to avoid switching the visible tab.
+                            const captureTabFn = (browser.tabs as any).captureTab;
+                            const snap = captureTabFn
+                                ? await captureTabFn(scraperTabId, { format: "jpeg", quality: 30 })
+                                : await browser.tabs.captureVisibleTab(scraperWindowId as number, { format: "jpeg", quality: 30 });
+                            if (snap && foundResult) {
+                                logger.log("[doTabExtraction] captureTab/captureVisibleTab succeeded. thumbnail length:", snap.length);
+                                foundResult.metadata.thumbnail = snap;
+                            } else {
+                                logger.warn("[doTabExtraction] captureTab/captureVisibleTab returned nothing.");
+                            }
+                        } catch (e) {
+                            logger.warn("[doTabExtraction] Tab screenshot fallback failed:", e);
+                        }
+                    }
+
+                    if (latestM3u8 && foundResult) {
+                        logger.log("[doTabExtraction] Resolving with network-intercepted src:", latestM3u8, "| thumbnail:", !!foundResult.metadata.thumbnail);
+                        foundResult.src = latestM3u8;
+                        cleanup(foundResult, "Intercepted network src");
+                    } else if (foundResult?.src) {
+                        logger.log("[doTabExtraction] Resolving with DOM-extracted src:", foundResult.src, "| thumbnail:", !!foundResult.metadata.thumbnail);
+                        cleanup(foundResult, "DOM extraction success");
+                    } else if (latestM3u8) {
+                        logger.log("[doTabExtraction] Resolving with network-only fallback. No DOM src. thumbnail:", !!(foundResult?.metadata?.thumbnail));
+                        cleanup({ src: latestM3u8, metadata: foundResult?.metadata ?? defaultMetadata }, "Network fallback");
+                    } else {
+                        logger.warn("[doTabExtraction] No src found. Scheduling 2s timeout fallback.");
+                        setTimeout(() => {
+                            cleanup(latestM3u8 ? { src: latestM3u8, metadata: foundResult?.metadata ?? defaultMetadata } : (foundResult ?? null), "Timeout fallback");
+                        }, 2000);
+                    }
+                } catch (e) {
+                    logger.error("[doTabExtraction] Injection threw an error:", e);
+                    cleanup(null, "Injection threw an error");
+                }
+            };
         } catch (e) {
             logger.error("[doTabExtraction] Setup failed:", e);
             cleanup(null, "Setup failed");
@@ -609,132 +423,108 @@ async function openDashboard() {
 }
 
 async function runCapturePipeline(data: any, tabId?: number, windowId?: number): Promise<any> {
-    logger.log("[runCapturePipeline] Received. url:", data.url, "| thumb:", !!data.thumbnail, "(len:", data.thumbnail?.length ?? 0, ")");
+    logger.log("[runCapturePipeline] Received capture request. url:", data.url, "| thumbnail from content.ts:", !!data.thumbnail, "(len:", data.thumbnail?.length ?? 0, ")");
     try {
-        const pageUrl = data.url; // The video page URL (for deduplication)
-        let finalSrc = data.url;  // Will become the playable link (m3u8/mp4)
+        const targetUrl = data.url;
+        let finalSrc = data.url;
 
-        // ── Fallback screenshot if no thumbnail from content script ──
         if (!data.thumbnail && windowId) {
             try {
+                logger.log("[runCapturePipeline] No initial thumbnail. Capturing visible tab screenshot from windowId:", windowId);
                 data.thumbnail = await browser.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 20 });
-                logger.log("[runCapturePipeline] captureVisibleTab fallback. len:", data.thumbnail?.length ?? 0);
+                logger.log("[runCapturePipeline] captureVisibleTab succeeded. thumbnail length:", data.thumbnail?.length ?? 0);
             } catch (e) {
                 logger.warn("[runCapturePipeline] captureVisibleTab failed:", e);
             }
+        } else {
+            logger.log("[runCapturePipeline] Thumbnail already present from content.ts (len:", data.thumbnail?.length ?? 0, "). Skipping captureVisibleTab.");
         }
 
-        // ── Silent tab extraction ────────────────────────────────────
-        logger.log("[runCapturePipeline] Starting doTabExtraction for:", pageUrl);
-        const extracted = await doTabExtraction(pageUrl);
-        logger.log("[runCapturePipeline] doTabExtraction result. src:", extracted?.src?.substring(0, 80) ?? 'null',
-            "| thumb:", extracted?.metadata?.thumbnail?.length ?? 0);
+        logger.log("[runCapturePipeline] Starting doTabExtraction for:", targetUrl);
+        const extracted = await doTabExtraction(targetUrl);
+        logger.log("[runCapturePipeline] doTabExtraction returned. src:", extracted?.src ?? 'null', "| scraped thumbnail length:", extracted?.metadata?.thumbnail?.length ?? 0);
 
-        if (extracted) {
-            // The extracted src is the REAL playable video link (m3u8/mp4)
-            if (extracted.src) finalSrc = extracted.src;
-
-            // ── Aggressive metadata merge ────────────────────────────
-            // Strategy: scraped data from the video page is almost always better
-            // than what the content script pulled from a thumbnail card. Merge
-            // aggressively — prefer scraped values, fall back to content-script.
-            const m = extracted.metadata;
-
-            if (m.title)       data.title       = m.title;
-            if (m.author)      data.author      = m.author;
-            if (m.duration)    data.duration     = m.duration;
-            if (m.views)       data.views        = m.views;
-            if (m.likes)       data.likes        = m.likes;
-            if (m.date)        data.date         = m.date;
-            if (m.description) data.description  = m.description;
-            if (m.quality)     data.quality      = m.quality;
-
-            // Thumbnail: prefer scraped (it comes from the actual video page)
-            if (m.thumbnail) {
-                logger.log("[runCapturePipeline] Using scraped thumbnail (len:", m.thumbnail.length, ")");
-                data.thumbnail = m.thumbnail;
-            }
-
-            // Tags: merge (no duplicates)
-            if (Array.isArray(m.tags) && m.tags.length > 0) {
-                const existingTags = Array.isArray(data.tags) ? data.tags : [];
-                data.tags = [...new Set([...existingTags, ...m.tags])].filter(Boolean);
-            }
-
-            // Actors: merge
-            if (Array.isArray(m.actors) && m.actors.length > 0) {
-                const existingActors = Array.isArray(data.actors) ? data.actors : [];
-                data.actors = [...new Set([...existingActors, ...m.actors])].filter(Boolean);
+        if (extracted && extracted.src) {
+            finalSrc = extracted.src;
+            if (extracted.metadata) {
+                // BUG FIX: Object.assign would unconditionally overwrite data.thumbnail with "" when
+                // the scraper tab fails to capture a thumbnail (defaultMetadata.thumbnail = "").
+                // This silently destroyed the fallback thumbnail sent by the content script.
+                // Fix: only merge scraped metadata fields that are non-empty/non-zero.
+                const preThumb = data.thumbnail;
+                const meta = extracted.metadata;
+                if (meta.title) { logger.log("[runCapturePipeline] Scraped title:", meta.title); data.title = meta.title; }
+                if (meta.author) { logger.log("[runCapturePipeline] Scraped author:", meta.author); data.author = meta.author; }
+                if (meta.thumbnail) {
+                    logger.log("[runCapturePipeline] Scraped thumbnail present (len:", meta.thumbnail.length, "). Replacing fallback.");
+                    data.thumbnail = meta.thumbnail;
+                } else {
+                    logger.log("[runCapturePipeline] Scraped thumbnail is EMPTY. Preserving existing thumbnail (len:", preThumb?.length ?? 0, ").");
+                }
+                if (meta.duration) { data.duration = meta.duration; }
+                if (meta.views) { data.views = meta.views; }
+                if (Array.isArray(meta.tags) && meta.tags.length > 0) { data.tags = meta.tags; }
+                if (meta.likes) { data.likes = meta.likes; }
+                if (meta.date) { data.date = meta.date; }
             }
         } else {
-            logger.warn("[runCapturePipeline] Extraction returned null. Keeping original URL:", pageUrl);
+            logger.warn("[runCapturePipeline] Extraction returned no usable src. Falling back to original URL:", targetUrl);
         }
 
-        // ── Set rawVideoSrc (the playable link) ─────────────────────
         data.rawVideoSrc = finalSrc;
+        logger.log("[runCapturePipeline] Final rawVideoSrc:", data.rawVideoSrc, "| final thumbnail length:", data.thumbnail?.length ?? 0);
 
-        // ── Determine media type from the playable link ─────────────
-        const srcLower = finalSrc.toLowerCase();
-        if (/\.(mp4|webm|mkv|flv|mov|avi|wmv)(\?|$)/.test(srcLower) || /\.m3u8(\?|$)/.test(srcLower) || /\.mpd(\?|$)/.test(srcLower)) {
-            data.type = 'video';
-        } else {
-            // Keep whatever was set, or default to 'link'
-            data.type = data.type || 'link';
-        }
-
-        // ── Extract domain from the page URL ────────────────────────
-        try {
-            data.domain = new URL(pageUrl).hostname.replace(/^www\./, '');
-        } catch (_) {
-            data.domain = data.domain || 'Unknown';
-        }
-
-        logger.log("[runCapturePipeline] Final: rawVideoSrc=", data.rawVideoSrc?.substring(0, 80),
-            "| type=", data.type, "| domain=", data.domain, "| thumb len=", data.thumbnail?.length ?? 0);
-
-        // ── Deduplication check ──────────────────────────────────────
         const saved = await getSavedVideos(true);
+        logger.log("[runCapturePipeline] Existing vault size:", saved.length);
         if (saved.some(v => v.url === data.url)) {
-            logger.warn("[runCapturePipeline] Already in vault. url:", data.url);
+            logger.warn("[runCapturePipeline] Item already exists in vault. Aborting save. url:", data.url);
             return { success: false, message: "Item already in vault" };
         }
-
-        // ── Save ─────────────────────────────────────────────────────
-        data.timestamp = Date.now();
-        data.dateSaved = Date.now();
+        
+        data.timestamp = Date.now(); // BUG FIX: Dashboard scan for missing previews relies on this!
+        
         saved.push(data);
         await saveVideos(saved);
-        logger.log("[runCapturePipeline] Saved! Vault size:", saved.length);
+        logger.log("[runCapturePipeline] Saved! New vault size:", saved.length);
 
-        // ── Background preview generation ────────────────────────────
+        // BUG FIX: data.thumbnail can be falsy/empty string. Using optional chaining avoids TypeError.
         const thumbIsWebm = data.thumbnail?.startsWith('data:video');
 
         if (thumbIsWebm) {
+            logger.log("[runCapturePipeline] Injected script captured WebM. Decoding and saving to IndexedDB.");
             try {
                 const base64Data = data.thumbnail.split(',')[1];
                 const binaryString = atob(base64Data);
                 const len = binaryString.length;
                 const bytes = new Uint8Array(len);
-                for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
-                await savePreview(data.url, new Blob([bytes], { type: 'video/webm' }));
-                logger.log("[runCapturePipeline] Saved WebM preview to Dexie.");
+                for (let i = 0; i < len; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                const blob = new Blob([bytes], { type: 'video/webm' });
+                await savePreview(data.url, blob);
+                logger.log("[runCapturePipeline] Successfully saved injected WebM preview to Dexie.");
             } catch (err) {
-                logger.warn("[runCapturePipeline] WebM save failed:", err);
+                logger.warn("[runCapturePipeline] Failed to save injected WebM to Dexie:", err);
             }
         }
 
         if (data.rawVideoSrc && !thumbIsWebm) {
+            logger.log("[runCapturePipeline] Queuing background preview generation for:", data.rawVideoSrc);
             setupOffscreenDocument().then(() => {
                 browser.runtime.sendMessage({
                     action: "generate_preview",
                     data: { url: data.rawVideoSrc, duration: typeof data.duration === 'number' ? data.duration : 60 }
-                }).catch(() => {});
+                }).catch((e) => {
+                    logger.warn("[runCapturePipeline] generate_preview message failed:", e);
+                });
             });
+        } else {
+            logger.log("[runCapturePipeline] Skipping preview generation (no rawVideoSrc or thumbnail is already a WebM).");
         }
 
         return { success: true, data };
     } catch (err: any) {
-        logger.error("[runCapturePipeline] Error:", err);
+        logger.error("[runCapturePipeline] Unhandled error:", err);
         return { success: false, message: err.message };
     }
 }

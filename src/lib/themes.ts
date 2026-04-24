@@ -1,4 +1,4 @@
-// AUTO-GENERATED FROM vault-themes — DO NOT EDIT MANUALLY
+// AUTO-GENERATED FROM vault-themes
 export type VaultTheme = { id: number; name: string; mode: 'light' | 'dark'; };
 export const VAULT_THEMES: Record<number, VaultTheme> = {
   1: { id: 1, name: 'vintage-velvet', mode: 'light' },
@@ -10,7 +10,5 @@ export const VAULT_THEMES: Record<number, VaultTheme> = {
   7: { id: 7, name: 'neon-void', mode: 'dark' },
   8: { id: 8, name: 'royal-tangerine', mode: 'dark' },
   9: { id: 9, name: 'amethyst-frost', mode: 'light' },
-  10: { id: 10, name: 'solarized-light', mode: 'light' },
-  11: { id: 11, name: 'solarized-dark', mode: 'dark' },
 };
-export const getThemeClass = (id: number) => `vault-theme-${VAULT_THEMES[id]?.name || 'solarized-light'}`;
+export const getThemeClass = (id: number) => `vault-theme-${VAULT_THEMES[id]?.name || 'cyberpunk-cinder'}`;
