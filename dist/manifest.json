@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Vault Central",
+  "name": "VaultWares — Vault Central",
+  "short_name": "Vault Central",
   "version": "3.2.0",
-  "description": "The ultimate video saver. Organize and access all your favorite videos from any website in one central location.",
+  "description": "A privacy-first video vault. Save and revisit favorite videos from around the web without hidden tracking.",
   "browser_specific_settings": {
     "gecko": {
       "id": "vault-central@p-potvin",

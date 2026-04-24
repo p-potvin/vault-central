@@ -6,7 +6,7 @@ import { VAULT_THEMES, getThemeClass } from '../lib/themes'; // Added for binary
 import { STORAGE_KEYS } from '../lib/constants';
 import * as Icons from '../lib/icons';
 import { cn } from '../lib/utils';
-import { useEffect, useState, useMemo, useRef } from 'react';
+import { useEffect, useState, useMemo, useRef, useDeferredValue } from 'react';
 /**
  * Preview Player Component
  * Handles the "YouTube-style" 10x2s hover preview
@@ -101,6 +101,7 @@ const PreviewThumb = ({ video }) => {
 export const VaultDashboard = () => {
     const [items, setItems] = useState([]);
     const [search, setSearch] = useState('');
+    const deferredSearch = useDeferredValue(search);
     const [searchField, setSearchField] = useState('title');
     const [currentTheme, setCurrentTheme] = useState(3);
     // Sidebar states
@@ -363,19 +364,19 @@ export const VaultDashboard = () => {
         }
     };
     const filtered = useMemo(() => {
+        if (!deferredSearch)
+            return items;
+        const searchStr = deferredSearch.toLowerCase();
         return items.filter(f => {
-            if (!search)
-                return true;
             const targetValue = f[searchField];
             if (targetValue === null || targetValue === undefined)
                 return false;
-            const searchStr = search.toLowerCase();
             if (Array.isArray(targetValue)) {
                 return targetValue.some(v => v.toString().toLowerCase().includes(searchStr));
             }
             return targetValue.toString().toLowerCase().includes(searchStr);
         });
-    }, [items, search, searchField]);
+    }, [items, deferredSearch, searchField]);
     const sorted = useMemo(() => {
         return [...filtered].sort((a, b) => {
             if (sortBy === 'DateDesc')
