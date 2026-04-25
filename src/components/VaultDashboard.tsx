@@ -9,6 +9,29 @@ import * as Icons from '../lib/icons';
 import { cn } from '../lib/utils';
 import React, { useEffect, useState, useMemo, useRef, useDeferredValue } from 'react';
 
+// ⚡ BOLT OPTIMIZATION:
+// Instantiating `new URL()` synchronously within loops (like render loops or useMemo mapping)
+// creates O(N) performance bottlenecks. This cache prevents redundant URL parsing
+// and gracefully handles invalid URLs without crashing the React tree.
+const domainCache = new Map<string, string>();
+
+function getDomainFromUrl(url: string, removeWww = false): string {
+  if (!url) return 'unknown';
+  const cacheKey = `${url}-${removeWww}`;
+  if (domainCache.has(cacheKey)) {
+    return domainCache.get(cacheKey)!;
+  }
+  try {
+    const urlObj = new URL(url);
+    const domain = removeWww ? urlObj.hostname.replace(/^www\./, '') : urlObj.hostname;
+    domainCache.set(cacheKey, domain);
+    return domain;
+  } catch (e) {
+    domainCache.set(cacheKey, 'unknown');
+    return 'unknown';
+  }
+}
+
 /**
  * Preview Player Component
  * Handles the "YouTube-style" 10x2s hover preview
@@ -476,11 +499,7 @@ export const VaultDashboard: React.FC = () => {
     if (groupBy === 'None') return { 'All Items': sorted };
     
     return sorted.reduce((acc, item) => {
-      let key = 'Unknown';
-      try {
-        const urlObj = new URL(item.url);
-        key = urlObj.hostname.replace(/^www\./, '');
-      } catch (e) {}
+      const key = getDomainFromUrl(item.url, true);
       if (!acc[key]) acc[key] = [];
       acc[key].push(item);
       return acc;
@@ -1012,7 +1031,7 @@ export const VaultDashboard: React.FC = () => {
                                 {fav.title || 'Untitled Reference'}
                               </h3>
                               <p className="text-xs text-vault-muted truncate max-w-[250px] font-mono opacity-80" title={fav.url}>
-                                {(fav.domain && fav.domain !== 'Unknown') ? fav.domain : (() => { try { return new URL(fav.url).hostname.replace('www.', '') } catch { return 'unknown' } })()}
+                                {(fav.domain && fav.domain !== 'Unknown') ? fav.domain : getDomainFromUrl(fav.url, true)}
                               </p>
                             </div>
                             
@@ -1425,7 +1444,7 @@ export const VaultDashboard: React.FC = () => {
             {/* Modal Footer / Metadata */}
             <div className="p-4 bg-vault-cardBg flex items-center justify-between text-sm text-vault-muted">
               <div>
-                <span className="font-semibold text-vault-text">{playingVideo.domain || new URL(playingVideo.url).hostname}</span>
+                <span className="font-semibold text-vault-text">{playingVideo.domain || getDomainFromUrl(playingVideo.url)}</span>
                 {playingVideo.author && <span className="ml-2 px-2 border-l border-vault-border">By: {playingVideo.author}</span>}
               </div>
               <div className="font-mono text-xs">
