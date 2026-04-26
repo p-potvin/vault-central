@@ -50,6 +50,27 @@ const mockVideos = [
   }
 ];
 
+const mockVideosWithBadUrls = [
+  {
+    id: '3',
+    url: 'not-a-valid-url',
+    title: 'Invalid URL Item',
+    timestamp: 1620000020000,
+    type: 'link',
+    tags: [],
+    domain: 'Unknown',
+  },
+  {
+    id: '4',
+    url: '',
+    title: 'Missing URL Item',
+    timestamp: 1620000030000,
+    type: 'link',
+    tags: [],
+    domain: 'Unknown',
+  },
+];
+
 describe('Dashboard Component', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -131,6 +152,24 @@ describe('Dashboard Component', () => {
     await waitFor(() => {
       expect(sidebar).toHaveClass('w-0');
     });
+  });
+
+  it('renders items with invalid URLs without crashing and shows "Unknown" domain', async () => {
+    (storageVault.getSavedVideos as any).mockResolvedValue(mockVideosWithBadUrls);
+
+    render(<VaultDashboard />);
+
+    await waitFor(() => {
+      const invalidItem = screen.queryByText((content, element) => {
+        return element?.tagName.toLowerCase() === 'h3' && content === 'Invalid URL Item';
+      });
+      expect(invalidItem).toBeInTheDocument();
+
+      const missingItem = screen.queryByText((content, element) => {
+        return element?.tagName.toLowerCase() === 'h3' && content === 'Missing URL Item';
+      });
+      expect(missingItem).toBeInTheDocument();
+    }, { timeout: 3000 });
   });
 });
 
