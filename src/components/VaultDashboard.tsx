@@ -16,19 +16,20 @@ import React, { useEffect, useState, useMemo, useRef, useDeferredValue } from 'r
 const domainCache = new Map<string, string>();
 
 function getDomainFromUrl(url: string, removeWww = false): string {
-  if (!url) return 'unknown';
+  if (!url) return 'Unknown';
   const cacheKey = `${url}-${removeWww}`;
   if (domainCache.has(cacheKey)) {
     return domainCache.get(cacheKey)!;
   }
   try {
     const urlObj = new URL(url);
-    const domain = removeWww ? urlObj.hostname.replace(/^www\./, '') : urlObj.hostname;
+    const hostname = removeWww ? urlObj.hostname.replace(/^www\./, '') : urlObj.hostname;
+    const domain = hostname || 'Unknown';
     domainCache.set(cacheKey, domain);
     return domain;
   } catch (e) {
-    domainCache.set(cacheKey, 'unknown');
-    return 'unknown';
+    domainCache.set(cacheKey, 'Unknown');
+    return 'Unknown';
   }
 }
 
