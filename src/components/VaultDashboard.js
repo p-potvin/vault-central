@@ -126,6 +126,8 @@ export const VaultDashboard = () => {
     const [items, setItems] = useState([]);
     const [search, setSearch] = useState('');
     const deferredSearch = useDeferredValue(search);
+    // When search is cleared, use the immediate value so the list resets instantly.
+    const effectiveSearch = search === '' ? search : deferredSearch;
     const [searchField, setSearchField] = useState('title');
     const [currentTheme, setCurrentTheme] = useState(3);
     // Sidebar states
@@ -388,9 +390,9 @@ export const VaultDashboard = () => {
         }
     };
     const filtered = useMemo(() => {
-        if (!deferredSearch)
+        if (!effectiveSearch)
             return items;
-        const searchStr = deferredSearch.toLowerCase();
+        const searchStr = effectiveSearch.toLowerCase();
         return items.filter(f => {
             const targetValue = f[searchField];
             if (targetValue === null || targetValue === undefined)
@@ -400,7 +402,7 @@ export const VaultDashboard = () => {
             }
             return targetValue.toString().toLowerCase().includes(searchStr);
         });
-    }, [items, deferredSearch, searchField]);
+    }, [items, effectiveSearch, searchField]);
     const sorted = useMemo(() => {
         return [...filtered].sort((a, b) => {
             if (sortBy === 'DateDesc')

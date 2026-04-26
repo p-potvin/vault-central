@@ -172,6 +172,8 @@ export const VaultDashboard: React.FC = () => {
   const [items, setItems] = useState<VideoData[]>([]);
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
+  // When search is cleared, use the immediate value so the list resets instantly.
+  const effectiveSearch = search === '' ? search : deferredSearch;
   const [searchField, setSearchField] = useState<keyof VideoData>('title');
   const [currentTheme, setCurrentTheme] = useState<number>(3);
   
@@ -458,9 +460,9 @@ export const VaultDashboard: React.FC = () => {
   };
 
   const filtered = useMemo(() => {
-    if (!deferredSearch) return items;
+    if (!effectiveSearch) return items;
 
-    const searchStr = deferredSearch.toLowerCase();
+    const searchStr = effectiveSearch.toLowerCase();
 
     return items.filter(f => {
       const targetValue = f[searchField];
@@ -472,7 +474,7 @@ export const VaultDashboard: React.FC = () => {
       
       return targetValue.toString().toLowerCase().includes(searchStr);
     });
-  }, [items, deferredSearch, searchField]);
+  }, [items, effectiveSearch, searchField]);
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
