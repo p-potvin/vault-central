@@ -8,6 +8,8 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
     globals: true,
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    exclude: ['tests/**', 'dist/**', 'node_modules/**'],
   },
   plugins: [
     react(),
@@ -20,6 +22,11 @@ export default defineConfig({
         {
           src: 'icons',
           dest: '.',
+        },
+        {
+          src: 'src/offscreen/processor.html',
+          dest: 'src/offscreen',
+          rename: { stripBase: true },
         },
       ],
     }),

@@ -143,9 +143,11 @@ function showVaultNotification(type: 'success' | 'removed' | 'error' | 'processi
     el.innerHTML = `
         <div style="display: flex; align-items: center;">
             ${iconMap[type] || iconMap.error}
-            <span style="flex: 1;">${message.toUpperCase()}</span>
+            <span class="vault-notification-message" style="flex: 1;"></span>
         </div>
     `;
+    const messageEl = el.querySelector(".vault-notification-message");
+    if (messageEl) messageEl.textContent = message.toUpperCase();
 
     const themeMap: Record<string, { bg: string, border: string }> = {
         success: { bg: "#10b981", border: "#059669" },
@@ -432,7 +434,9 @@ export interface TargetPayload {
     };
 }
 
-function attemptExtraction(target: TargetPayload, notificationId?: string) {
+type CaptureResponse = { success?: boolean; message?: string };
+
+function attemptExtraction(target: TargetPayload, notificationId?: string): Promise<CaptureResponse> {
     console.log(`${LOG_PREFIX} attemptExtraction: url=${target.url} | isDirectVideo=${target.isDirectVideo} | thumbnail present=${!!target.fallbackThumbnail} (len=${target.fallbackThumbnail?.length ?? 0})`);
     
     const isLocalCapture = target.url === window.location.href || target.isDirectVideo;
@@ -466,15 +470,15 @@ function attemptExtraction(target: TargetPayload, notificationId?: string) {
 
     console.log(`${LOG_PREFIX} attemptExtraction: sending process_capture. title="${payload.title}" | author="${payload.author}" | thumbnail len=${payload.thumbnail.length} | tags=${payload.tags?.length ?? 0}`);
 
-    browser.runtime.sendMessage({
+    return browser.runtime.sendMessage({
         action: "process_capture",
         data: payload
     }).then((res: unknown) => {
-        const response = res as { success?: boolean; message?: string } | undefined;
+        const response = res as CaptureResponse | undefined;
         console.log(`${LOG_PREFIX} attemptExtraction: background responded:`, response);
         if (!response) {
             showVaultNotification('error', 'Extension background offline', notificationId);
-            return;
+            return { success: false, message: 'Extension background offline' };
         }
         if (response.success) {
             showVaultNotification('success', 'Added to Vault', notificationId);
@@ -482,9 +486,11 @@ function attemptExtraction(target: TargetPayload, notificationId?: string) {
         } else {
             showVaultNotification('error', response.message || 'Failed to capture', notificationId);
         }
+        return response;
     }).catch((e: Error) => {
         console.error(`${LOG_PREFIX} attemptExtraction: Message passing error:`, e);
         showVaultNotification('error', 'Connection to Vault lost', notificationId);
+        return { success: false, message: e.message || 'Connection to Vault lost' };
     });
 }
 
@@ -495,7 +501,7 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
     if (request.action === "extract_video") {
         console.log(`${LOG_PREFIX} onMessage: extract_video requested. Forcing extraction from DOM...`);
         const target = getBestTarget(lastHoveredElement);
-        return Promise.resolve(attemptExtraction(target));
+        return attemptExtraction(target);
     }
 
     if (request.type === "capture-video" || request.action === "capture-video") {

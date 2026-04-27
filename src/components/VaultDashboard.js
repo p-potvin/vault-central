@@ -1,8 +1,9 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import browser from 'webextension-polyfill';
 import { getPinSettings, getSavedVideos, savePinSettings, saveVideos } from '../lib/storage-vault';
-import { getPreview } from '../lib/dexie-store';
+import { clearPreviews, deletePreview, getPreview } from '../lib/dexie-store';
 import { VAULT_THEMES, getThemeClass } from '../lib/themes'; // Added for binary previews
+import { VideoDataSchema } from '../types/schemas';
 import { STORAGE_KEYS } from '../lib/constants';
 import * as Icons from '../lib/icons';
 import { cn } from '../lib/utils';
@@ -12,6 +13,16 @@ import { useEffect, useState, useMemo, useRef, useDeferredValue } from 'react';
 // creates O(N) performance bottlenecks. This cache prevents redundant URL parsing
 // and gracefully handles invalid URLs without crashing the React tree.
 const domainCache = new Map();
+async function getPreviewForVideo(video) {
+    const primary = await getPreview(video.url);
+    if (primary || !video.rawVideoSrc || video.rawVideoSrc === video.url) {
+        return primary;
+    }
+    return getPreview(video.rawVideoSrc);
+}
+function isDisplayableImageThumbnail(thumbnail) {
+    return Boolean(thumbnail && !thumbnail.startsWith('data:video'));
+}
 function getDomainFromUrl(url, removeWww = false) {
     if (!url)
         return 'Unknown';
@@ -44,7 +55,7 @@ const PreviewThumb = ({ video }) => {
         let active = true;
         const checkPreview = async () => {
             console.log("[PreviewThumb] Checking IndexedDB for preview. url:", video.url);
-            const blob = await getPreview(video.url);
+            const blob = await getPreviewForVideo(video);
             if (blob && active) {
                 console.log("[PreviewThumb] Preview found in IndexedDB. Setting blob URL.");
                 setPreviewBlob(URL.createObjectURL(blob));
@@ -55,7 +66,13 @@ const PreviewThumb = ({ video }) => {
         };
         checkPreview();
         return () => { active = false; };
-    }, [video.url]);
+    }, [video.url, video.rawVideoSrc]);
+    useEffect(() => {
+        return () => {
+            if (previewBlob)
+                URL.revokeObjectURL(previewBlob);
+        };
+    }, [previewBlob]);
     const handleMouseEnter = async () => {
         setIsHovering(true);
         // Check if we already have it in state
@@ -64,7 +81,7 @@ const PreviewThumb = ({ video }) => {
             return;
         }
         // Check if it exists in the database
-        const blob = await getPreview(video.url);
+        const blob = await getPreviewForVideo(video);
         if (blob) {
             console.log("[PreviewThumb] onMouseEnter: preview found in IndexedDB on hover.");
             setPreviewBlob(URL.createObjectURL(blob));
@@ -84,7 +101,8 @@ const PreviewThumb = ({ video }) => {
                 const response = await browser.runtime.sendMessage({
                     action: 'generate_preview',
                     data: {
-                        url: video.rawVideoSrc || video.url,
+                        previewKey: video.url,
+                        sourceUrl: video.rawVideoSrc || video.url,
                         duration: typeof video.duration === 'number' ? video.duration : 60
                     }
                 });
@@ -93,7 +111,7 @@ const PreviewThumb = ({ video }) => {
                     // Poll for the result until it appears in DB or timeout (10s)
                     let attempts = 0;
                     const poll = setInterval(async () => {
-                        const retryBlob = await getPreview(video.url);
+                        const retryBlob = await getPreviewForVideo(video);
                         if (retryBlob) {
                             console.log("[PreviewThumb] Preview appeared in IndexedDB after", attempts, "poll attempts.");
                             setPreviewBlob(URL.createObjectURL(retryBlob));
@@ -120,7 +138,7 @@ const PreviewThumb = ({ video }) => {
             }
         }
     };
-    return (_jsxs("div", { className: "absolute inset-0 z-20 overflow-hidden bg-black", onMouseEnter: handleMouseEnter, onMouseLeave: () => setIsHovering(false), children: [isHovering && previewBlob ? (_jsx("video", { ref: videoRef, src: previewBlob, className: "w-full h-full object-cover", autoPlay: true, muted: true, loop: true, playsInline: true })) : (_jsx("img", { src: video.thumbnail, alt: video.title, className: cn("w-full h-full object-cover transition-opacity duration-300", isHovering ? "opacity-0" : "opacity-100") })), isProcessing ? (_jsx("div", { className: "absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm", children: _jsx(Icons.LoaderIcon, { className: "text-vault-accent animate-spin", size: 20 }) })) : (!previewBlob && isHovering && (_jsx("div", { className: "absolute bottom-2 left-2 bg-black/60 text-[8px] text-white px-1 rounded uppercase tracking-tighter", children: "Processing..." })))] }));
+    return (_jsxs("div", { className: "absolute inset-0 z-20 overflow-hidden bg-black", onMouseEnter: handleMouseEnter, onMouseLeave: () => setIsHovering(false), children: [isHovering && previewBlob ? (_jsx("video", { ref: videoRef, src: previewBlob, className: "w-full h-full object-cover", autoPlay: true, muted: true, loop: true, playsInline: true })) : (isDisplayableImageThumbnail(video.thumbnail) ? (_jsx("img", { src: video.thumbnail, alt: video.title, className: cn("w-full h-full object-cover transition-opacity duration-300", isHovering ? "opacity-0" : "opacity-100") })) : (_jsx("div", { className: "w-full h-full bg-black", "aria-label": video.title }))), isProcessing ? (_jsx("div", { className: "absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm", children: _jsx(Icons.LoaderIcon, { className: "text-vault-accent animate-spin", size: 20 }) })) : (!previewBlob && isHovering && (_jsx("div", { className: "absolute bottom-2 left-2 bg-black/60 text-[8px] text-white px-1 rounded uppercase tracking-tighter", children: "Processing..." })))] }));
 };
 export const VaultDashboard = () => {
     const [items, setItems] = useState([]);
@@ -159,7 +177,8 @@ export const VaultDashboard = () => {
             URL.revokeObjectURL(url);
         }
         catch (err) {
-            // ...existing code...
+            console.error("Failed to export vault backup", err);
+            setToastMessage({ msg: "Failed to export vault backup.", type: "error" });
         }
     };
     const handleImportVault = async (e) => {
@@ -171,13 +190,28 @@ export const VaultDashboard = () => {
             try {
                 const json = JSON.parse(event.target?.result);
                 if (Array.isArray(json)) {
-                    await saveVideos(json);
-                    setItems(json);
-                    setToastMessage({ msg: "Backup successfully imported!", type: "success" });
+                    const current = await getSavedVideos(true);
+                    const knownUrls = new Set(current.map(item => item.url));
+                    const validImports = json
+                        .map(item => VideoDataSchema.safeParse(item))
+                        .filter((result) => result.success)
+                        .map(result => result.data);
+                    const additions = validImports.filter(item => {
+                        if (knownUrls.has(item.url))
+                            return false;
+                        knownUrls.add(item.url);
+                        return true;
+                    });
+                    const next = [...current, ...additions];
+                    await saveVideos(next);
+                    setItems(next);
+                    setToastMessage({ msg: `Imported ${additions.length} items. Skipped ${json.length - additions.length}.`, type: "success" });
+                }
+                else {
+                    setToastMessage({ msg: "Failed to import. Backup must be a JSON array.", type: "error" });
                 }
             }
             catch (err) {
-                // ...existing code...
                 setToastMessage({ msg: "Failed to import. Invalid JSON backup.", type: "error" });
             }
         };
@@ -189,6 +223,7 @@ export const VaultDashboard = () => {
             onConfirm: async () => {
                 const all = await getSavedVideos();
                 const next = all.filter(v => v.url !== url);
+                await deletePreview(url);
                 await saveVideos(next);
                 setItems(next);
                 setConfirmDialog(null);
@@ -203,6 +238,9 @@ export const VaultDashboard = () => {
         const idx = all.findIndex(v => v.url === originalVideo.url);
         if (idx !== -1) {
             all[idx] = updatedVideo;
+            if (updatedVideo.url !== originalVideo.url) {
+                await deletePreview(originalVideo.url);
+            }
             await saveVideos(all);
             setItems(all);
             // If URL or rawVideoSrc was changed, trigger a rescan
@@ -210,7 +248,8 @@ export const VaultDashboard = () => {
                 browser.runtime.sendMessage({
                     action: "generate_preview",
                     data: {
-                        url: updatedVideo.rawVideoSrc || updatedVideo.url,
+                        previewKey: updatedVideo.url,
+                        sourceUrl: updatedVideo.rawVideoSrc || updatedVideo.url,
                         duration: typeof updatedVideo.duration === 'number' ? updatedVideo.duration : 60
                     }
                 });
@@ -222,6 +261,7 @@ export const VaultDashboard = () => {
         setConfirmDialog({
             message: "Are you sure you want to completely wipe your vault? This cannot be undone.",
             onConfirm: async () => {
+                await clearPreviews();
                 await saveVideos([]);
                 setItems([]);
                 setIsSettingsOpen(false);
@@ -409,7 +449,6 @@ export const VaultDashboard = () => {
         // Instantiating `Intl.Collator` once outside the sort loop and reusing `.compare` provides
         // massive performance gains (up to 100x faster) when sorting large collections of strings.
         const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-
         return [...filtered].sort((a, b) => {
             if (sortBy === 'DateDesc')
                 return b.timestamp - a.timestamp;
@@ -523,7 +562,7 @@ export const VaultDashboard = () => {
                                                                         window.open(fav.url, '_blank');
                                                                     }
                                                                 }
-                                                            }, className: viewSize === 2 ? "relative w-2/5 flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border" : "relative w-full h-[180px] flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb border-b border-vault-border rounded-t-lg", children: [fav.type === 'video' ? (_jsx(PreviewThumb, { video: fav })) : (fav.thumbnail ? (_jsx("img", { src: fav.thumbnail, alt: fav.title, className: "w-full h-full object-cover transition-transform duration-500 group-hover/thumb:scale-105" })) : (_jsxs("div", { className: "w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-vault-cardBg to-vault-bg/50", children: [_jsx(Icons.DebugIcon, { size: 32, className: "opacity-10 mb-1" }), _jsx("span", { className: "text-[10px] font-mono opacity-30", children: "NO PREVIEW" })] }))), _jsx("div", { className: "absolute top-0 left-0 w-2 h-2 border-t-2 border-l-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" }), _jsx("div", { className: "absolute top-0 right-0 w-2 h-2 border-t-2 border-r-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" }), _jsx("div", { className: "absolute bottom-0 left-0 w-2 h-2 border-b-2 border-l-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" }), _jsx("div", { className: "absolute bottom-0 right-0 w-2 h-2 border-b-2 border-r-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" }), viewSize > 2 && (_jsxs(_Fragment, { children: [_jsx("div", { className: "absolute top-2 left-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2", children: _jsx("button", { onClick: (e) => { e.stopPropagation(); handleEdit(fav); }, className: "thumb-action p-1.5 bg-black/60 hover:bg-vault-accent text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110", title: "Edit Metadata", children: _jsx(Icons.EditIcon, { size: 12 }) }) }), _jsx("div", { className: "absolute top-2 right-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2", children: _jsx("button", { onClick: (e) => { e.stopPropagation(); handleDelete(fav.url); }, className: "thumb-action p-1.5 bg-black/60 hover:bg-red-500 text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110", title: "Delete Item", children: _jsx(Icons.DeleteIcon, { size: 12 }) }) })] })), fav.duration && (_jsx("div", { className: "absolute bottom-2 right-2 bg-black/80 text-white text-[10px] font-mono font-bold px-1.5 py-0.5 rounded shadow z-20", children: typeof fav.duration === 'number'
+                                                            }, className: viewSize === 2 ? "relative w-2/5 flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border" : "relative w-full h-[180px] flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb border-b border-vault-border rounded-t-lg", children: [fav.type === 'video' ? (_jsx(PreviewThumb, { video: fav })) : (isDisplayableImageThumbnail(fav.thumbnail) ? (_jsx("img", { src: fav.thumbnail, alt: fav.title, className: "w-full h-full object-cover transition-transform duration-500 group-hover/thumb:scale-105" })) : (_jsxs("div", { className: "w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-vault-cardBg to-vault-bg/50", children: [_jsx(Icons.DebugIcon, { size: 32, className: "opacity-10 mb-1" }), _jsx("span", { className: "text-[10px] font-mono opacity-30", children: "NO PREVIEW" })] }))), _jsx("div", { className: "absolute top-0 left-0 w-2 h-2 border-t-2 border-l-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" }), _jsx("div", { className: "absolute top-0 right-0 w-2 h-2 border-t-2 border-r-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" }), _jsx("div", { className: "absolute bottom-0 left-0 w-2 h-2 border-b-2 border-l-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" }), _jsx("div", { className: "absolute bottom-0 right-0 w-2 h-2 border-b-2 border-r-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" }), viewSize > 2 && (_jsxs(_Fragment, { children: [_jsx("div", { className: "absolute top-2 left-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2", children: _jsx("button", { onClick: (e) => { e.stopPropagation(); handleEdit(fav); }, className: "thumb-action p-1.5 bg-black/60 hover:bg-vault-accent text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110", title: "Edit Metadata", children: _jsx(Icons.EditIcon, { size: 12 }) }) }), _jsx("div", { className: "absolute top-2 right-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2", children: _jsx("button", { onClick: (e) => { e.stopPropagation(); handleDelete(fav.url); }, className: "thumb-action p-1.5 bg-black/60 hover:bg-red-500 text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110", title: "Delete Item", children: _jsx(Icons.DeleteIcon, { size: 12 }) }) })] })), fav.duration && (_jsx("div", { className: "absolute bottom-2 right-2 bg-black/80 text-white text-[10px] font-mono font-bold px-1.5 py-0.5 rounded shadow z-20", children: typeof fav.duration === 'number'
                                                                         ? `${Math.floor(fav.duration / 60)}:${(fav.duration % 60).toString().padStart(2, '0')}`
                                                                         : fav.duration })), _jsx("div", { className: "absolute inset-0 bg-vault-cardBg/10 group-hover/thumb:bg-vault-cardBg/30 transition-colors flex items-center justify-center z-10", children: fav.type === 'video' ? (_jsx("div", { className: "w-12 h-12 rounded-full bg-vault-accent/90 opacity-0 group-hover/thumb:opacity-100 transition-all flex items-center justify-center shadow-2xl transform scale-75 group-hover/thumb:scale-100 duration-300", children: _jsx(Icons.PlayIcon, { fill: "currentColor", className: "text-vault-bg ml-1", size: 20 }) })) : (_jsx("div", { className: "w-12 h-12 rounded-full bg-vault-cardBg opacity-0 group-hover/thumb:opacity-100 transition-all flex items-center justify-center shadow-xl transform scale-75 group-hover/thumb:scale-100 duration-300 border border-vault-border", children: _jsx(Icons.ChevronRightIcon, { className: "text-vault-text", size: 20 }) })) }), _jsx("div", { className: "absolute bottom-2 left-2 z-20 opacity-0 group-hover/thumb:opacity-100 transition-opacity pointer-events-none", children: _jsxs("div", { className: "flex items-center gap-1.5 bg-black/80 px-2 py-1 rounded text-[10px] font-mono font-bold text-vault-accent border border-vault-accent/30 backdrop-blur-sm", children: [_jsx("span", { className: "w-1.5 h-1.5 rounded-full bg-vault-accent animate-pulse" }), fav.type === 'video' ? 'SCANNING' : 'LINK'] }) })] })), _jsxs("div", { className: cn("z-10 relative flex flex-col flex-1", viewSize === 1 ? "flex-row items-center justify-between w-full min-h-[60px]" : "p-4"), children: [_jsxs("div", { className: cn("flex justify-between items-start mb-2", viewSize === 1 && "mb-0"), children: [_jsx("div", { className: "flex gap-2 items-center", children: _jsx("span", { className: cn("text-[10px] uppercase font-bold tracking-widest text-vault-bg bg-vault-muted px-2 py-0.5 rounded-sm", viewSize === 1 && "flex items-center justify-center h-5"), children: viewSize > 1 ? `#${idx + 1 + (currentPage * itemsPerPage)}` : 'V-ID' }) }), viewSize <= 2 && (_jsxs("div", { className: "flex gap-1 ml-auto", children: [_jsx("button", { onClick: (e) => { e.stopPropagation(); handleEdit(fav); }, className: "vault-btn p-1 flex items-center justify-center border-none hover:bg-vault-cardBg", title: "Edit", children: _jsx(Icons.EditIcon, { size: 14, className: "text-vault-muted hover:text-vault-accent" }) }), _jsx("button", { onClick: (e) => { e.stopPropagation(); handleDelete(fav.url); }, className: "vault-btn p-1 flex items-center justify-center border-none hover:bg-vault-cardBg", title: "Delete", children: _jsx(Icons.DeleteIcon, { size: 14, className: "text-vault-muted hover:text-red-500" }) })] }))] }), _jsxs("div", { className: cn("flex-1", viewSize === 1 ? "flex items-center justify-between w-full ml-4" : "flex flex-col"), children: [_jsxs("div", { className: viewSize === 1 ? "flex-1 mr-4" : "", children: [_jsx("h3", { className: cn("font-bold mb-1 leading-snug cursor-pointer hover:text-vault-accent transition-colors", viewSize === 1 ? "text-base line-clamp-1" : "text-[15px] line-clamp-2"), children: fav.title || 'Untitled Reference' }), _jsx("p", { className: "text-xs text-vault-muted truncate max-w-[250px] font-mono opacity-80", title: fav.url, children: (fav.domain && fav.domain !== 'Unknown') ? fav.domain : getDomainFromUrl(fav.url, true) })] }), viewSize > 1 && (_jsxs("div", { className: "mt-3 space-y-1 mb-2 flex-1", children: [fav.author && (_jsxs("p", { className: "text-[11px] text-vault-text line-clamp-1", children: [_jsx("span", { className: "text-vault-muted", children: "By:" }), " ", fav.author] })), fav.actors && fav.actors.length > 0 && (_jsxs("p", { className: "text-[11px] text-vault-accent line-clamp-1 opacity-90", children: [_jsx("span", { className: "text-vault-muted", children: "With:" }), " ", fav.actors.join(', ')] })), (fav.views || fav.likes) && (_jsxs("p", { className: "text-[11px] text-vault-muted flex gap-3 mt-1", children: [fav.views && _jsxs("span", { children: [_jsx("strong", { children: fav.views }), " views"] }), fav.likes && _jsxs("span", { children: [_jsx("strong", { children: fav.likes }), " likes"] })] })), fav.tags && fav.tags.length > 0 && (_jsxs("div", { className: "flex flex-wrap gap-1 mt-2", children: [fav.tags.slice(0, 3).map(tag => (_jsx("span", { className: "text-[9px] bg-vault-cardBg border border-vault-border px-1.5 py-0.5 rounded text-vault-muted inline-block", children: tag }, tag))), fav.tags.length > 3 && (_jsxs("span", { className: "text-[9px] bg-vault-cardBg/50 border border-vault-border border-dashed px-1.5 py-0.5 rounded text-vault-muted inline-block", children: ["+", fav.tags.length - 3] }))] }))] }))] }), _jsxs("div", { className: cn("flex items-center justify-between border-vault-border pt-3 mt-auto", viewSize === 1 ? "border-none ml-4 gap-4 mt-0 pt-0" : "border-t"), children: [_jsx("span", { className: "text-[11px] font-semibold text-vault-muted tracking-wider", children: new Date(fav.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }), _jsxs("a", { href: fav.url, target: "_blank", rel: "noreferrer", className: "text-[10px] font-bold text-vault-bg bg-vault-accent hover:bg-vault-accentHover transition-colors flex items-center gap-1 px-3 py-1.5 rounded-sm", children: ["OPEN ", _jsx(Icons.ChevronRightIcon, { size: 12, strokeWidth: 3, className: "group-hover:translate-x-0.5 transition-transform" })] })] })] })] }, `${fav.url}-${idx}`))) })] }, groupName));
                                 }), filtered.length === 0 && (_jsxs("div", { className: "py-24 text-center border border-dashed border-vault-border rounded-xl bg-vault-cardBg/30 flex flex-col items-center justify-center", children: [_jsx(Icons.DebugIcon, { size: 48, className: "text-vault-border mb-4" }), _jsx("p", { className: "text-vault-muted text-sm font-semibold tracking-widest uppercase mb-2", children: "No encrypted items found" }), _jsx("p", { className: "text-xs text-vault-muted opacity-60", children: "Try scanning a new target domain or clearing your filters" })] }))] }) })] }), toastMessage && (_jsx("div", { className: cn("fixed bottom-6 right-6 z-[100] px-4 py-2 rounded shadow-2xl font-bold text-sm tracking-wide animate-in slide-in-from-bottom border", toastMessage.type === 'success' ? "bg-green-500/20 text-green-400 border-green-500/30" : "bg-red-500/20 text-red-400 border-red-500/30"), children: toastMessage.msg })), confirmDialog && (_jsx("div", { className: "fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4", children: _jsxs("div", { className: "bg-vault-cardBg border border-vault-border rounded-lg shadow-2xl max-w-sm w-full p-6 animate-in zoom-in-95", children: [_jsxs("h3", { className: "text-vault-text font-bold mb-4 flex items-center gap-2", children: [_jsx(Icons.AlertIcon, { size: 20, className: "text-vault-accent" }), " Confirm Action"] }), _jsx("p", { className: "text-vault-muted text-sm", children: confirmDialog.message }), _jsxs("div", { className: "flex justify-end gap-3 mt-6", children: [_jsx("button", { onClick: () => setConfirmDialog(null), className: "px-4 py-1.5 text-xs font-bold text-vault-muted hover:text-vault-text transition-colors", children: "Cancel" }), _jsx("button", { onClick: confirmDialog.onConfirm, className: "px-4 py-1.5 text-xs font-black bg-vault-accent text-vault-bg rounded hover:bg-vault-accentHover transition-all shadow-lg", children: "Confirm" })] })] }) })), promptDialog && (_jsx("div", { className: "fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4", children: _jsxs("div", { className: "bg-vault-cardBg border border-vault-border rounded-lg shadow-2xl max-w-sm w-full p-6 animate-in zoom-in-95", children: [_jsxs("h3", { className: "text-vault-text font-bold mb-4 flex items-center gap-2", children: [_jsx(Icons.DebugIcon, { size: 20, className: "text-vault-accent" }), " Input Required"] }), _jsx("p", { className: "text-vault-muted text-sm mb-3", children: promptDialog.message }), _jsx("input", { autoFocus: true, type: promptDialog.type === 'password' ? 'password' : 'text', className: "w-full bg-vault-bg border border-vault-border rounded p-2 text-sm text-vault-text focus:outline-none focus:border-vault-accent focus:ring-1 focus:ring-vault-accent/30", onKeyDown: (e) => {
@@ -562,7 +601,8 @@ export const VaultDashboard = () => {
                                                         }
                                                     }
                                                     catch (err) {
-                                                        // ...existing code...
+                                                        console.error("Failed to refresh video link", err);
+                                                        setToastMessage({ msg: "Failed to refresh video link.", type: "error" });
                                                         setVideoError(true);
                                                     }
                                                     finally {
