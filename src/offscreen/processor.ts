@@ -1,5 +1,5 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import { fetchFile } from '@ffmpeg/util';
 import browser from 'webextension-polyfill';
 import { savePreview } from '../lib/dexie-store';
 
@@ -9,10 +9,9 @@ async function loadFFmpeg() {
   if (ffmpeg) return ffmpeg;
   ffmpeg = new FFmpeg();
   
-  const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
   await ffmpeg.load({
-    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    coreURL: browser.runtime.getURL('ffmpeg-core/ffmpeg-core.js'),
+    wasmURL: browser.runtime.getURL('ffmpeg-core/ffmpeg-core.wasm'),
   });
   return ffmpeg;
 }

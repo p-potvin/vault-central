@@ -7,6 +7,11 @@ import * as storageVault from '../lib/storage-vault';
 vi.mock('../lib/storage-vault', () => ({
     getSavedVideos: vi.fn(),
     saveVideos: vi.fn(),
+    getSyncEnabled: vi.fn(),
+    getSyncedVideos: vi.fn(),
+    saveSyncedVideos: vi.fn(),
+    setSyncEnabled: vi.fn(),
+    clearSyncedVideos: vi.fn(),
     getPinSettings: vi.fn(),
     savePinSettings: vi.fn(),
     isVaultLocked: vi.fn(),
@@ -70,6 +75,11 @@ describe('Dashboard Component', () => {
     beforeEach(() => {
         vi.resetAllMocks();
         storageVault.getSavedVideos.mockResolvedValue(mockVideos);
+        storageVault.getSyncEnabled.mockResolvedValue(false);
+        storageVault.getSyncedVideos.mockResolvedValue([]);
+        storageVault.saveSyncedVideos.mockResolvedValue(undefined);
+        storageVault.setSyncEnabled.mockResolvedValue(undefined);
+        storageVault.clearSyncedVideos.mockResolvedValue(undefined);
         storageVault.isVaultLocked.mockResolvedValue(false);
         storageVault.getPinSettings.mockResolvedValue({
             enabled: false,

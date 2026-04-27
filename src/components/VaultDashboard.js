@@ -1,6 +1,6 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import browser from 'webextension-polyfill';
-import { getPinSettings, getSavedVideos, savePinSettings, saveVideos } from '../lib/storage-vault';
+import { clearSyncedVideos, getPinSettings, getSavedVideos, getSyncEnabled, getSyncedVideos, savePinSettings, saveSyncedVideos, saveVideos, setSyncEnabled } from '../lib/storage-vault';
 import { clearPreviews, deletePreview, getPreview } from '../lib/dexie-store';
 import { VAULT_THEMES, getThemeClass } from '../lib/themes'; // Added for binary previews
 import { VideoDataSchema } from '../types/schemas';
@@ -22,6 +22,19 @@ async function getPreviewForVideo(video) {
 }
 function isDisplayableImageThumbnail(thumbnail) {
     return Boolean(thumbnail && !thumbnail.startsWith('data:video'));
+}
+function mergeSyncedMetadata(localItems, syncedItems) {
+    const seen = new Set(localItems.map(item => item.url));
+    const additions = syncedItems.filter(item => {
+        if (seen.has(item.url))
+            return false;
+        seen.add(item.url);
+        return true;
+    });
+    return {
+        merged: [...localItems, ...additions],
+        addedCount: additions.length
+    };
 }
 function getDomainFromUrl(url, removeWww = false) {
     if (!url)
@@ -262,6 +275,12 @@ export const VaultDashboard = () => {
             message: "Are you sure you want to completely wipe your vault? This cannot be undone.",
             onConfirm: async () => {
                 await clearPreviews();
+                try {
+                    await clearSyncedVideos();
+                }
+                catch (err) {
+                    console.warn("[VaultDashboard] Browser Sync clear failed during wipe:", err);
+                }
                 await saveVideos([]);
                 setItems([]);
                 setIsSettingsOpen(false);
@@ -301,12 +320,12 @@ export const VaultDashboard = () => {
     // PIN Settings
     const [pinSettings, setPinSettings] = useState(null);
     // Browser Sync State
-    const [isSyncing, setIsSyncing] = useState(() => {
-        const saved = localStorage.getItem('vault-sync-enabled');
-        return saved === 'true';
-    });
+    const [isSyncing, setIsSyncing] = useState(false);
+    const [isSyncBusy, setIsSyncBusy] = useState(false);
+    const syncEnabledRef = useRef(false);
     const [isFirefox] = useState(() => navigator.userAgent.toLowerCase().includes('firefox'));
     useEffect(() => {
+        syncEnabledRef.current = isSyncing;
         localStorage.setItem('vault-sync-enabled', isSyncing.toString());
     }, [isSyncing]);
     useEffect(() => {
@@ -343,7 +362,31 @@ export const VaultDashboard = () => {
             const settings = await getPinSettings();
             setPinSettings(settings);
             console.log("[VaultDashboard] PIN settings loaded. enabled:", settings.enabled);
-            const all = await getSavedVideos();
+            let syncEnabled = await getSyncEnabled();
+            const legacySyncEnabled = localStorage.getItem('vault-sync-enabled') === 'true';
+            if (!syncEnabled && legacySyncEnabled) {
+                await setSyncEnabled(true);
+                syncEnabled = true;
+            }
+            setIsSyncing(syncEnabled);
+            let all = await getSavedVideos();
+            if (syncEnabled) {
+                try {
+                    const synced = await getSyncedVideos();
+                    const { merged, addedCount } = mergeSyncedMetadata(all, synced);
+                    if (addedCount > 0) {
+                        await saveVideos(merged);
+                        all = merged;
+                    }
+                    else {
+                        await saveSyncedVideos(all);
+                    }
+                }
+                catch (err) {
+                    console.error("[VaultDashboard] Browser Sync load failed:", err);
+                    setToastMessage({ msg: "Browser Sync metadata could not be loaded.", type: "error" });
+                }
+            }
             console.log("[VaultDashboard] Vault loaded.", all?.length ?? 0, "items.");
             setItems(all || []);
         };
@@ -358,6 +401,28 @@ export const VaultDashboard = () => {
                 console.log("[VaultDashboard] savedVideos storage change detected. New count:", newValue.length);
                 setItems(newValue);
             }
+            if (areaName === 'sync' && syncEnabledRef.current) {
+                const keys = Object.keys(changes);
+                const syncChanged = keys.some(key => key === 'savedVideosSyncMeta' ||
+                    key === STORAGE_KEYS.SAVED_VIDEOS ||
+                    key.startsWith('savedVideosSyncChunk:'));
+                if (!syncChanged)
+                    return;
+                void (async () => {
+                    try {
+                        const localItems = await getSavedVideos(true);
+                        const syncedItems = await getSyncedVideos();
+                        const { merged, addedCount } = mergeSyncedMetadata(localItems, syncedItems);
+                        if (addedCount > 0) {
+                            await saveVideos(merged);
+                            setItems(merged);
+                        }
+                    }
+                    catch (err) {
+                        console.error("[VaultDashboard] Browser Sync change handling failed:", err);
+                    }
+                })();
+            }
         };
         if (browser.storage && browser.storage.onChanged) {
             browser.storage.onChanged.addListener(handleStorageChange);
@@ -368,6 +433,56 @@ export const VaultDashboard = () => {
             }
         };
     }, []);
+    const enableBrowserSync = async () => {
+        setIsSyncBusy(true);
+        try {
+            const localItems = await getSavedVideos(true);
+            const syncedItems = await getSyncedVideos();
+            const { merged, addedCount } = mergeSyncedMetadata(localItems, syncedItems);
+            await saveSyncedVideos(merged);
+            await setSyncEnabled(true);
+            if (addedCount > 0) {
+                await saveVideos(merged);
+                setItems(merged);
+            }
+            setIsSyncing(true);
+            setToastMessage({
+                msg: addedCount > 0
+                    ? `Browser Sync enabled. Restored ${addedCount} synced items.`
+                    : "Browser Sync enabled for metadata.",
+                type: "success"
+            });
+        }
+        catch (err) {
+            console.error("[VaultDashboard] Failed to enable Browser Sync:", err);
+            await setSyncEnabled(false);
+            setIsSyncing(false);
+            setToastMessage({ msg: "Browser Sync failed to enable. Metadata may be too large for sync storage.", type: "error" });
+        }
+        finally {
+            setIsSyncBusy(false);
+        }
+    };
+    const disableBrowserSync = async () => {
+        setIsSyncBusy(true);
+        try {
+            await setSyncEnabled(false);
+            setIsSyncing(false);
+            setToastMessage({ msg: "Browser Sync disabled. Local vault unchanged.", type: "success" });
+        }
+        catch (err) {
+            console.error("[VaultDashboard] Failed to disable Browser Sync:", err);
+            setToastMessage({ msg: "Failed to disable Browser Sync.", type: "error" });
+        }
+        finally {
+            setIsSyncBusy(false);
+        }
+    };
+    const handleToggleBrowserSync = () => {
+        if (isSyncBusy)
+            return;
+        void (isSyncing ? disableBrowserSync() : enableBrowserSync());
+    };
     const togglePin = async (e) => {
         const enabled = e.target.checked;
         if (enabled) {
@@ -516,11 +631,11 @@ export const VaultDashboard = () => {
                                                                         savePinSettings(next);
                                                                         setPinSettings(next);
                                                                         setItems([]);
-                                                                    }, className: "w-full py-1.5 text-[10px] font-black uppercase tracking-widest bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white transition-all rounded-sm", children: "Lock Vault Now" })] }))] })] }), _jsx("hr", { className: "border-vault-border opacity-50 my-2" }), _jsxs("div", { className: "pt-2", children: [_jsxs("label", { className: "text-xs font-bold text-vault-muted uppercase tracking-widest flex items-center gap-2 mb-2", children: [_jsx(Icons.DebugIcon, { size: 14, className: "text-vault-accent" }), " Persistence"] }), _jsxs("button", { onClick: () => setIsSyncing(!isSyncing), className: cn("w-full vault-btn p-2 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2", isSyncing
+                                                                    }, className: "w-full py-1.5 text-[10px] font-black uppercase tracking-widest bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white transition-all rounded-sm", children: "Lock Vault Now" })] }))] })] }), _jsx("hr", { className: "border-vault-border opacity-50 my-2" }), _jsxs("div", { className: "pt-2", children: [_jsxs("label", { className: "text-xs font-bold text-vault-muted uppercase tracking-widest flex items-center gap-2 mb-2", children: [_jsx(Icons.DebugIcon, { size: 14, className: "text-vault-accent" }), " Persistence"] }), _jsxs("button", { onClick: handleToggleBrowserSync, disabled: isSyncBusy, className: cn("w-full vault-btn p-2 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2", isSyncing
                                                         ? "bg-vault-accent text-vault-bg border-none hover:border-dashed hover:border-vault-bg/50 hover:bg-vault-accentHover"
-                                                        : "border-dashed border-vault-border text-vault-muted opacity-60 hover:opacity-100"), title: isFirefox ? "Use Firefox Sync Storage" : "Use Chrome Sync Storage", children: [_jsx("div", { className: cn("w-1.5 h-1.5 rounded-full", isSyncing ? "bg-vault-bg animate-pulse" : "bg-vault-muted") }), isSyncing ? "Sync Enabled" : "Enable Browser Sync"] }), _jsx("p", { className: "text-[9px] text-vault-muted mt-2 leading-relaxed opacity-60 italic", children: isFirefox
+                                                        : "border-dashed border-vault-border text-vault-muted opacity-60 hover:opacity-100", isSyncBusy && "cursor-wait opacity-70"), title: isFirefox ? "Use Firefox Sync Storage" : "Use Chrome Sync Storage", children: [_jsx("div", { className: cn("w-1.5 h-1.5 rounded-full", isSyncing ? "bg-vault-bg animate-pulse" : "bg-vault-muted") }), isSyncBusy ? "Syncing..." : isSyncing ? "Sync Enabled" : "Enable Browser Sync"] }), _jsx("p", { className: "text-[9px] text-vault-muted mt-2 leading-relaxed opacity-60 italic", children: isFirefox
                                                         ? "Uses Firefox Sync to backup metadata across devices (excludes large binary previews)."
-                                                        : "Uses Chrome Sync (subject to 100KB limit per item, recommended for metadata only)." })] }), _jsx("hr", { className: "border-vault-border opacity-50 my-2" }), _jsxs("div", { className: "text-xs text-vault-muted space-y-2", children: [_jsxs("p", { children: ["Total Items: ", _jsx("strong", { className: "text-vault-accent", children: items.length })] }), _jsxs("p", { children: ["Visible: ", _jsx("strong", { className: "text-vault-text", children: filtered.length })] })] })] }) }), _jsx("div", { onClick: () => {
+                                                        : "Uses Chrome Sync for metadata only, chunked for browser quota limits." })] }), _jsx("hr", { className: "border-vault-border opacity-50 my-2" }), _jsxs("div", { className: "text-xs text-vault-muted space-y-2", children: [_jsxs("p", { children: ["Total Items: ", _jsx("strong", { className: "text-vault-accent", children: items.length })] }), _jsxs("p", { children: ["Visible: ", _jsx("strong", { className: "text-vault-text", children: filtered.length })] })] })] }) }), _jsx("div", { onClick: () => {
                                     const newState = !isSidebarOpen;
                                     setSidebarOpen(newState);
                                     localStorage.setItem('vault-sidebar-open', newState.toString());
