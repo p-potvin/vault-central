@@ -80,7 +80,18 @@ export async function savePreview(videoUrl: string, blob: Blob): Promise<void> {
       dbLog(`Successfully saved new preview for ${videoUrl}`);
   } catch (err) {
       dbLog(`Failed to save preview:`, err);
+      throw err;
   }
+}
+
+export async function deletePreview(videoUrl: string): Promise<void> {
+  dbLog(`deletePreview called for ${videoUrl}`);
+  await db.previews.where('videoUrl').equals(videoUrl).delete();
+}
+
+export async function clearPreviews(): Promise<void> {
+  dbLog(`clearPreviews called`);
+  await db.previews.clear();
 }
 
 /**

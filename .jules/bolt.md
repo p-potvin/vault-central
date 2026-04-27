@@ -11,3 +11,6 @@
 ## 2026-04-25 - [Avoid lockfile side-effects]
 **Learning:** Running `npm install` to fix missing test binaries can silently modify `package-lock.json`, violating the strict boundary.
 **Action:** Always run `git checkout -- package-lock.json` after an uninstructed `npm install` to restore the original state before creating a PR.
+## 2024-04-26 - [Fast string sorting]
+**Learning:** `String.prototype.localeCompare` is incredibly slow when used inside large `.sort()` loops on arrays. V8 has to recreate the locale settings and resolve arguments on every single element comparison.
+**Action:** Always instantiate `Intl.Collator` outside of `.sort()` callbacks and use the collator's `.compare` method instead for 10x-100x performance improvements.

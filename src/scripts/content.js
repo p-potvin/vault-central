@@ -124,9 +124,12 @@ function showVaultNotification(type, message, id) {
     el.innerHTML = `
         <div style="display: flex; align-items: center;">
             ${iconMap[type] || iconMap.error}
-            <span style="flex: 1;">${message.toUpperCase()}</span>
+            <span class="vault-notification-message" style="flex: 1;"></span>
         </div>
     `;
+    const messageEl = el.querySelector(".vault-notification-message");
+    if (messageEl)
+        messageEl.textContent = message.toUpperCase();
     const themeMap = {
         success: { bg: "#10b981", border: "#059669" },
         removed: { bg: "#f97316", border: "#ea580c" },
@@ -402,7 +405,7 @@ function attemptExtraction(target, notificationId) {
         ...metaDataPayload
     };
     console.log(`${LOG_PREFIX} attemptExtraction: sending process_capture. title="${payload.title}" | author="${payload.author}" | thumbnail len=${payload.thumbnail.length} | tags=${payload.tags?.length ?? 0}`);
-    browser.runtime.sendMessage({
+    return browser.runtime.sendMessage({
         action: "process_capture",
         data: payload
     }).then((res) => {
@@ -410,7 +413,7 @@ function attemptExtraction(target, notificationId) {
         console.log(`${LOG_PREFIX} attemptExtraction: background responded:`, response);
         if (!response) {
             showVaultNotification('error', 'Extension background offline', notificationId);
-            return;
+            return { success: false, message: 'Extension background offline' };
         }
         if (response.success) {
             showVaultNotification('success', 'Added to Vault', notificationId);
@@ -419,9 +422,11 @@ function attemptExtraction(target, notificationId) {
         else {
             showVaultNotification('error', response.message || 'Failed to capture', notificationId);
         }
+        return response;
     }).catch((e) => {
         console.error(`${LOG_PREFIX} attemptExtraction: Message passing error:`, e);
         showVaultNotification('error', 'Connection to Vault lost', notificationId);
+        return { success: false, message: e.message || 'Connection to Vault lost' };
     });
 }
 browser.runtime.onMessage.addListener((request, sender) => {
@@ -431,7 +436,7 @@ browser.runtime.onMessage.addListener((request, sender) => {
     if (request.action === "extract_video") {
         console.log(`${LOG_PREFIX} onMessage: extract_video requested. Forcing extraction from DOM...`);
         const target = getBestTarget(lastHoveredElement);
-        return Promise.resolve(attemptExtraction(target));
+        return attemptExtraction(target);
     }
     if (request.type === "capture-video" || request.action === "capture-video") {
         console.log(`${LOG_PREFIX} onMessage: capture-video triggered from background command.`);

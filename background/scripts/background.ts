@@ -5,23 +5,34 @@ import { STORAGE_KEYS } from '../../src/lib/constants';
 
 class DebugLogger {
     private logs: string[] = [];
+
+    private formatArg(arg: any): string {
+        if (arg instanceof Error) return `${arg.name}: ${arg.message}`;
+        if (typeof arg === 'bigint') return arg.toString();
+        if (typeof arg !== 'object' || arg === null) return String(arg);
+        try {
+            return JSON.stringify(arg);
+        } catch {
+            return Object.prototype.toString.call(arg);
+        }
+    }
     
     log(msg: string, ...args: any) {
-        const line = `[${new Date().toISOString()}] [VaultAuth-Debug] ${msg} ${args.map((a: any) => typeof a === 'object' ? JSON.stringify(a) : a).join(' ')}`;
+        const line = `[${new Date().toISOString()}] [VaultAuth-Debug] ${msg} ${args.map((a: any) => this.formatArg(a)).join(' ')}`;
         console.log(line);
         this.logs.push(line);
         if (this.logs.length > 500) this.logs.shift();
     }
     
     warn(msg: string, ...args: any) {
-        const line = `[${new Date().toISOString()}] [VaultAuth-Warn] ${msg} ${args.map((a: any) => typeof a === 'object' ? JSON.stringify(a) : a).join(' ')}`;
+        const line = `[${new Date().toISOString()}] [VaultAuth-Warn] ${msg} ${args.map((a: any) => this.formatArg(a)).join(' ')}`;
         console.warn(line);
         this.logs.push(line);
         if (this.logs.length > 500) this.logs.shift();
     }
     
     error(msg: string, ...args: any) {
-        const line = `[${new Date().toISOString()}] [VaultAuth-Error] ${msg} ${args.map((a: any) => typeof a === 'object' ? JSON.stringify(a) : a).join(' ')}`;
+        const line = `[${new Date().toISOString()}] [VaultAuth-Error] ${msg} ${args.map((a: any) => this.formatArg(a)).join(' ')}`;
         console.error(line);
         this.logs.push(line);
         if (this.logs.length > 500) this.logs.shift();
@@ -93,7 +104,9 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
             if (scraperTabId !== undefined) {
                 try {
                     await browser.tabs.remove(scraperTabId);
-                } catch (e) {}
+                } catch (e) {
+                    logger.warn("[doTabExtraction] Error closing scraper tab:", e);
+                }
             }
 
             resolve(result);
@@ -282,7 +295,9 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
                                             }
                                             await delay(200);
                                         }
-                                    } catch (e) {}
+                                    } catch (e) {
+                                        console.debug("[VaultCentral] Soft-gate interaction attempt failed:", e);
+                                    }
                                 }
                             };
 
@@ -427,6 +442,7 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
     try {
         const targetUrl = data.url;
         let finalSrc = data.url;
+        let capturedWebmPreviewDataUrl = "";
 
         if (!data.thumbnail && windowId) {
             try {
@@ -455,7 +471,10 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
                 const meta = extracted.metadata;
                 if (meta.title) { logger.log("[runCapturePipeline] Scraped title:", meta.title); data.title = meta.title; }
                 if (meta.author) { logger.log("[runCapturePipeline] Scraped author:", meta.author); data.author = meta.author; }
-                if (meta.thumbnail) {
+                if (meta.thumbnail?.startsWith('data:video')) {
+                    logger.log("[runCapturePipeline] Scraped WebM preview present (len:", meta.thumbnail.length, "). Saving it as binary preview instead of metadata thumbnail.");
+                    capturedWebmPreviewDataUrl = meta.thumbnail;
+                } else if (meta.thumbnail) {
                     logger.log("[runCapturePipeline] Scraped thumbnail present (len:", meta.thumbnail.length, "). Replacing fallback.");
                     data.thumbnail = meta.thumbnail;
                 } else {
@@ -482,18 +501,25 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
         }
         
         data.timestamp = Date.now(); // BUG FIX: Dashboard scan for missing previews relies on this!
+
+        // Keep binary previews out of chrome.storage metadata. WebM data URLs are stored
+        // in IndexedDB under the stable vault item URL and rendered through PreviewThumb.
+        if (!capturedWebmPreviewDataUrl && data.thumbnail?.startsWith('data:video')) {
+            capturedWebmPreviewDataUrl = data.thumbnail;
+        }
+        const thumbIsWebm = Boolean(capturedWebmPreviewDataUrl);
+        if (thumbIsWebm) {
+            data.thumbnail = "";
+        }
         
         saved.push(data);
         await saveVideos(saved);
         logger.log("[runCapturePipeline] Saved! New vault size:", saved.length);
 
-        // BUG FIX: data.thumbnail can be falsy/empty string. Using optional chaining avoids TypeError.
-        const thumbIsWebm = data.thumbnail?.startsWith('data:video');
-
         if (thumbIsWebm) {
             logger.log("[runCapturePipeline] Injected script captured WebM. Decoding and saving to IndexedDB.");
             try {
-                const base64Data = data.thumbnail.split(',')[1];
+                const base64Data = capturedWebmPreviewDataUrl.split(',')[1];
                 const binaryString = atob(base64Data);
                 const len = binaryString.length;
                 const bytes = new Uint8Array(len);
@@ -510,10 +536,18 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
 
         if (data.rawVideoSrc && !thumbIsWebm) {
             logger.log("[runCapturePipeline] Queuing background preview generation for:", data.rawVideoSrc);
-            setupOffscreenDocument().then(() => {
+            setupOffscreenDocument().then((ready) => {
+                if (!ready) {
+                    logger.warn("[runCapturePipeline] Preview processor unavailable; cannot generate background preview.");
+                    return;
+                }
                 browser.runtime.sendMessage({
-                    action: "generate_preview",
-                    data: { url: data.rawVideoSrc, duration: typeof data.duration === 'number' ? data.duration : 60 }
+                    action: "generate_preview_process",
+                    data: {
+                        previewKey: data.url,
+                        sourceUrl: data.rawVideoSrc,
+                        duration: typeof data.duration === 'number' ? data.duration : 60
+                    }
                 }).catch((e) => {
                     logger.warn("[runCapturePipeline] generate_preview message failed:", e);
                 });
@@ -529,7 +563,7 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
     }
 }
 
-async function setupOffscreenDocument() {
+async function setupOffscreenDocument(): Promise<boolean> {
     const offscreenUrl = 'src/offscreen/processor.html';
     logger.log("[setupOffscreenDocument] Setting up offscreen document:", offscreenUrl);
     
@@ -548,17 +582,18 @@ async function setupOffscreenDocument() {
             } else {
                 logger.log("[setupOffscreenDocument] Fallback iframe already exists.");
             }
+            return true;
         } else {
             logger.warn("[setupOffscreenDocument] No document.body available for iframe fallback. Preview generation unavailable.");
+            return false;
         }
-        return;
     }
 
     try {
         const contexts = await (browser.runtime as any).getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [browser.runtime.getURL(offscreenUrl)] });
         if (contexts && contexts.length > 0) {
             logger.log("[setupOffscreenDocument] Offscreen document already exists. Skipping creation.");
-            return;
+            return true;
         }
         logger.log("[setupOffscreenDocument] Creating offscreen document...");
         await (browser as any).offscreen.createDocument({
@@ -567,8 +602,10 @@ async function setupOffscreenDocument() {
             justification: 'FFmpeg WASM processing for video previews'
         });
         logger.log("[setupOffscreenDocument] Offscreen document created.");
+        return true;
     } catch (e) {
         logger.error("[setupOffscreenDocument] Failed to create offscreen document:", e);
+        return false;
     }
 }
 
@@ -578,14 +615,20 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
     if (request.action === "open_dashboard") { openDashboard(); return Promise.resolve(true); }
     if (request.action === "process_capture") return runCapturePipeline(request.data, sender?.tab?.id, sender?.tab?.windowId);
     if (request.action === "generate_preview") {
-        return setupOffscreenDocument().then(() => {
-            browser.runtime.sendMessage(request).catch(()=>{});
-            return true;
+        return setupOffscreenDocument().then(async (ready) => {
+            if (!ready) {
+                return { success: false, error: "Preview processor unavailable" };
+            }
+            return browser.runtime.sendMessage({
+                action: "generate_preview_process",
+                data: request.data
+            });
         });
     }
+    if (request.action === "generate_preview_process") return undefined;
     if (request.action === "download_debug_logs") { logger.downloadLogFile(); return Promise.resolve(true); }
     logger.warn("[onMessage] Unknown action received:", request.action);
-    return false;
+    return undefined;
 });
 
 browser.action.onClicked.addListener(() => {

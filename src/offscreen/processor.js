@@ -14,22 +14,32 @@ async function loadFFmpeg() {
     });
     return ffmpeg;
 }
-browser.runtime.onMessage.addListener(async (message) => {
-    if (message.action === 'generate_preview') {
-        const { url, duration } = message.data;
-        try {
-            const result = await processVideoPreview(url, duration);
-            if (result) {
-                await savePreview(url, result);
-                return { success: true };
-            }
-        }
-        catch (err) {
-            console.error('[VaultProcessor] Preview generation failed:', err);
-            return { success: false, error: String(err) };
-        }
+browser.runtime.onMessage.addListener((message) => {
+    if (message.action !== 'generate_preview_process') {
+        return undefined;
     }
+    return handleGeneratePreviewProcess(message);
 });
+async function handleGeneratePreviewProcess(message) {
+    const { previewKey, sourceUrl, url, duration } = message.data;
+    const mediaUrl = sourceUrl || url;
+    const storageKey = previewKey || url || sourceUrl;
+    if (!mediaUrl || !storageKey) {
+        return { success: false, error: 'Missing preview source URL or storage key' };
+    }
+    try {
+        const result = await processVideoPreview(mediaUrl, duration);
+        if (result) {
+            await savePreview(storageKey, result);
+            return { success: true };
+        }
+        return { success: false, error: 'Preview generation returned no blob' };
+    }
+    catch (err) {
+        console.error('[VaultProcessor] Preview generation failed:', err);
+        return { success: false, error: String(err) };
+    }
+}
 async function processVideoPreview(url, duration) {
     const fm = await loadFFmpeg();
     const inputName = `input_${Date.now()}.mp4`;
@@ -93,7 +103,9 @@ async function processVideoPreview(url, duration) {
             await fm.deleteFile(inputName);
             await fm.deleteFile(outputName);
         }
-        catch (e) { }
+        catch (e) {
+            console.warn('[VaultProcessor] Failed to clean up FFmpeg temp files:', e);
+        }
     }
     return resultBlob;
 }

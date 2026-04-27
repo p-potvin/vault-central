@@ -65,7 +65,16 @@ export async function savePreview(videoUrl, blob) {
     }
     catch (err) {
         dbLog(`Failed to save preview:`, err);
+        throw err;
     }
+}
+export async function deletePreview(videoUrl) {
+    dbLog(`deletePreview called for ${videoUrl}`);
+    await db.previews.where('videoUrl').equals(videoUrl).delete();
+}
+export async function clearPreviews() {
+    dbLog(`clearPreviews called`);
+    await db.previews.clear();
 }
 /**
  * [VaultAuth] Secure Blob Retrieval
