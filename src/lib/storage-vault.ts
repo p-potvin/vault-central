@@ -6,11 +6,25 @@ const SYNC_ENABLED_KEY = 'vaultSyncEnabled';
 const SYNC_META_KEY = 'savedVideosSyncMeta';
 const SYNC_CHUNK_PREFIX = 'savedVideosSyncChunk';
 const SYNC_CHUNK_SIZE = 7000;
+const BACKUP_SETTINGS_KEY = 'vaultBackupSettings';
 
 type SyncMeta = {
   version: 1;
   chunkCount: number;
   updatedAt: number;
+};
+
+export type BackupSettings = {
+  enabled: boolean;
+  folder: string;
+  lastBackupAt?: number;
+  lastBackupStatus?: 'success' | 'error';
+  lastBackupError?: string;
+};
+
+export const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
+  enabled: true,
+  folder: ''
 };
 
 /**
@@ -99,6 +113,30 @@ export async function getPinSettings(): Promise<PinSettings> {
 
 export async function savePinSettings(settings: PinSettings): Promise<void> {
   await browser.storage.local.set({ [STORAGE_KEYS.PIN_SETTINGS]: settings });
+}
+
+export async function getBackupSettings(): Promise<BackupSettings> {
+  const data: { [key: string]: any } = await browser.storage.local.get(BACKUP_SETTINGS_KEY);
+  return { ...DEFAULT_BACKUP_SETTINGS, ...(data[BACKUP_SETTINGS_KEY] || {}) };
+}
+
+export async function saveBackupSettings(settings: BackupSettings): Promise<void> {
+  await browser.storage.local.set({
+    [BACKUP_SETTINGS_KEY]: {
+      ...DEFAULT_BACKUP_SETTINGS,
+      ...settings
+    }
+  });
+}
+
+export async function recordBackupResult(status: 'success' | 'error', error?: string): Promise<void> {
+  const settings = await getBackupSettings();
+  await saveBackupSettings({
+    ...settings,
+    lastBackupAt: Date.now(),
+    lastBackupStatus: status,
+    lastBackupError: error
+  });
 }
 
 export async function isVaultLocked(): Promise<boolean> {

@@ -2,6 +2,7 @@ import browser from 'webextension-polyfill';
 
 import {
   clearSyncedVideos,
+  DEFAULT_BACKUP_SETTINGS,
   getPinSettings,
   getSavedVideos,
   getSyncEnabled,
@@ -9,7 +10,8 @@ import {
   savePinSettings,
   saveSyncedVideos,
   saveVideos,
-  setSyncEnabled
+  setSyncEnabled,
+  type BackupSettings
 } from '../lib/storage-vault';
 import { clearPreviews, deletePreview, getPreview } from '../lib/dexie-store';
 import { VAULT_THEMES, getThemeClass } from '../lib/themes'; // Added for binary previews
@@ -399,6 +401,11 @@ export const VaultDashboard: React.FC = () => {
   const syncEnabledRef = useRef(false);
   const [isFirefox] = useState(() => navigator.userAgent.toLowerCase().includes('firefox'));
 
+  // Local Backup State
+  const [backupSettings, setBackupSettings] = useState<BackupSettings>(DEFAULT_BACKUP_SETTINGS);
+  const [backupFolderDraft, setBackupFolderDraft] = useState(DEFAULT_BACKUP_SETTINGS.folder);
+  const [isBackupBusy, setIsBackupBusy] = useState(false);
+
   useEffect(() => {
     syncEnabledRef.current = isSyncing;
     localStorage.setItem('vault-sync-enabled', isSyncing.toString());
@@ -447,6 +454,16 @@ export const VaultDashboard: React.FC = () => {
         syncEnabled = true;
       }
       setIsSyncing(syncEnabled);
+
+      try {
+        const backupResponse = await browser.runtime.sendMessage({ action: "get_backup_settings" }) as any;
+        if (backupResponse?.success && backupResponse.settings) {
+          setBackupSettings(backupResponse.settings);
+          setBackupFolderDraft(backupResponse.settings.folder || '');
+        }
+      } catch (err) {
+        console.warn("[VaultDashboard] Failed to load backup settings:", err);
+      }
 
       let all = await getSavedVideos();
       if (syncEnabled) {
@@ -559,6 +576,76 @@ export const VaultDashboard: React.FC = () => {
   const handleToggleBrowserSync = () => {
     if (isSyncBusy) return;
     void (isSyncing ? disableBrowserSync() : enableBrowserSync());
+  };
+
+  const refreshBackupSettings = async () => {
+    try {
+      const response = await browser.runtime.sendMessage({ action: "get_backup_settings" }) as any;
+      if (response?.success && response.settings) {
+        setBackupSettings(response.settings);
+        setBackupFolderDraft(response.settings.folder || '');
+      }
+    } catch (err) {
+      console.warn("[VaultDashboard] Failed to refresh backup settings:", err);
+    }
+  };
+
+  const saveBackupSettingsFromDraft = async (patch: Partial<BackupSettings> = {}) => {
+    const next = {
+      ...backupSettings,
+      ...patch,
+      folder: backupFolderDraft
+    };
+    setBackupSettings(next);
+
+    const response = await browser.runtime.sendMessage({
+      action: "save_backup_settings",
+      settings: next
+    }) as any;
+    if (!response?.success) {
+      throw new Error(response?.error || "Failed to save backup settings.");
+    }
+    setToastMessage({ msg: "Backup settings saved.", type: "success" });
+  };
+
+  const handleToggleDailyBackup = async (enabled: boolean) => {
+    try {
+      await saveBackupSettingsFromDraft({ enabled });
+    } catch (err) {
+      console.error("[VaultDashboard] Failed to update daily backup setting:", err);
+      setToastMessage({ msg: "Failed to update daily backup setting.", type: "error" });
+      await refreshBackupSettings();
+    }
+  };
+
+  const handleSaveBackupSettings = async () => {
+    try {
+      await saveBackupSettingsFromDraft();
+    } catch (err) {
+      console.error("[VaultDashboard] Failed to save backup settings:", err);
+      setToastMessage({ msg: "Failed to save backup settings.", type: "error" });
+      await refreshBackupSettings();
+    }
+  };
+
+  const handleRunFullBackup = async () => {
+    setIsBackupBusy(true);
+    try {
+      const response = await browser.runtime.sendMessage({ action: "run_full_backup" }) as any;
+      if (!response?.success) {
+        throw new Error(response?.error || "Backup failed.");
+      }
+      setToastMessage({
+        msg: `Full backup downloaded (${response.videos} items, ${response.previews} previews).`,
+        type: "success"
+      });
+      await refreshBackupSettings();
+    } catch (err) {
+      console.error("[VaultDashboard] Full backup failed:", err);
+      setToastMessage({ msg: "Full backup failed. Check debug logs.", type: "error" });
+    } finally {
+      setIsBackupBusy(false);
+    }
   };
 
   const togglePin = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1423,7 +1510,7 @@ export const VaultDashboard: React.FC = () => {
                        <Icons.ExportIcon size={18} className="text-vault-accent"/> Export Vault JSON
                      </div>
                      <p className="text-xs text-vault-muted leading-relaxed flex-1">
-                       Download a complete JSON backup of all metadata, tags, and references safely to your local machine.
+                       Download a metadata-only JSON backup of tags, references, and saved item records.
                      </p>
                      <button onClick={handleExportVault} className="vault-btn py-2 text-xs font-bold w-full bg-vault-accent/10 text-vault-accent border-vault-accent/30 hover:bg-vault-accent hover:text-vault-bg transition-colors">
                        Generate Backup
@@ -1441,6 +1528,59 @@ export const VaultDashboard: React.FC = () => {
                         Select JSON File
                         <input type="file" accept=".json" onChange={(e) => { handleImportVault(e); setIsSettingsOpen(false); }} className="hidden" />
                      </label>
+                   </div>
+
+                   <div className="col-span-1 md:col-span-2 bg-vault-cardBg border border-vault-border rounded p-4 flex flex-col gap-4">
+                     <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                       <div className="flex-1">
+                         <h4 className="text-vault-text font-bold flex items-center gap-2">
+                           <Icons.ExportIcon size={16} className="text-vault-accent"/> Full Local Backup
+                         </h4>
+                         <p className="text-xs text-vault-muted mt-1 leading-relaxed">
+                           Includes metadata, thumbnails, and IndexedDB WebM previews. Folder is relative to the browser Downloads folder; leave it blank for the Downloads root.
+                         </p>
+                         {backupSettings.lastBackupAt && (
+                           <p className={cn(
+                             "text-xs mt-2",
+                             backupSettings.lastBackupStatus === 'error' ? "text-red-400" : "text-vault-accent"
+                           )}>
+                             Last backup: {new Date(backupSettings.lastBackupAt).toLocaleString()}
+                             {backupSettings.lastBackupStatus === 'error' ? ` - ${backupSettings.lastBackupError || 'failed'}` : ''}
+                           </p>
+                         )}
+                       </div>
+                       <label className="flex items-center gap-2 text-xs font-bold text-vault-text whitespace-nowrap">
+                         <input
+                           type="checkbox"
+                           checked={backupSettings.enabled}
+                           onChange={(e) => void handleToggleDailyBackup(e.target.checked)}
+                           className="accent-vault-accent"
+                         />
+                         Daily automatic backup
+                       </label>
+                     </div>
+                     <div className="flex flex-col md:flex-row gap-3">
+                       <input
+                         type="text"
+                         value={backupFolderDraft}
+                         onChange={(e) => setBackupFolderDraft(e.target.value)}
+                         placeholder="Downloads root"
+                         className="flex-1 bg-vault-bg border border-vault-border rounded px-3 py-2 text-xs text-vault-text focus:border-vault-accent outline-none"
+                       />
+                       <button
+                         onClick={() => void handleSaveBackupSettings()}
+                         className="vault-btn py-2 px-4 text-xs font-bold bg-vault-cardBg text-vault-text border-vault-border hover:border-vault-accent hover:text-vault-accent transition-colors"
+                       >
+                         Save Folder
+                       </button>
+                       <button
+                         onClick={() => void handleRunFullBackup()}
+                         disabled={isBackupBusy}
+                         className="vault-btn py-2 px-5 text-xs font-bold bg-vault-accent/10 text-vault-accent border-vault-accent/30 hover:bg-vault-accent hover:text-vault-bg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                       >
+                         {isBackupBusy ? "Backing Up..." : "Run Full Backup"}
+                       </button>
+                     </div>
                    </div>
 
                    <div className="col-span-1 md:col-span-2 bg-vault-cardBg border border-vault-border rounded p-4 flex flex-col md:flex-row items-center justify-between gap-4">

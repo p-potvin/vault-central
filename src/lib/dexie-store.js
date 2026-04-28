@@ -76,6 +76,10 @@ export async function clearPreviews() {
     dbLog(`clearPreviews called`);
     await db.previews.clear();
 }
+export async function getAllPreviewRecords() {
+    dbLog(`getAllPreviewRecords called`);
+    return db.previews.toArray();
+}
 /**
  * [VaultAuth] Secure Blob Retrieval
  * Decrypts previews on the fly. Returns null if vault is locked.

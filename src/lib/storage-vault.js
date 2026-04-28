@@ -5,6 +5,11 @@ const SYNC_ENABLED_KEY = 'vaultSyncEnabled';
 const SYNC_META_KEY = 'savedVideosSyncMeta';
 const SYNC_CHUNK_PREFIX = 'savedVideosSyncChunk';
 const SYNC_CHUNK_SIZE = 7000;
+const BACKUP_SETTINGS_KEY = 'vaultBackupSettings';
+export const DEFAULT_BACKUP_SETTINGS = {
+    enabled: true,
+    folder: ''
+};
 /**
  * [VaultAuth] Storage Vault Utility
  * ---------------------------------
@@ -85,6 +90,27 @@ export async function getPinSettings() {
 }
 export async function savePinSettings(settings) {
     await browser.storage.local.set({ [STORAGE_KEYS.PIN_SETTINGS]: settings });
+}
+export async function getBackupSettings() {
+    const data = await browser.storage.local.get(BACKUP_SETTINGS_KEY);
+    return { ...DEFAULT_BACKUP_SETTINGS, ...(data[BACKUP_SETTINGS_KEY] || {}) };
+}
+export async function saveBackupSettings(settings) {
+    await browser.storage.local.set({
+        [BACKUP_SETTINGS_KEY]: {
+            ...DEFAULT_BACKUP_SETTINGS,
+            ...settings
+        }
+    });
+}
+export async function recordBackupResult(status, error) {
+    const settings = await getBackupSettings();
+    await saveBackupSettings({
+        ...settings,
+        lastBackupAt: Date.now(),
+        lastBackupStatus: status,
+        lastBackupError: error
+    });
 }
 export async function isVaultLocked() {
     const settings = await getPinSettings();

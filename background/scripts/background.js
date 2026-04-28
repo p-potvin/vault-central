@@ -1,6 +1,7 @@
 import browser from 'webextension-polyfill';
-import { getSavedVideos, saveVideos } from '../../src/lib/storage-vault';
+import { getBackupSettings, getSavedVideos, recordBackupResult, saveBackupSettings, saveVideos } from '../../src/lib/storage-vault';
 import { savePreview } from '../../src/lib/dexie-store';
+import { DAILY_BACKUP_ALARM, downloadFullVaultBackup } from '../../src/lib/backup-vault';
 import { STORAGE_KEYS } from '../../src/lib/constants';
 class DebugLogger {
     logs = [];
@@ -47,6 +48,40 @@ class DebugLogger {
     }
 }
 const logger = new DebugLogger();
+function getNextDailyBackupTime() {
+    const next = new Date();
+    next.setHours(3, 0, 0, 0);
+    if (next.getTime() <= Date.now()) {
+        next.setDate(next.getDate() + 1);
+    }
+    return next.getTime();
+}
+async function scheduleDailyBackupAlarm() {
+    const settings = await getBackupSettings();
+    await browser.alarms.clear(DAILY_BACKUP_ALARM);
+    if (!settings.enabled) {
+        logger.log("[backup] Daily backup disabled. Alarm cleared.");
+        return;
+    }
+    await browser.alarms.create(DAILY_BACKUP_ALARM, {
+        when: getNextDailyBackupTime(),
+        periodInMinutes: 1440
+    });
+    logger.log("[backup] Daily backup alarm scheduled.");
+}
+async function runAutomaticBackup() {
+    const settings = await getBackupSettings();
+    if (!settings.enabled)
+        return;
+    try {
+        const result = await downloadFullVaultBackup('automatic');
+        logger.log("[backup] Automatic backup complete:", result);
+    }
+    catch (err) {
+        logger.error("[backup] Automatic backup failed:", err);
+        await recordBackupResult('error', err instanceof Error ? err.message : String(err));
+    }
+}
 async function doTabExtraction(targetUrl) {
     logger.log("[doTabExtraction] Starting extraction for:", targetUrl);
     let scraperTabId = undefined;
@@ -633,9 +668,37 @@ browser.runtime.onMessage.addListener((request, sender) => {
         logger.downloadLogFile();
         return Promise.resolve(true);
     }
+    if (request.action === "run_full_backup") {
+        return downloadFullVaultBackup('manual')
+            .then(result => result)
+            .catch(err => ({ success: false, error: err instanceof Error ? err.message : String(err) }));
+    }
+    if (request.action === "get_backup_settings") {
+        return getBackupSettings()
+            .then(settings => ({ success: true, settings }))
+            .catch(err => ({ success: false, error: err instanceof Error ? err.message : String(err) }));
+    }
+    if (request.action === "save_backup_settings") {
+        return saveBackupSettings(request.settings)
+            .then(scheduleDailyBackupAlarm)
+            .then(() => ({ success: true }))
+            .catch(err => ({ success: false, error: err instanceof Error ? err.message : String(err) }));
+    }
     logger.warn("[onMessage] Unknown action received:", request.action);
     return undefined;
 });
+browser.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === DAILY_BACKUP_ALARM) {
+        void runAutomaticBackup();
+    }
+});
+browser.runtime.onInstalled.addListener(() => {
+    void scheduleDailyBackupAlarm();
+});
+browser.runtime.onStartup.addListener(() => {
+    void scheduleDailyBackupAlarm();
+});
+void scheduleDailyBackupAlarm();
 browser.action.onClicked.addListener(() => {
     logger.log("[action.onClicked] Extension icon clicked. Opening dashboard.");
     openDashboard();

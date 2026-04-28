@@ -5,6 +5,10 @@ import { VaultDashboard } from './VaultDashboard';
 import * as storageVault from '../lib/storage-vault';
 // Mock the storage vault module
 vi.mock('../lib/storage-vault', () => ({
+    DEFAULT_BACKUP_SETTINGS: {
+        enabled: true,
+        folder: '',
+    },
     getSavedVideos: vi.fn(),
     saveVideos: vi.fn(),
     getSyncEnabled: vi.fn(),
