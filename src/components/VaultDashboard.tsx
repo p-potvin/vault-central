@@ -72,7 +72,10 @@ function getDomainFromUrl(url: string, removeWww = false): string {
  * Preview Player Component
  * Handles the "YouTube-style" 10x2s hover preview
  */
-const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
+// ⚡ BOLT OPTIMIZATION:
+// Wrapping `PreviewThumb` in `React.memo` prevents unnecessary and costly re-renders
+// when parent components update state (e.g., when opening a video modal or changing themes).
+const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
   const [previewBlob, setPreviewBlob] = useState<string | null>(null);
   const [isHovering, setIsHovering] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -186,9 +189,13 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
         />
       ) : (
         isDisplayableImageThumbnail(video.thumbnail) ? (
+          // ⚡ BOLT OPTIMIZATION:
+          // Adding `loading="lazy"` defers the loading of off-screen thumbnails,
+          // significantly reducing initial network payload and memory footprint for large lists.
           <img 
             src={video.thumbnail} 
             alt={video.title} 
+            loading="lazy"
             className={cn(
               "w-full h-full object-cover transition-opacity duration-300",
               isHovering ? "opacity-0" : "opacity-100"
@@ -212,7 +219,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
       )}
     </div>
   );
-};
+});
 
 export const VaultDashboard: React.FC = () => {
   const [items, setItems] = useState<VideoData[]>([]);
@@ -1111,7 +1118,8 @@ export const VaultDashboard: React.FC = () => {
                               <PreviewThumb video={fav} />
                             ) : (
                               isDisplayableImageThumbnail(fav.thumbnail) ? (
-                                <img src={fav.thumbnail} alt={fav.title} className="w-full h-full object-cover transition-transform duration-500 group-hover/thumb:scale-105" />
+                                // ⚡ BOLT OPTIMIZATION: `loading="lazy"` prevents fetching all images simultaneously.
+                                <img src={fav.thumbnail} alt={fav.title} loading="lazy" className="w-full h-full object-cover transition-transform duration-500 group-hover/thumb:scale-105" />
                               ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-vault-cardBg to-vault-bg/50">
                                     <Icons.DebugIcon size={32} className="opacity-10 mb-1" />
