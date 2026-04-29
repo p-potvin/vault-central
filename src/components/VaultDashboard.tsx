@@ -27,6 +27,14 @@ import React, { useEffect, useState, useMemo, useRef, useDeferredValue } from 'r
 // and gracefully handles invalid URLs without crashing the React tree.
 const domainCache = new Map<string, string>();
 
+// ⚡ BOLT OPTIMIZATION:
+// `new Date().toLocaleDateString()` and `.toLocaleString()` inside render loops
+// create an enormous performance bottleneck because V8 must re-parse and instantiate
+// the locale formatter on every call. Using `Intl.DateTimeFormat` prevents this overhead.
+const dateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+const dateTimeFormatter = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+
+
 async function getPreviewForVideo(video: VideoData): Promise<Blob | null> {
   const primary = await getPreview(video.url);
   if (primary || !video.rawVideoSrc || video.rawVideoSrc === video.url) {
@@ -1343,7 +1351,7 @@ export const VaultDashboard: React.FC = () => {
                             viewSize === 1 ? "border-none ml-4 gap-4 mt-0 pt-0" : "border-t"
                           )}>
                             <span className="text-[11px] font-semibold text-vault-muted tracking-wider">
-                              {new Date(fav.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric'})}
+                              {dateFormatter.format(new Date(fav.timestamp))}
                             </span>
                             <a 
                               href={fav.url} 
@@ -1552,7 +1560,7 @@ export const VaultDashboard: React.FC = () => {
                              "text-xs mt-2",
                              backupSettings.lastBackupStatus === 'error' ? "text-red-400" : "text-vault-accent"
                            )}>
-                             Last backup: {new Date(backupSettings.lastBackupAt).toLocaleString()}
+                             Last backup: {dateTimeFormatter.format(new Date(backupSettings.lastBackupAt))}
                              {backupSettings.lastBackupStatus === 'error' ? ` - ${backupSettings.lastBackupError || 'failed'}` : ''}
                            </p>
                          )}
@@ -1773,7 +1781,7 @@ export const VaultDashboard: React.FC = () => {
                 {playingVideo.author && <span className="ml-2 px-2 border-l border-vault-border">By: {playingVideo.author}</span>}
               </div>
               <div className="font-mono text-xs">
-                {new Date(playingVideo.timestamp).toLocaleString()}
+                {dateTimeFormatter.format(new Date(playingVideo.timestamp))}
               </div>
             </div>
           </div>
