@@ -85,19 +85,41 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
 
   useEffect(() => {
     let active = true;
-    const checkPreview = async () => {
-      console.log("[PreviewThumb] Checking IndexedDB for preview. url:", video.url);
-      const blob = await getPreviewForVideo(video);
-      if (blob && active) {
-        console.log("[PreviewThumb] Preview found in IndexedDB. Setting blob URL.");
-        setPreviewBlob(URL.createObjectURL(blob));
-      } else {
-        console.log("[PreviewThumb] No preview in IndexedDB yet for:", video.url);
-      }
+    let retryIndex = 0;
+    const retryDelays = [2000, 5000, 15000, 30000];
+
+    const attempt = () => {
+      getPreviewForVideo(video)
+        .then(blob => {
+          if (!active) return;
+          if (blob) {
+            setPreviewBlob(URL.createObjectURL(blob));
+          } else if (retryIndex < retryDelays.length) {
+            const delay = retryDelays[retryIndex++];
+            setTimeout(attempt, delay);
+          }
+        })
+        .catch(() => {
+          if (!active || retryIndex >= retryDelays.length) return;
+          const delay = retryDelays[retryIndex++];
+          setTimeout(attempt, delay);
+        });
     };
-    checkPreview();
+
+    attempt();
     return () => { active = false; };
   }, [video.url, video.rawVideoSrc]);
+
+  // Control video play/pause based on hover state
+  useEffect(() => {
+    if (!videoRef.current || !previewBlob) return;
+    if (isHovering) {
+      videoRef.current.play().catch(() => {});
+    } else {
+      videoRef.current.pause();
+      videoRef.current.currentTime = 0;
+    }
+  }, [isHovering, previewBlob]);
 
   useEffect(() => {
     return () => {
@@ -110,28 +132,23 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
     
     // Check if we already have it in state
     if (previewBlob) {
-      console.log("[PreviewThumb] onMouseEnter: preview already in state. Skipping.");
       return;
     }
 
-    // Check if it exists in the database
+    // Check if it exists in the database (may have been written since mount)
     const blob = await getPreviewForVideo(video);
     if (blob) {
-      console.log("[PreviewThumb] onMouseEnter: preview found in IndexedDB on hover.");
       setPreviewBlob(URL.createObjectURL(blob));
       return;
     }
 
     /**
-     * Recovery Logic: If more than 30s have elapsed since save and thumb is still missing,
-     * the background job likely failed or was interrupted. Retrigger now.
+     * Recovery Logic: If more than 30s have elapsed since save and the preview is
+     * still missing, the background job likely failed or was interrupted. Re-trigger
+     * generation via the offscreen FFmpeg processor.
      */
-    const now = Date.now();
-    const elapsed = now - video.timestamp;
-    console.log("[PreviewThumb] onMouseEnter: no preview. elapsed since save:", elapsed, "ms. rawVideoSrc:", video.rawVideoSrc);
-    
-    if (elapsed > 30000 && !isProcessing) {
-      console.log("[PreviewThumb] onMouseEnter: >30s elapsed and no preview. Retriggering generate_preview...");
+    const elapsed = Date.now() - video.timestamp;
+    if (elapsed > 30000 && !isProcessing && video.rawVideoSrc) {
       setIsProcessing(true);
       try {
         const response: any = await browser.runtime.sendMessage({
@@ -142,7 +159,6 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
             duration: typeof video.duration === 'number' ? video.duration : 60 
           }
         });
-        console.log("[PreviewThumb] generate_preview response:", response);
         
         if (response && response.success) {
             // Poll for the result until it appears in DB or timeout (10s)
@@ -150,20 +166,16 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
             const poll = setInterval(async () => {
                 const retryBlob = await getPreviewForVideo(video);
                 if (retryBlob) {
-                    console.log("[PreviewThumb] Preview appeared in IndexedDB after", attempts, "poll attempts.");
                     setPreviewBlob(URL.createObjectURL(retryBlob));
                     setIsProcessing(false);
                     clearInterval(poll);
                 }
                 if (attempts++ > 20) {
-                    console.warn("[PreviewThumb] Polling timed out (20 attempts). Preview still missing.");
                     setIsProcessing(false);
                     clearInterval(poll);
                 }
             }, 500);
             return;
-        } else {
-            console.warn("[PreviewThumb] generate_preview returned unsuccessful response:", response);
         }
       } catch (e) {
         console.error("[PreviewThumb] Error sending generate_preview message:", e);
@@ -179,12 +191,13 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
       onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setIsHovering(false)}
     >
-      {isHovering && previewBlob ? (
+      {previewBlob ? (
+        // Show as a static first-frame when not hovering; play on hover.
+        // The play/pause is driven by the isHovering useEffect above.
         <video
           ref={videoRef}
           src={previewBlob}
           className="w-full h-full object-cover"
-          autoPlay
           muted
           loop
           playsInline
@@ -198,10 +211,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
             src={video.thumbnail} 
             alt={video.title} 
             loading="lazy"
-            className={cn(
-              "w-full h-full object-cover transition-opacity duration-300",
-              isHovering ? "opacity-0" : "opacity-100"
-            )} 
+            className="w-full h-full object-cover"
           />
         ) : (
           <div className="w-full h-full bg-black" aria-label={video.title} />
@@ -244,6 +254,13 @@ export const VaultDashboard: React.FC = () => {
   const [confirmDialog, setConfirmDialog] = useState<{message: string, onConfirm: () => void} | null>(null);
   const [promptDialog, setPromptDialog] = useState<{message: string, type?: 'password' | 'text', onConfirm: (val: string) => void} | null>(null);
   const [editingItem, setEditingItem] = useState<{current: VideoData, original: VideoData} | null>(null);
+
+  // PIN Setup Modal States
+  const [pinSetupOpen, setPinSetupOpen] = useState(false);
+  const [pinSetupBoxes, setPinSetupBoxes] = useState<string[]>([]);
+  const [pinSetupLength, setPinSetupLength] = useState<4 | 6>(4);
+  const [pinSetupError, setPinSetupError] = useState(false);
+  const pinSetupRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   useEffect(() => {
     if (toastMessage) {
@@ -655,23 +672,68 @@ export const VaultDashboard: React.FC = () => {
     }
   };
 
+  const doConfirmPinSetup = async (pin: string, length: 4 | 6) => {
+    const updated = { ...pinSettings, enabled: true, pin, length, lastUnlocked: Date.now() };
+    await savePinSettings(updated);
+    setPinSettings(updated);
+    setPinSetupOpen(false);
+    setPinSetupBoxes([]);
+    setPinSetupError(false);
+    setToastMessage({ msg: `${length}-digit PIN activated.`, type: "success" });
+  };
+
+  const handlePinSetupChange = (index: number, value: string) => {
+    if (!/^\d*$/.test(value)) return;
+    const newBoxes = [...pinSetupBoxes];
+    newBoxes[index] = value.slice(-1);
+    setPinSetupBoxes(newBoxes);
+    setPinSetupError(false);
+    if (value && index < newBoxes.length - 1) {
+      pinSetupRefs.current[index + 1]?.focus();
+    }
+    const fullPin = newBoxes.join('');
+    if (fullPin.length === pinSetupLength && /^\d+$/.test(fullPin)) {
+      void doConfirmPinSetup(fullPin, pinSetupLength);
+    }
+  };
+
+  const handlePinSetupKeyDown = (index: number, e: React.KeyboardEvent) => {
+    if (e.key === 'Backspace' && !pinSetupBoxes[index] && index > 0) {
+      pinSetupRefs.current[index - 1]?.focus();
+    }
+  };
+
+  const handlePinSetupLengthChange = (len: 4 | 6) => {
+    setPinSetupLength(len);
+    setPinSetupBoxes(new Array(len).fill(''));
+    setPinSetupError(false);
+    setTimeout(() => pinSetupRefs.current[0]?.focus(), 0);
+  };
+
+  const cancelPinSetup = () => {
+    setPinSetupOpen(false);
+    setPinSetupBoxes([]);
+    setPinSetupError(false);
+  };
+
+  const confirmPinSetup = async () => {
+    const pin = pinSetupBoxes.join('');
+    if (pin.length !== pinSetupLength || !/^\d+$/.test(pin)) {
+      setPinSetupError(true);
+      pinSetupRefs.current[0]?.focus();
+      return;
+    }
+    void doConfirmPinSetup(pin, pinSetupLength);
+  };
+
   const togglePin = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const enabled = e.target.checked;
     if (enabled) {
-      setPromptDialog({
-        message: "Enter a new 4 or 6 digit PIN:",
-        type: "password",
-        onConfirm: async (newPin) => {
-          if (newPin && (newPin.length === 4 || newPin.length === 6) && /^\d+$/.test(newPin)) {
-            const updated = { ...pinSettings, enabled: true, pin: newPin, lastUnlocked: Date.now() };
-            await savePinSettings(updated);
-            setPinSettings(updated);
-          } else {
-            setToastMessage({msg: "Invalid PIN. It must be 4 or 6 digits.", type: "error"});
-          }
-          setPromptDialog(null);
-        }
-      });
+      const length = (pinSettings?.length as 4 | 6) || 4;
+      setPinSetupLength(length);
+      setPinSetupBoxes(new Array(length).fill(''));
+      setPinSetupError(false);
+      setPinSetupOpen(true);
       // Temporarily revert UI checkbox until confirmed
       e.target.checked = false;
     } else {
@@ -857,10 +919,10 @@ export const VaultDashboard: React.FC = () => {
           </div>
 
           <button onClick={() => setIsSettingsOpen(true)} className="vault-btn flex items-center justify-center p-1.5 rounded-full h-8 w-8 group" title="Vault Settings">
-            <Icons.SettingsIcon size={16} className="text-vault-accent group-hover:rotate-90 transition-transform duration-300" />
+            <Icons.SettingsIcon size={16} className="w-4 h-4 text-vault-accent group-hover:text-vault-bg group-hover:rotate-90 transition-all duration-300" />
           </button>
           <button onClick={cycleTheme} className="vault-btn flex items-center justify-center p-1.5 rounded-full h-8 w-8 group" title="Cycle Theme">
-            <Icons.ThemeIcon size={16} className="text-vault-accent group-hover:rotate-90 transition-transform duration-300" />
+            <Icons.ThemeIcon size={16} className="w-4 h-4 text-vault-accent group-hover:text-vault-bg group-hover:rotate-90 transition-all duration-300" />
           </button>
         </div>
       </header>
@@ -1051,7 +1113,7 @@ export const VaultDashboard: React.FC = () => {
                 className={cn(
                   "w-full vault-btn p-2 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2",
                   isSyncing 
-                    ? "bg-vault-accent text-vault-bg border-none hover:border-dashed hover:border-vault-bg/50 hover:bg-vault-accentHover" 
+                    ? "bg-vault-accentHover text-vault-bg border-vault-accentHover hover:bg-vault-accent hover:border-vault-accent" 
                     : "border-dashed border-vault-border text-vault-muted opacity-60 hover:opacity-100",
                   isSyncBusy && "cursor-wait opacity-70"
                 )}
@@ -1775,6 +1837,85 @@ export const VaultDashboard: React.FC = () => {
               <div className="font-mono text-xs">
                 {new Date(playingVideo.timestamp).toLocaleString()}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PIN SETUP MODAL */}
+      {pinSetupOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="bg-vault-bg border border-vault-border rounded-lg shadow-2xl p-6 w-80 flex flex-col items-center gap-5 animate-in zoom-in-95 duration-200">
+            <div className="relative">
+              <Icons.PinIcon size={28} className="text-vault-accent" />
+              <div className="absolute -inset-1 blur-lg bg-vault-accent/20 rounded-full" />
+            </div>
+            <div className="text-center">
+              <h3 className="text-sm font-black uppercase tracking-widest text-vault-text">Set New PIN</h3>
+              <p className="text-[10px] text-vault-muted mt-1">Enter a {pinSetupLength}-digit security sequence</p>
+            </div>
+
+            {/* Length selector */}
+            <div className="flex gap-2 w-full">
+              {([4, 6] as const).map(len => (
+                <button
+                  key={len}
+                  onClick={() => handlePinSetupLengthChange(len)}
+                  className={cn(
+                    "flex-1 py-1 text-[10px] font-black rounded-sm border transition-all",
+                    pinSetupLength === len
+                      ? "bg-vault-accent border-vault-accent text-vault-bg"
+                      : "bg-transparent border-vault-border text-vault-muted hover:border-vault-muted"
+                  )}
+                >
+                  {len} DIGITS
+                </button>
+              ))}
+            </div>
+
+            {/* PIN boxes */}
+            <div className="flex gap-3 justify-center">
+              {pinSetupBoxes.map((digit, idx) => (
+                <input
+                  key={`${pinSetupLength}-${idx}`}
+                  ref={el => { pinSetupRefs.current[idx] = el; }}
+                  type="password"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={1}
+                  value={digit}
+                  onChange={e => handlePinSetupChange(idx, e.target.value)}
+                  onKeyDown={e => handlePinSetupKeyDown(idx, e)}
+                  className={cn(
+                    "w-10 h-14 bg-vault-cardBg/50 border-2 rounded-xl text-center text-xl font-bold",
+                    "focus:border-vault-accent focus:bg-vault-accent/5 outline-none transition-all",
+                    pinSetupError ? 'border-red-500/50' : 'border-vault-border/50',
+                    digit ? 'border-vault-accent/50 scale-105 shadow-[0_0_12px_-4px_var(--vault-accent)]' : ''
+                  )}
+                  autoFocus={idx === 0}
+                />
+              ))}
+            </div>
+
+            {pinSetupError && (
+              <p className="text-[10px] font-black text-red-500 uppercase tracking-tight animate-in slide-in-from-top-1">
+                Enter exactly {pinSetupLength} numeric digits
+              </p>
+            )}
+
+            <div className="flex gap-3 w-full mt-1">
+              <button
+                onClick={cancelPinSetup}
+                className="flex-1 px-4 py-2 text-xs font-bold text-vault-muted hover:text-vault-text border border-vault-border rounded hover:border-vault-muted transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmPinSetup}
+                className="flex-1 px-4 py-2 text-xs font-black bg-vault-accent text-vault-bg rounded hover:bg-vault-accentHover transition-all"
+              >
+                Activate PIN
+              </button>
             </div>
           </div>
         </div>
