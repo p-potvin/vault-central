@@ -27,6 +27,14 @@ import React, { useEffect, useState, useMemo, useRef, useDeferredValue } from 'r
 // and gracefully handles invalid URLs without crashing the React tree.
 const domainCache = new Map<string, string>();
 
+// ⚡ BOLT OPTIMIZATION:
+// `new Date().toLocaleDateString()` and `.toLocaleString()` inside render loops
+// create an enormous performance bottleneck because V8 must re-parse and instantiate
+// the locale formatter on every call. Using `Intl.DateTimeFormat` prevents this overhead.
+const dateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+const dateTimeFormatter = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+
+
 async function getPreviewForVideo(video: VideoData): Promise<Blob | null> {
   const primary = await getPreview(video.url);
   if (primary || !video.rawVideoSrc || video.rawVideoSrc === video.url) {
@@ -74,7 +82,10 @@ function getDomainFromUrl(url: string, removeWww = false): string {
  * Preview Player Component
  * Handles the "YouTube-style" 10x2s hover preview
  */
-const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
+// ⚡ BOLT OPTIMIZATION:
+// Wrapping `PreviewThumb` in `React.memo` prevents unnecessary and costly re-renders
+// when parent components update state (e.g., when opening a video modal or changing themes).
+const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
   const [blob, setBlob] = useState<Blob | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isHovering, setIsHovering] = useState(false);
@@ -186,9 +197,13 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
         />
       ) : (
         isDisplayableImageThumbnail(video.thumbnail) ? (
+          // ⚡ BOLT OPTIMIZATION:
+          // Adding `loading="lazy"` defers the loading of off-screen thumbnails,
+          // significantly reducing initial network payload and memory footprint for large lists.
           <img 
             src={video.thumbnail} 
             alt={video.title} 
+            loading="lazy"
             className={cn(
               "w-full h-full object-cover transition-opacity duration-300",
               isHovering ? "opacity-0" : "opacity-100"
@@ -212,7 +227,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
       )}
     </div>
   );
-};
+});
 
 export const VaultDashboard: React.FC = () => {
   const [items, setItems] = useState<VideoData[]>([]);
@@ -1196,7 +1211,8 @@ export const VaultDashboard: React.FC = () => {
                               <PreviewThumb video={fav} />
                             ) : (
                               isDisplayableImageThumbnail(fav.thumbnail) ? (
-                                <img src={fav.thumbnail} alt={fav.title} className="w-full h-full object-cover transition-transform duration-500 group-hover/thumb:scale-105" />
+                                // ⚡ BOLT OPTIMIZATION: `loading="lazy"` prevents fetching all images simultaneously.
+                                <img src={fav.thumbnail} alt={fav.title} loading="lazy" className="w-full h-full object-cover transition-transform duration-500 group-hover/thumb:scale-105" />
                               ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-vault-cardBg to-vault-bg/50">
                                     <Icons.DebugIcon size={32} className="opacity-10 mb-1" />
@@ -1333,7 +1349,7 @@ export const VaultDashboard: React.FC = () => {
                             viewSize === 1 ? "border-none ml-4 gap-4 mt-0 pt-0" : "border-t"
                           )}>
                             <span className="text-[11px] font-semibold text-vault-muted tracking-wider">
-                              {new Date(fav.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric'})}
+                              {dateFormatter.format(new Date(fav.timestamp))}
                             </span>
                             <a 
                               href={fav.url} 
@@ -1542,7 +1558,7 @@ export const VaultDashboard: React.FC = () => {
                              "text-xs mt-2",
                              backupSettings.lastBackupStatus === 'error' ? "text-red-400" : "text-vault-accent"
                            )}>
-                             Last backup: {new Date(backupSettings.lastBackupAt).toLocaleString()}
+                             Last backup: {dateTimeFormatter.format(new Date(backupSettings.lastBackupAt))}
                              {backupSettings.lastBackupStatus === 'error' ? ` - ${backupSettings.lastBackupError || 'failed'}` : ''}
                            </p>
                          )}
@@ -1763,7 +1779,7 @@ export const VaultDashboard: React.FC = () => {
                 {playingVideo.author && <span className="ml-2 px-2 border-l border-vault-border">By: {playingVideo.author}</span>}
               </div>
               <div className="font-mono text-xs">
-                {new Date(playingVideo.timestamp).toLocaleString()}
+                {dateTimeFormatter.format(new Date(playingVideo.timestamp))}
               </div>
             </div>
           </div>
