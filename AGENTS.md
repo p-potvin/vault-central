@@ -1,3 +1,7 @@
+# Vault Central Global Instructions
+
+This project is a browser extension for both Chrome AND Firefox, do not assume chrome settings only. In fact, prefer firefox-first development.
+
 <!-- VAULT-THEMES-SUBMODULE:START -->
 ## Vault Themes Submodule Rules
 

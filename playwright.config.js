@@ -12,19 +12,17 @@ export default defineConfig({
     },
     projects: [
         {
-            name: 'chromium',
-            use: { ...devices['Desktop Chrome'] },
-        },
-        // Commented out other browsers temporarily to focus on Chromium
-        /*
-        {
           name: 'firefox',
           use: { ...devices['Desktop Firefox'] },
+        }, /*
+        {
+            name: 'chromium',
+            use: { ...devices['Desktop Chrome'] },
         },
         {
           name: 'webkit',
           use: { ...devices['Desktop Safari'] },
-        },
-        */
+        }*/
+        
     ],
 });

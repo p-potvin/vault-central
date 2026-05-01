@@ -27,6 +27,14 @@ import React, { useEffect, useState, useMemo, useRef, useDeferredValue } from 'r
 // and gracefully handles invalid URLs without crashing the React tree.
 const domainCache = new Map<string, string>();
 
+// ⚡ BOLT OPTIMIZATION:
+// `new Date().toLocaleDateString()` and `.toLocaleString()` inside render loops
+// create an enormous performance bottleneck because V8 must re-parse and instantiate
+// the locale formatter on every call. Using `Intl.DateTimeFormat` prevents this overhead.
+const dateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+const dateTimeFormatter = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+
+
 async function getPreviewForVideo(video: VideoData): Promise<Blob | null> {
   const primary = await getPreview(video.url);
   if (primary || !video.rawVideoSrc || video.rawVideoSrc === video.url) {
@@ -78,7 +86,8 @@ function getDomainFromUrl(url: string, removeWww = false): string {
 // Wrapping `PreviewThumb` in `React.memo` prevents unnecessary and costly re-renders
 // when parent components update state (e.g., when opening a video modal or changing themes).
 const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
-  const [previewBlob, setPreviewBlob] = useState<string | null>(null);
+  const [blob, setBlob] = useState<Blob | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isHovering, setIsHovering] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -104,6 +113,11 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
           const delay = retryDelays[retryIndex++];
           setTimeout(attempt, delay);
         });
+    const checkPreview = async () => {
+      const dbBlob = await getPreviewForVideo(video);
+      if (dbBlob && active) {
+        setBlob(dbBlob);
+      }
     };
 
     attempt();
@@ -122,10 +136,11 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
   }, [isHovering, previewBlob]);
 
   useEffect(() => {
-    return () => {
-      if (previewBlob) URL.revokeObjectURL(previewBlob);
-    };
-  }, [previewBlob]);
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    setPreviewUrl(url);
+    return () => { URL.revokeObjectURL(url); };
+  }, [blob]);
 
   const handleMouseEnter = async () => {
     setIsHovering(true);
@@ -196,7 +211,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
         // The play/pause is driven by the isHovering useEffect above.
         <video
           ref={videoRef}
-          src={previewBlob}
+          src={previewUrl}
           className="w-full h-full object-cover"
           muted
           loop
@@ -223,7 +238,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
           <Icons.LoaderIcon className="text-vault-accent animate-spin" size={20} />
         </div>
       ) : (
-        !previewBlob && isHovering && (
+        !previewUrl && isHovering && (
           <div className="absolute bottom-2 left-2 bg-black/60 text-[8px] text-white px-1 rounded uppercase tracking-tighter">
             Processing...
           </div>
@@ -1405,7 +1420,7 @@ export const VaultDashboard: React.FC = () => {
                             viewSize === 1 ? "border-none ml-4 gap-4 mt-0 pt-0" : "border-t"
                           )}>
                             <span className="text-[11px] font-semibold text-vault-muted tracking-wider">
-                              {new Date(fav.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric'})}
+                              {dateFormatter.format(new Date(fav.timestamp))}
                             </span>
                             <a 
                               href={fav.url} 
@@ -1614,7 +1629,7 @@ export const VaultDashboard: React.FC = () => {
                              "text-xs mt-2",
                              backupSettings.lastBackupStatus === 'error' ? "text-red-400" : "text-vault-accent"
                            )}>
-                             Last backup: {new Date(backupSettings.lastBackupAt).toLocaleString()}
+                             Last backup: {dateTimeFormatter.format(new Date(backupSettings.lastBackupAt))}
                              {backupSettings.lastBackupStatus === 'error' ? ` - ${backupSettings.lastBackupError || 'failed'}` : ''}
                            </p>
                          )}
@@ -1835,7 +1850,7 @@ export const VaultDashboard: React.FC = () => {
                 {playingVideo.author && <span className="ml-2 px-2 border-l border-vault-border">By: {playingVideo.author}</span>}
               </div>
               <div className="font-mono text-xs">
-                {new Date(playingVideo.timestamp).toLocaleString()}
+                {dateTimeFormatter.format(new Date(playingVideo.timestamp))}
               </div>
             </div>
           </div>

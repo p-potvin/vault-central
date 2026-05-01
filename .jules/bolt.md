@@ -14,3 +14,7 @@
 ## 2024-04-26 - [Fast string sorting]
 **Learning:** `String.prototype.localeCompare` is incredibly slow when used inside large `.sort()` loops on arrays. V8 has to recreate the locale settings and resolve arguments on every single element comparison.
 **Action:** Always instantiate `Intl.Collator` outside of `.sort()` callbacks and use the collator's `.compare` method instead for 10x-100x performance improvements.
+
+## 2024-05-18 - [Optimization] Cache Intl.DateTimeFormat in React Render Loops
+**Learning:** Instantiating `new Date().toLocaleDateString()` and `.toLocaleString()` inside large render loops in React (like maps or frequent state updates) creates an enormous O(N) performance bottleneck because V8 must re-parse and instantiate the locale format rules on every call.
+**Action:** Use `Intl.DateTimeFormat` outside of the render loops instead, caching the format instances to avoid redundant instantiations inside lists or frequent renders.
