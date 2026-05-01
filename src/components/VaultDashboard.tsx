@@ -75,7 +75,8 @@ function getDomainFromUrl(url: string, removeWww = false): string {
  * Handles the "YouTube-style" 10x2s hover preview
  */
 const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
-  const [previewBlob, setPreviewBlob] = useState<string | null>(null);
+  const [blob, setBlob] = useState<Blob | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isHovering, setIsHovering] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -83,13 +84,9 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
   useEffect(() => {
     let active = true;
     const checkPreview = async () => {
-      console.log("[PreviewThumb] Checking IndexedDB for preview. url:", video.url);
-      const blob = await getPreviewForVideo(video);
-      if (blob && active) {
-        console.log("[PreviewThumb] Preview found in IndexedDB. Setting blob URL.");
-        setPreviewBlob(URL.createObjectURL(blob));
-      } else {
-        console.log("[PreviewThumb] No preview in IndexedDB yet for:", video.url);
+      const dbBlob = await getPreviewForVideo(video);
+      if (dbBlob && active) {
+        setBlob(dbBlob);
       }
     };
     checkPreview();
@@ -97,16 +94,17 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
   }, [video.url, video.rawVideoSrc]);
 
   useEffect(() => {
-    return () => {
-      if (previewBlob) URL.revokeObjectURL(previewBlob);
-    };
-  }, [previewBlob]);
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    setPreviewUrl(url);
+    return () => { URL.revokeObjectURL(url); };
+  }, [blob]);
 
   const handleMouseEnter = async () => {
     setIsHovering(true);
     
     // Check if we already have it in state
-    if (previewBlob) {
+    if (previewUrl) {
       console.log("[PreviewThumb] onMouseEnter: preview already in state. Skipping.");
       return;
     }
@@ -115,7 +113,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
     const blob = await getPreviewForVideo(video);
     if (blob) {
       console.log("[PreviewThumb] onMouseEnter: preview found in IndexedDB on hover.");
-      setPreviewBlob(URL.createObjectURL(blob));
+      setBlob(blob);
       return;
     }
 
@@ -148,7 +146,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
                 const retryBlob = await getPreviewForVideo(video);
                 if (retryBlob) {
                     console.log("[PreviewThumb] Preview appeared in IndexedDB after", attempts, "poll attempts.");
-                    setPreviewBlob(URL.createObjectURL(retryBlob));
+                    setBlob(retryBlob);
                     setIsProcessing(false);
                     clearInterval(poll);
                 }
@@ -176,10 +174,10 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
       onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setIsHovering(false)}
     >
-      {isHovering && previewBlob ? (
+      {isHovering && previewUrl ? (
         <video
           ref={videoRef}
-          src={previewBlob}
+          src={previewUrl}
           className="w-full h-full object-cover"
           autoPlay
           muted
@@ -206,7 +204,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = ({ video }) => {
           <Icons.LoaderIcon className="text-vault-accent animate-spin" size={20} />
         </div>
       ) : (
-        !previewBlob && isHovering && (
+        !previewUrl && isHovering && (
           <div className="absolute bottom-2 left-2 bg-black/60 text-[8px] text-white px-1 rounded uppercase tracking-tighter">
             Processing...
           </div>

@@ -1,0 +1,100 @@
+            const injectScript = async () => {
+                if (injectionStarted || isResolved || scraperTabId === undefined) {
+                    logger.warn("[doTabExtraction] injectScript called but skipped. injectionStarted:", injectionStarted, "isResolved:", isResolved, "scraperTabId:", scraperTabId);
+                    return;
+                }
+                injectionStarted = true;
+                logger.log("[doTabExtraction] Executing injection script in tabId:", scraperTabId);
+
+                try {
+                    const results = await browser.scripting.executeScript({
+                        target: { tabId: scraperTabId },
+                        func: async () => {
+                            const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+                            const captureJpegFrame = async (video: HTMLVideoElement): Promise<string | null> => {
+                                try {
+                                    if (video.currentTime === 0) {
+                                        video.currentTime = 5;
+                                        await new Promise((r) => {
+                                            const seeked = () => { video.removeEventListener('seeked', seeked); r(null); };
+                                            video.addEventListener('seeked', seeked);
+                                            setTimeout(r, 1000);
+                                        });
+                                    }
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = video.videoWidth || 640;
+                                    canvas.height = video.videoHeight || 360;
+                                    const ctx = canvas.getContext('2d');
+                                    if (ctx) {
+                                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                        return canvas.toDataURL('image/jpeg', 0.5);
+                                    }
+                                } catch (e) { return null; }
+                                return null;
+                            };
+
+                            const clickAllPlayers = async () => {
+                                const selectors = [
+                                    'video', 'iframe', 'button[aria-label*="Play"]', 
+                                    '.vjs-big-play-button', '.ytp-large-play-button', 
+                                    '[class^="media-player"]', '[role="button"]'
+                                ];
+                                for (const selector of selectors) {
+                                    try {
+                                        const elements = document.querySelectorAll(selector);
+                                        for (const el of Array.from(elements)) {
+                                            if (el instanceof HTMLVideoElement) {
+                                                el.muted = true;
+                                                el.play().catch(() => {});
+                                            } else {
+                                                (el as HTMLElement).focus();
+                                                (el as HTMLElement).click();
+                                            }
+                                            await delay(200);
+                                        }
+                                    } catch (e) {
+                                        console.debug("[VaultCentral] Soft-gate interaction attempt failed:", e);
+                                    }
+                                }
+                            };
+
+                            const findBestVideoAndMeta = async () => {
+                                const metadata = { title: document.title, thumbnail: "", duration: 0, author: "", views: "", tags: [] as string[], likes: "", date: "" };
+                                
+                                const getMeta = (prop: string, name: string) => {
+                                    const el = document.querySelector(`meta[property="${prop}"], meta[name="${name}"]`);
+                                    return el ? (el as HTMLMetaElement).content : "";
+                                };
+
+                                metadata.title = getMeta("og:title", "title") || metadata.title;
+                                metadata.thumbnail = getMeta("og:image", "image") || "";
+                                metadata.author = getMeta("og:site_name", "author");
+                                metadata.tags = (getMeta("og:video:tag", "keywords") || '').split(',').map(s => s.trim());
+
+                                const videos = Array.from(document.querySelectorAll('video'));
+                                let bestSrc: string | null = null;
+                                let maxScore = -1;
+                                let bestVideoEl: HTMLVideoElement | null = null;
+
+                                for (const v of videos) {
+                                    const rect = v.getBoundingClientRect();
+                                    let score = rect.width * rect.height;
+                                    const idClass = (v.id + " " + v.className).toLowerCase();
+                                    if (idClass.match(/player|main|primary|hero|video-js|vjs|jwplayer/)) score += 1000000;
+
+                                    if (v.src && !v.src.startsWith('blob:')) {
+                                        if (score > maxScore) { maxScore = score; bestSrc = v.src; bestVideoEl = v; if (!isNaN(v.duration)) metadata.duration = v.duration; }
+                                    } else {
+                                        const sources = Array.from(v.querySelectorAll('source'));
+                                        for (const s of sources) {
+                                            if (s.src && !s.src.startsWith('blob:')) {
+                                                if (score > maxScore) { maxScore = score; bestSrc = s.src; bestVideoEl = v; if (!isNaN(v.duration)) metadata.duration = v.duration; }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (bestVideoEl) {
+                                    const jpeg = await captureJpegFrame(bestVideoEl);
+                                    if (jpeg) metadata.thumbnail = jpeg;

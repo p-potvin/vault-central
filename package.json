@@ -14,7 +14,23 @@
     "type": "git",
     "url": "git+https://github.com/p-potvin/vault-central.git"
   },
-  "keywords": ["browser-extension", "video-vault", "privacy-first", "vaultwares", "videos", "favorites", "bookmarks", "save", "dashboard", "customization", "secured", "hls", "m3u8", "indexed-db", "aes-256"],
+  "keywords": [
+    "browser-extension",
+    "video-vault",
+    "privacy-first",
+    "vaultwares",
+    "videos",
+    "favorites",
+    "bookmarks",
+    "save",
+    "dashboard",
+    "customization",
+    "secured",
+    "hls",
+    "m3u8",
+    "indexed-db",
+    "aes-256"
+  ],
   "author": "VaultWares",
   "license": "ISC",
   "bugs": {
@@ -37,6 +53,7 @@
     "archiver": "^7.0.1",
     "autoprefixer": "^10.4.19",
     "jsdom": "^29.0.1",
+    "playwright-webextext": "^0.0.5",
     "postcss": "^8.4.38",
     "sharp": "^0.34.5",
     "tailwindcss": "^3.4.1",

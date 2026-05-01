@@ -1,45 +1,50 @@
 import browser from 'webextension-polyfill';
-import { getBackupSettings, getSavedVideos, recordBackupResult, saveBackupSettings, saveVideos } from '../../src/lib/storage-vault';
+import {
+    getBackupSettings,
+    getSavedVideos,
+    recordBackupResult,
+    saveBackupSettings,
+    saveVideos
+} from '../../src/lib/storage-vault';
 import { savePreview } from '../../src/lib/dexie-store';
 import { DAILY_BACKUP_ALARM, downloadFullVaultBackup } from '../../src/lib/backup-vault';
 import { STORAGE_KEYS } from '../../src/lib/constants';
+
 class DebugLogger {
-    logs = [];
-    formatArg(arg) {
-        if (arg instanceof Error)
-            return `${arg.name}: ${arg.message}`;
-        if (typeof arg === 'bigint')
-            return arg.toString();
-        if (typeof arg !== 'object' || arg === null)
-            return String(arg);
+    private logs: string[] = [];
+
+    private formatArg(arg: any): string {
+        if (arg instanceof Error) return `${arg.name}: ${arg.message}`;
+        if (typeof arg === 'bigint') return arg.toString();
+        if (typeof arg !== 'object' || arg === null) return String(arg);
         try {
             return JSON.stringify(arg);
-        }
-        catch {
+        } catch {
             return Object.prototype.toString.call(arg);
         }
     }
-    log(msg, ...args) {
-        const line = `[${new Date().toISOString()}] [VaultAuth-Debug] ${msg} ${args.map((a) => this.formatArg(a)).join(' ')}`;
+    
+    log(msg: string, ...args: any) {
+        const line = `[${new Date().toISOString()}] [VaultAuth-Debug] ${msg} ${args.map((a: any) => this.formatArg(a)).join(' ')}`;
         console.log(line);
         this.logs.push(line);
-        if (this.logs.length > 500)
-            this.logs.shift();
+        if (this.logs.length > 500) this.logs.shift();
     }
-    warn(msg, ...args) {
-        const line = `[${new Date().toISOString()}] [VaultAuth-Warn] ${msg} ${args.map((a) => this.formatArg(a)).join(' ')}`;
+    
+    warn(msg: string, ...args: any) {
+        const line = `[${new Date().toISOString()}] [VaultAuth-Warn] ${msg} ${args.map((a: any) => this.formatArg(a)).join(' ')}`;
         console.warn(line);
         this.logs.push(line);
-        if (this.logs.length > 500)
-            this.logs.shift();
+        if (this.logs.length > 500) this.logs.shift();
     }
-    error(msg, ...args) {
-        const line = `[${new Date().toISOString()}] [VaultAuth-Error] ${msg} ${args.map((a) => this.formatArg(a)).join(' ')}`;
+    
+    error(msg: string, ...args: any) {
+        const line = `[${new Date().toISOString()}] [VaultAuth-Error] ${msg} ${args.map((a: any) => this.formatArg(a)).join(' ')}`;
         console.error(line);
         this.logs.push(line);
-        if (this.logs.length > 500)
-            this.logs.shift();
+        if (this.logs.length > 500) this.logs.shift();
     }
+
     async downloadLogFile() {
         const blob = new Blob([this.logs.join('\n')], { type: 'text/plain' });
         const objUrl = URL.createObjectURL(blob);
@@ -48,7 +53,8 @@ class DebugLogger {
     }
 }
 const logger = new DebugLogger();
-function getNextDailyBackupTime() {
+
+function getNextDailyBackupTime(): number {
     const next = new Date();
     next.setHours(3, 0, 0, 0);
     if (next.getTime() <= Date.now()) {
@@ -56,6 +62,7 @@ function getNextDailyBackupTime() {
     }
     return next.getTime();
 }
+
 async function scheduleDailyBackupAlarm() {
     const settings = await getBackupSettings();
     await browser.alarms.clear(DAILY_BACKUP_ALARM);
@@ -63,71 +70,92 @@ async function scheduleDailyBackupAlarm() {
         logger.log("[backup] Daily backup disabled. Alarm cleared.");
         return;
     }
+
     await browser.alarms.create(DAILY_BACKUP_ALARM, {
         when: getNextDailyBackupTime(),
         periodInMinutes: 1440
     });
     logger.log("[backup] Daily backup alarm scheduled.");
 }
+
 async function runAutomaticBackup() {
     const settings = await getBackupSettings();
-    if (!settings.enabled)
-        return;
+    if (!settings.enabled) return;
+
     try {
         const result = await downloadFullVaultBackup('automatic');
         logger.log("[backup] Automatic backup complete:", result);
-    }
-    catch (err) {
+    } catch (err) {
         logger.error("[backup] Automatic backup failed:", err);
         await recordBackupResult('error', err instanceof Error ? err.message : String(err));
     }
 }
-async function doTabExtraction(targetUrl) {
+
+export interface ExtractionResult {
+    src: string | null;
+    metadata: {
+        title: string;
+        thumbnail: string; // Used for the WebM or JPEG base64
+        duration: number;
+        author: string;
+        views: string;
+        tags: string[];
+        likes: string;
+        date: string;
+    };
+}
+
+async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | null> {
     logger.log("[doTabExtraction] Starting extraction for:", targetUrl);
-    let scraperTabId = undefined;
-    let webRequestListener = null;
-    let tabUpdateListener = null;
-    let globalTimeoutId = null;
-    let scraperWindowId = undefined;
+
+    let scraperTabId: number | undefined = undefined;
+    let webRequestListener: ((details: browser.WebRequest.OnBeforeRequestDetailsType) => void) | null = null;
+    let tabUpdateListener: ((tabId: number, info: browser.Tabs.OnUpdatedChangeInfoType) => void) | null = null;
+    let globalTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    let scraperWindowId: number | undefined = undefined;
+
     return new Promise(async (resolve) => {
         let isResolved = false;
-        let latestM3u8 = null;
+        let latestM3u8: string | null = null;
         let injectionStarted = false;
+
         const defaultMetadata = { title: "", thumbnail: "", duration: 0, author: "", views: "", tags: [], likes: "", date: "" };
         logger.log("[doTabExtraction] defaultMetadata initialized (thumbnail will be empty unless scraped)");
-        const cleanup = async (result, reason) => {
-            if (isResolved)
-                return;
+
+        const cleanup = async (result: ExtractionResult | null, reason: string) => {
+            if (isResolved) return;
             isResolved = true;
+
             logger.log(`[doTabExtraction] Cleanup triggered. Reason: ${reason}. TabID: ${scraperTabId}. Result src: ${result?.src ?? 'null'}. Thumbnail present: ${!!result?.metadata?.thumbnail}, thumbnail length: ${result?.metadata?.thumbnail?.length ?? 0}`);
-            if (globalTimeoutId)
-                clearTimeout(globalTimeoutId);
+            if (globalTimeoutId) clearTimeout(globalTimeoutId);
+
             if (webRequestListener && browser.webRequest) {
                 try {
                     browser.webRequest.onBeforeRequest.removeListener(webRequestListener);
-                }
-                catch (e) {
+                } catch (e) {
                     logger.warn("Error removing webRequest listener:", e);
                 }
             }
+
             if (tabUpdateListener) {
                 try {
                     browser.tabs.onUpdated.removeListener(tabUpdateListener);
-                }
-                catch (e) {
+                } catch (e) {
                     logger.warn("[doTabExtraction] Error removing tabUpdateListener:", e);
                 }
             }
+
             if (scraperTabId !== undefined) {
                 try {
                     await browser.tabs.remove(scraperTabId);
-                }
-                catch (e) {
+                } catch (e) {
                     logger.warn("[doTabExtraction] Error closing scraper tab:", e);
                 }
             }
+
             resolve(result);
         };
+
         try {
             // BUG FIX: Do NOT call browser.tabs.hide() on a newly-created tab.
             // Chrome's API explicitly states: "Tabs hidden since creation are never loaded."
@@ -135,10 +163,13 @@ async function doTabExtraction(targetUrl) {
             // spawn it as active, and immediately switch back to the original tab.
             const queryTabs = await browser.tabs.query({ active: true, currentWindow: true });
             const prevActiveTabId = queryTabs.length > 0 ? queryTabs[0].id : undefined;
+
             const scraperTab = await browser.tabs.create({ url: targetUrl, active: true });
             logger.log("[doTabExtraction] Scraper tab created. tabId:", scraperTab.id, "windowId:", scraperTab.windowId, "| active: true (to bypass media throttle)");
+            
             scraperTabId = scraperTab.id;
             scraperWindowId = scraperTab.windowId;
+
             if (prevActiveTabId && scraperTabId !== prevActiveTabId) {
                 // Instantly flip back to the user's active tab. The scraper tab will have been
                 // momentarily active, which is enough to satisfy Chromium's media autoplay policy 
@@ -147,14 +178,15 @@ async function doTabExtraction(targetUrl) {
                     try {
                         logger.log("[doTabExtraction] Flipping focus back to original tab:", prevActiveTabId);
                         await browser.tabs.update(prevActiveTabId, { active: true });
-                    }
-                    catch (e) { }
+                    } catch(e) {}
                 }, 50);
             }
+
             globalTimeoutId = setTimeout(() => {
                 logger.warn("[doTabExtraction] Global timeout reached after 35s. latestM3u8:", latestM3u8);
                 cleanup(latestM3u8 ? { src: latestM3u8, metadata: defaultMetadata } : null, "Timeout reached");
             }, 35000); // Extended timeout for WebM generation
+
             if (browser.webRequest) {
                 webRequestListener = (details) => {
                     const lowercaseUrl = details.url.toLowerCase();
@@ -163,34 +195,34 @@ async function doTabExtraction(targetUrl) {
                         const isDirectVideo = /\.(mp4|webm|flv|mkv|mov)(\?|$)/.test(lowercaseUrl);
                         if (isStream || isDirectVideo) {
                             logger.log("[doTabExtraction] Network intercept:", details.url, "| isStream:", isStream, "| isDirectVideo:", isDirectVideo);
-                            if (!latestM3u8 || isStream)
-                                latestM3u8 = details.url;
+                            if (!latestM3u8 || isStream) latestM3u8 = details.url;
                         }
                     }
                 };
                 browser.webRequest.onBeforeRequest.addListener(webRequestListener, { urls: ["<all_urls>"], tabId: scraperTabId });
                 logger.log("[doTabExtraction] webRequest listener attached for tabId:", scraperTabId);
-            }
-            else {
+            } else {
                 logger.warn("[doTabExtraction] browser.webRequest is not available - network interception disabled.");
             }
+
             // BUG FIX (race condition): tabs.onUpdated listener is attached after tabs.create(),
             // so a page that loads instantly from cache can fire status='complete' before the
             // listener is registered and injectScript() would never be called.
             // Fix: attach the listener first, then also check the current tab status in case
             // the page already finished loading while we were setting up.
-            tabUpdateListener = (tabId, info) => {
+            tabUpdateListener = (tabId: number, info: browser.Tabs.OnUpdatedChangeInfoType) => {
                 if (tabId === scraperTabId && info.status === 'complete') {
                     logger.log("[doTabExtraction] Scraper tab loaded (status=complete) via onUpdated. Injecting script...");
-                    browser.tabs.onUpdated.removeListener(tabUpdateListener);
+                    browser.tabs.onUpdated.removeListener(tabUpdateListener!);
                     tabUpdateListener = null;
                     injectScript();
                 }
             };
             browser.tabs.onUpdated.addListener(tabUpdateListener);
+
             // Check if the tab already reached 'complete' before our listener was attached
             // (can happen for cached pages or very fast redirects).
-            browser.tabs.get(scraperTab.id).then(tab => {
+            browser.tabs.get(scraperTab.id!).then(tab => {
                 if (tab.status === 'complete') {
                     logger.log("[doTabExtraction] Tab was already 'complete' before listener attached (cache hit). Injecting immediately.");
                     if (tabUpdateListener) {
@@ -198,13 +230,13 @@ async function doTabExtraction(targetUrl) {
                         tabUpdateListener = null;
                     }
                     injectScript();
-                }
-                else {
+                } else {
                     logger.log("[doTabExtraction] Tab status on post-create check:", tab.status, "— waiting for onUpdated...");
                 }
             }).catch(e => {
                 logger.warn("[doTabExtraction] Could not check post-create tab status:", e);
             });
+
             const injectScript = async () => {
                 if (injectionStarted || isResolved || scraperTabId === undefined) {
                     logger.warn("[doTabExtraction] injectScript called but skipped. injectionStarted:", injectionStarted, "isResolved:", isResolved, "scraperTabId:", scraperTabId);
@@ -212,12 +244,14 @@ async function doTabExtraction(targetUrl) {
                 }
                 injectionStarted = true;
                 logger.log("[doTabExtraction] Executing injection script in tabId:", scraperTabId);
+
                 try {
                     const results = await browser.scripting.executeScript({
                         target: { tabId: scraperTabId },
                         func: async () => {
-                            const delay = (ms) => new Promise(r => setTimeout(r, ms));
-                            const captureJpegFrame = async (video) => {
+                            const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+                            const captureJpegFrame = async (video: HTMLVideoElement): Promise<string | null> => {
                                 try {
                                     if (video.currentTime === 0) {
                                         video.currentTime = 5;
@@ -235,16 +269,14 @@ async function doTabExtraction(targetUrl) {
                                         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                                         return canvas.toDataURL('image/jpeg', 0.5);
                                     }
-                                }
-                                catch (e) {
-                                    return null;
-                                }
+                                } catch (e) { return null; }
                                 return null;
                             };
+
                             const clickAllPlayers = async () => {
                                 const selectors = [
-                                    'video', 'iframe', 'button[aria-label*="Play"]',
-                                    '.vjs-big-play-button', '.ytp-large-play-button',
+                                    'video', 'iframe', 'button[aria-label*="Play"]', 
+                                    '.vjs-big-play-button', '.ytp-large-play-button', 
                                     '[class^="media-player"]', '[role="button"]'
                                 ];
                                 for (const selector of selectors) {
@@ -253,71 +285,63 @@ async function doTabExtraction(targetUrl) {
                                         for (const el of Array.from(elements)) {
                                             if (el instanceof HTMLVideoElement) {
                                                 el.muted = true;
-                                                el.play().catch(() => { });
-                                            }
-                                            else {
-                                                el.focus();
-                                                el.click();
+                                                el.play().catch(() => {});
+                                            } else {
+                                                (el as HTMLElement).focus();
+                                                (el as HTMLElement).click();
                                             }
                                             await delay(200);
                                         }
-                                    }
-                                    catch (e) {
+                                    } catch (e) {
                                         console.debug("[VaultCentral] Soft-gate interaction attempt failed:", e);
                                     }
                                 }
                             };
+
                             const findBestVideoAndMeta = async () => {
-                                const metadata = { title: document.title, thumbnail: "", duration: 0, author: "", views: "", tags: [], likes: "", date: "" };
-                                const getMeta = (prop, name) => {
+                                const metadata = { title: document.title, thumbnail: "", duration: 0, author: "", views: "", tags: [] as string[], likes: "", date: "" };
+                                
+                                const getMeta = (prop: string, name: string) => {
                                     const el = document.querySelector(`meta[property="${prop}"], meta[name="${name}"]`);
-                                    return el ? el.content : "";
+                                    return el ? (el as HTMLMetaElement).content : "";
                                 };
+
                                 metadata.title = getMeta("og:title", "title") || metadata.title;
                                 metadata.thumbnail = getMeta("og:image", "image") || "";
                                 metadata.author = getMeta("og:site_name", "author");
                                 metadata.tags = (getMeta("og:video:tag", "keywords") || '').split(',').map(s => s.trim());
+
                                 const videos = Array.from(document.querySelectorAll('video'));
-                                let bestSrc = null;
+                                let bestSrc: string | null = null;
                                 let maxScore = -1;
-                                let bestVideoEl = null;
+                                let bestVideoEl: HTMLVideoElement | null = null;
+
                                 for (const v of videos) {
                                     const rect = v.getBoundingClientRect();
                                     let score = rect.width * rect.height;
                                     const idClass = (v.id + " " + v.className).toLowerCase();
-                                    if (idClass.match(/player|main|primary|hero|video-js|vjs|jwplayer/))
-                                        score += 1000000;
+                                    if (idClass.match(/player|main|primary|hero|video-js|vjs|jwplayer/)) score += 1000000;
+
                                     if (v.src && !v.src.startsWith('blob:')) {
-                                        if (score > maxScore) {
-                                            maxScore = score;
-                                            bestSrc = v.src;
-                                            bestVideoEl = v;
-                                            if (!isNaN(v.duration))
-                                                metadata.duration = v.duration;
-                                        }
-                                    }
-                                    else {
+                                        if (score > maxScore) { maxScore = score; bestSrc = v.src; bestVideoEl = v; if (!isNaN(v.duration)) metadata.duration = v.duration; }
+                                    } else {
                                         const sources = Array.from(v.querySelectorAll('source'));
                                         for (const s of sources) {
                                             if (s.src && !s.src.startsWith('blob:')) {
-                                                if (score > maxScore) {
-                                                    maxScore = score;
-                                                    bestSrc = s.src;
-                                                    bestVideoEl = v;
-                                                    if (!isNaN(v.duration))
-                                                        metadata.duration = v.duration;
-                                                }
+                                                if (score > maxScore) { maxScore = score; bestSrc = s.src; bestVideoEl = v; if (!isNaN(v.duration)) metadata.duration = v.duration; }
                                             }
                                         }
                                     }
                                 }
+
                                 if (bestVideoEl) {
                                     const jpeg = await captureJpegFrame(bestVideoEl);
-                                    if (jpeg)
-                                        metadata.thumbnail = jpeg;
+                                    if (jpeg) metadata.thumbnail = jpeg;
                                 }
+
                                 return { src: bestSrc, metadata };
                             };
+
                             let result = await findBestVideoAndMeta();
                             if (!result.src && !result.metadata.thumbnail.startsWith('data:video')) {
                                 await delay(2500);
@@ -328,8 +352,10 @@ async function doTabExtraction(targetUrl) {
                             return result;
                         }
                     });
-                    const foundResult = results[0]?.result;
+
+                    const foundResult = results[0]?.result as ExtractionResult | undefined;
                     logger.log("[doTabExtraction] Injected script result - src:", foundResult?.src ?? 'null', "| thumbnail length:", foundResult?.metadata?.thumbnail?.length ?? 0, "| latestM3u8:", latestM3u8 ?? 'null');
+
                     // BUG FIX: captureTab expects a tabId, NOT a windowId.
                     // Previously this passed scraperWindowId (window ID) to captureTab which
                     // silently failed, leaving the thumbnail empty.
@@ -340,97 +366,92 @@ async function doTabExtraction(targetUrl) {
                             await new Promise(r => setTimeout(r, 800));
                             // captureTab is Firefox-specific; captureVisibleTab is cross-browser.
                             // We prefer captureTab(tabId) to avoid switching the visible tab.
-                            const captureTabFn = browser.tabs.captureTab;
+                            const captureTabFn = (browser.tabs as any).captureTab;
                             const snap = captureTabFn
                                 ? await captureTabFn(scraperTabId, { format: "jpeg", quality: 30 })
-                                : await browser.tabs.captureVisibleTab(scraperWindowId, { format: "jpeg", quality: 30 });
+                                : await browser.tabs.captureVisibleTab(scraperWindowId as number, { format: "jpeg", quality: 30 });
                             if (snap && foundResult) {
                                 logger.log("[doTabExtraction] captureTab/captureVisibleTab succeeded. thumbnail length:", snap.length);
                                 foundResult.metadata.thumbnail = snap;
-                            }
-                            else {
+                            } else {
                                 logger.warn("[doTabExtraction] captureTab/captureVisibleTab returned nothing.");
                             }
-                        }
-                        catch (e) {
+                        } catch (e) {
                             logger.warn("[doTabExtraction] Tab screenshot fallback failed:", e);
                         }
                     }
+
                     if (latestM3u8 && foundResult) {
                         logger.log("[doTabExtraction] Resolving with network-intercepted src:", latestM3u8, "| thumbnail:", !!foundResult.metadata.thumbnail);
                         foundResult.src = latestM3u8;
                         cleanup(foundResult, "Intercepted network src");
-                    }
-                    else if (foundResult?.src) {
+                    } else if (foundResult?.src) {
                         logger.log("[doTabExtraction] Resolving with DOM-extracted src:", foundResult.src, "| thumbnail:", !!foundResult.metadata.thumbnail);
                         cleanup(foundResult, "DOM extraction success");
-                    }
-                    else if (latestM3u8) {
+                    } else if (latestM3u8) {
                         logger.log("[doTabExtraction] Resolving with network-only fallback. No DOM src. thumbnail:", !!(foundResult?.metadata?.thumbnail));
                         cleanup({ src: latestM3u8, metadata: foundResult?.metadata ?? defaultMetadata }, "Network fallback");
-                    }
-                    else {
+                    } else {
                         logger.warn("[doTabExtraction] No src found. Scheduling 2s timeout fallback.");
                         setTimeout(() => {
                             cleanup(latestM3u8 ? { src: latestM3u8, metadata: foundResult?.metadata ?? defaultMetadata } : (foundResult ?? null), "Timeout fallback");
                         }, 2000);
                     }
-                }
-                catch (e) {
+                } catch (e) {
                     logger.error("[doTabExtraction] Injection threw an error:", e);
                     cleanup(null, "Injection threw an error");
                 }
             };
-        }
-        catch (e) {
+        } catch (e) {
             logger.error("[doTabExtraction] Setup failed:", e);
             cleanup(null, "Setup failed");
         }
     });
 }
+
 async function openDashboard() {
     const url = browser.runtime.getURL('dashboard-v2.html');
     const tabs = await browser.tabs.query({});
     const { [STORAGE_KEYS.ACTIVE_TAB_ID]: storedTabId } = await browser.storage.local.get(STORAGE_KEYS.ACTIVE_TAB_ID);
+
     let dashboardTab = null;
     if (storedTabId) {
         dashboardTab = tabs.find(t => t.id === storedTabId && t.url?.startsWith(url));
     }
-    if (!dashboardTab)
-        dashboardTab = tabs.find(t => t.url?.startsWith(url));
+    if (!dashboardTab) dashboardTab = tabs.find(t => t.url?.startsWith(url));
+
     if (dashboardTab && dashboardTab.id) {
         await browser.tabs.update(dashboardTab.id, { active: true });
-        if (dashboardTab.windowId)
-            await browser.windows.update(dashboardTab.windowId, { focused: true });
-    }
-    else {
+        if (dashboardTab.windowId) await browser.windows.update(dashboardTab.windowId, { focused: true });
+    } else {
         const newTab = await browser.tabs.create({ url, active: true });
-        if (newTab.id)
-            await browser.storage.local.set({ [STORAGE_KEYS.ACTIVE_TAB_ID]: newTab.id });
+        if (newTab.id) await browser.storage.local.set({ [STORAGE_KEYS.ACTIVE_TAB_ID]: newTab.id });
     }
 }
-async function runCapturePipeline(data, tabId, windowId) {
+
+async function runCapturePipeline(data: any, tabId?: number, windowId?: number): Promise<any> {
     logger.log("[runCapturePipeline] Received capture request. url:", data.url, "| thumbnail from content.ts:", !!data.thumbnail, "(len:", data.thumbnail?.length ?? 0, ")");
     try {
         const targetUrl = data.url;
         let finalSrc = data.url;
         let capturedWebmPreviewDataUrl = "";
+
         if (!data.thumbnail && windowId) {
             try {
                 logger.log("[runCapturePipeline] No initial thumbnail. Capturing visible tab screenshot from windowId:", windowId);
                 data.thumbnail = await browser.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 20 });
                 logger.log("[runCapturePipeline] captureVisibleTab succeeded. thumbnail length:", data.thumbnail?.length ?? 0);
-            }
-            catch (e) {
+            } catch (e) {
                 logger.warn("[runCapturePipeline] captureVisibleTab failed:", e);
             }
-        }
-        else {
+        } else {
             logger.log("[runCapturePipeline] Thumbnail already present from content.ts (len:", data.thumbnail?.length ?? 0, "). Skipping captureVisibleTab.");
         }
+
         logger.log("[runCapturePipeline] Starting doTabExtraction for:", targetUrl);
         const extracted = await doTabExtraction(targetUrl);
         logger.log("[runCapturePipeline] doTabExtraction returned. src:", extracted?.src ?? 'null', "| scraped thumbnail length:", extracted?.metadata?.thumbnail?.length ?? 0);
+
         if (extracted && extracted.src) {
             finalSrc = extracted.src;
             if (extracted.metadata) {
@@ -440,54 +461,39 @@ async function runCapturePipeline(data, tabId, windowId) {
                 // Fix: only merge scraped metadata fields that are non-empty/non-zero.
                 const preThumb = data.thumbnail;
                 const meta = extracted.metadata;
-                if (meta.title) {
-                    logger.log("[runCapturePipeline] Scraped title:", meta.title);
-                    data.title = meta.title;
-                }
-                if (meta.author) {
-                    logger.log("[runCapturePipeline] Scraped author:", meta.author);
-                    data.author = meta.author;
-                }
+                if (meta.title) { logger.log("[runCapturePipeline] Scraped title:", meta.title); data.title = meta.title; }
+                if (meta.author) { logger.log("[runCapturePipeline] Scraped author:", meta.author); data.author = meta.author; }
                 if (meta.thumbnail?.startsWith('data:video')) {
                     logger.log("[runCapturePipeline] Scraped WebM preview present (len:", meta.thumbnail.length, "). Saving it as binary preview instead of metadata thumbnail.");
                     capturedWebmPreviewDataUrl = meta.thumbnail;
-                }
-                else if (meta.thumbnail) {
+                } else if (meta.thumbnail) {
                     logger.log("[runCapturePipeline] Scraped thumbnail present (len:", meta.thumbnail.length, "). Replacing fallback.");
                     data.thumbnail = meta.thumbnail;
-                }
-                else {
+                } else {
                     logger.log("[runCapturePipeline] Scraped thumbnail is EMPTY. Preserving existing thumbnail (len:", preThumb?.length ?? 0, ").");
                 }
-                if (meta.duration) {
-                    data.duration = meta.duration;
-                }
-                if (meta.views) {
-                    data.views = meta.views;
-                }
-                if (Array.isArray(meta.tags) && meta.tags.length > 0) {
-                    data.tags = meta.tags;
-                }
-                if (meta.likes) {
-                    data.likes = meta.likes;
-                }
-                if (meta.date) {
-                    data.date = meta.date;
-                }
+                if (meta.duration) { data.duration = meta.duration; }
+                if (meta.views) { data.views = meta.views; }
+                if (Array.isArray(meta.tags) && meta.tags.length > 0) { data.tags = meta.tags; }
+                if (meta.likes) { data.likes = meta.likes; }
+                if (meta.date) { data.date = meta.date; }
             }
-        }
-        else {
+        } else {
             logger.warn("[runCapturePipeline] Extraction returned no usable src. Falling back to original URL:", targetUrl);
         }
+
         data.rawVideoSrc = finalSrc;
         logger.log("[runCapturePipeline] Final rawVideoSrc:", data.rawVideoSrc, "| final thumbnail length:", data.thumbnail?.length ?? 0);
+
         const saved = await getSavedVideos(true);
         logger.log("[runCapturePipeline] Existing vault size:", saved.length);
         if (saved.some(v => v.url === data.url)) {
             logger.warn("[runCapturePipeline] Item already exists in vault. Aborting save. url:", data.url);
             return { success: false, message: "Item already in vault" };
         }
+        
         data.timestamp = Date.now(); // BUG FIX: Dashboard scan for missing previews relies on this!
+
         // Keep binary previews out of chrome.storage metadata. WebM data URLs are stored
         // in IndexedDB under the stable vault item URL and rendered through PreviewThumb.
         if (!capturedWebmPreviewDataUrl && data.thumbnail?.startsWith('data:video')) {
@@ -497,9 +503,11 @@ async function runCapturePipeline(data, tabId, windowId) {
         if (thumbIsWebm) {
             data.thumbnail = "";
         }
+        
         saved.push(data);
         await saveVideos(saved);
         logger.log("[runCapturePipeline] Saved! New vault size:", saved.length);
+
         if (thumbIsWebm) {
             logger.log("[runCapturePipeline] Injected script captured WebM. Decoding and saving to IndexedDB.");
             try {
@@ -507,11 +515,11 @@ async function runCapturePipeline(data, tabId, windowId) {
                 const blob = await response.blob();
                 await savePreview(data.url, blob);
                 logger.log("[runCapturePipeline] Successfully saved injected WebM preview to Dexie.");
-            }
-            catch (err) {
+            } catch (err) {
                 logger.warn("[runCapturePipeline] Failed to save injected WebM to Dexie:", err);
             }
         }
+
         if (data.rawVideoSrc && !thumbIsWebm) {
             logger.log("[runCapturePipeline] Queuing background preview generation for:", data.rawVideoSrc);
             setupOffscreenDocument().then((ready) => {
@@ -530,24 +538,25 @@ async function runCapturePipeline(data, tabId, windowId) {
                     logger.warn("[runCapturePipeline] generate_preview message failed:", e);
                 });
             });
-        }
-        else {
+        } else {
             logger.log("[runCapturePipeline] Skipping preview generation (no rawVideoSrc or thumbnail is already a WebM).");
         }
+
         return { success: true, data };
-    }
-    catch (err) {
+    } catch (err: any) {
         logger.error("[runCapturePipeline] Unhandled error:", err);
         return { success: false, message: err.message };
     }
 }
-async function setupOffscreenDocument() {
+
+async function setupOffscreenDocument(): Promise<boolean> {
     const offscreenUrl = 'src/offscreen/processor.html';
     logger.log("[setupOffscreenDocument] Setting up offscreen document:", offscreenUrl);
-    if (!browser.offscreen) {
+    
+    if (!(browser as any).offscreen) {
         logger.warn("[setupOffscreenDocument] browser.offscreen API not available. Attempting iframe fallback.");
         if (typeof document !== 'undefined' && document.body) {
-            let frame = document.getElementById('vault-processor-frame');
+            let frame = document.getElementById('vault-processor-frame') as HTMLIFrameElement;
             if (!frame) {
                 logger.log("[setupOffscreenDocument] Creating fallback iframe processor.");
                 frame = document.createElement('iframe');
@@ -556,47 +565,41 @@ async function setupOffscreenDocument() {
                 document.body.appendChild(frame);
                 await new Promise((r) => frame.onload = r);
                 logger.log("[setupOffscreenDocument] Fallback iframe loaded.");
-            }
-            else {
+            } else {
                 logger.log("[setupOffscreenDocument] Fallback iframe already exists.");
             }
             return true;
-        }
-        else {
+        } else {
             logger.warn("[setupOffscreenDocument] No document.body available for iframe fallback. Preview generation unavailable.");
             return false;
         }
     }
+
     try {
-        const contexts = await browser.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [browser.runtime.getURL(offscreenUrl)] });
+        const contexts = await (browser.runtime as any).getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [browser.runtime.getURL(offscreenUrl)] });
         if (contexts && contexts.length > 0) {
             logger.log("[setupOffscreenDocument] Offscreen document already exists. Skipping creation.");
             return true;
         }
         logger.log("[setupOffscreenDocument] Creating offscreen document...");
-        await browser.offscreen.createDocument({
+        await (browser as any).offscreen.createDocument({
             url: offscreenUrl,
-            reasons: ['DOM_PARSER', 'AUDIO_PLAYBACK', 'BLOBS'],
+            reasons: ['DOM_PARSER', 'AUDIO_PLAYBACK', 'BLOBS' as any],
             justification: 'FFmpeg WASM processing for video previews'
         });
         logger.log("[setupOffscreenDocument] Offscreen document created.");
         return true;
-    }
-    catch (e) {
+    } catch (e) {
         logger.error("[setupOffscreenDocument] Failed to create offscreen document:", e);
         return false;
     }
 }
-browser.runtime.onMessage.addListener((request, sender) => {
+
+browser.runtime.onMessage.addListener((request: any, sender: any) => {
     logger.log("[onMessage] Received action:", request.action, "| from tab:", sender?.tab?.id, "url:", sender?.tab?.url?.substring(0, 80));
-    if (request.action === "extract_fresh_m3u8")
-        return doTabExtraction(request.url).then(res => ({ src: res?.src || null }));
-    if (request.action === "open_dashboard") {
-        openDashboard();
-        return Promise.resolve(true);
-    }
-    if (request.action === "process_capture")
-        return runCapturePipeline(request.data, sender?.tab?.id, sender?.tab?.windowId);
+    if (request.action === "extract_fresh_m3u8") return doTabExtraction(request.url).then(res => ({ src: res?.src || null }));
+    if (request.action === "open_dashboard") { openDashboard(); return Promise.resolve(true); }
+    if (request.action === "process_capture") return runCapturePipeline(request.data, sender?.tab?.id, sender?.tab?.windowId);
     if (request.action === "generate_preview") {
         return setupOffscreenDocument().then(async (ready) => {
             if (!ready) {
@@ -608,12 +611,8 @@ browser.runtime.onMessage.addListener((request, sender) => {
             });
         });
     }
-    if (request.action === "generate_preview_process")
-        return undefined;
-    if (request.action === "download_debug_logs") {
-        logger.downloadLogFile();
-        return Promise.resolve(true);
-    }
+    if (request.action === "generate_preview_process") return undefined;
+    if (request.action === "download_debug_logs") { logger.downloadLogFile(); return Promise.resolve(true); }
     if (request.action === "run_full_backup") {
         return downloadFullVaultBackup('manual')
             .then(result => result)
@@ -633,28 +632,33 @@ browser.runtime.onMessage.addListener((request, sender) => {
     logger.warn("[onMessage] Unknown action received:", request.action);
     return undefined;
 });
+
 browser.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === DAILY_BACKUP_ALARM) {
         void runAutomaticBackup();
     }
 });
+
 browser.runtime.onInstalled.addListener(() => {
     void scheduleDailyBackupAlarm();
 });
+
 browser.runtime.onStartup.addListener(() => {
     void scheduleDailyBackupAlarm();
 });
+
 void scheduleDailyBackupAlarm();
+
 browser.action.onClicked.addListener(() => {
     logger.log("[action.onClicked] Extension icon clicked. Opening dashboard.");
     openDashboard();
 });
+
 browser.commands.onCommand.addListener(async (command) => {
     logger.log("[commands.onCommand] Command received:", command);
     if (command === "_execute_action" || command === "open-dashboard") {
         openDashboard();
-    }
-    else if (command === "capture-video") {
+    } else if (command === "capture-video") {
         try {
             const tabs = await browser.tabs.query({ active: true, currentWindow: true });
             const activeTab = tabs[0];
@@ -663,24 +667,22 @@ browser.commands.onCommand.addListener(async (command) => {
                 logger.warn("[commands.onCommand] Cannot capture - no valid active tab.");
                 return;
             }
+
             try {
                 await browser.tabs.sendMessage(activeTab.id, { type: "capture-video" });
                 logger.log("[commands.onCommand] Sent capture-video to content script.");
-            }
-            catch (error) {
+            } catch (error) {
                 logger.warn("[commands.onCommand] Content script not available on tab. Showing alert.", error);
                 try {
                     await browser.scripting.executeScript({
                         target: { tabId: activeTab.id },
                         func: () => alert("[Vault Central] Extension script is not active on this page. Please refresh.")
                     });
-                }
-                catch (e) {
+                } catch (e) {
                     logger.error("[commands.onCommand] executeScript for alert also failed:", e);
                 }
             }
-        }
-        catch (error) {
+        } catch (error) {
             logger.error("[commands.onCommand] Unexpected error handling capture-video command:", error);
         }
     }

@@ -1,0 +1,17 @@
+{
+  "name": "@vaultwares/testing",
+  "version": "1.0.0",
+  "description": "Reusable Playwright browser extension test utilities for VaultWares projects.",
+  "author": "VaultWares",
+  "license": "ISC",
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "keywords": ["playwright", "browser-extension", "firefox", "testing", "vaultwares"],
+  "peerDependencies": {
+    "@playwright/test": ">=1.40.0",
+    "playwright-webextext": ">=0.1.0"
+  }
+}
