@@ -18,3 +18,6 @@
 ## 2024-05-18 - [Optimization] Cache Intl.DateTimeFormat in React Render Loops
 **Learning:** Instantiating `new Date().toLocaleDateString()` and `.toLocaleString()` inside large render loops in React (like maps or frequent state updates) creates an enormous O(N) performance bottleneck because V8 must re-parse and instantiate the locale format rules on every call.
 **Action:** Use `Intl.DateTimeFormat` outside of the render loops instead, caching the format instances to avoid redundant instantiations inside lists or frequent renders.
+## 2026-05-01 - [Optimization] Array join over String Concatenation for Large Payloads
+**Learning:** Repetitive string concatenation (`binary += chunk`) inside a loop for large data payloads (like Blob to Base64 conversion) causes an O(N^2) memory reallocation overhead in V8.
+**Action:** Use an array to collect chunks (`chunks.push(chunk)`) and call `.join('')` at the end to assemble the final string, significantly reducing memory footprint and improving execution time.
