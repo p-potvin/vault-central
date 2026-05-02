@@ -75,12 +75,16 @@ async function blobLikeToBase64(blobLike: PreviewBlob['blob']): Promise<string> 
     ? new Uint8Array(await blobLike.arrayBuffer())
     : new Uint8Array(blobLike as Uint8Array);
 
-  let binary = '';
+  // ⚡ BOLT OPTIMIZATION:
+  // Using an array to collect string chunks and calling `.join('')` at the end
+  // eliminates the O(N^2) memory reallocation overhead caused by repetitive string
+  // concatenation (`binary += ...`) inside a loop, especially for large blob payloads.
+  const binaryChunks: string[] = [];
   const chunkSize = 0x8000;
   for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    binaryChunks.push(String.fromCharCode(...bytes.subarray(i, i + chunkSize)));
   }
-  return btoa(binary);
+  return btoa(binaryChunks.join(''));
 }
 
 async function serializePreview(record: PreviewBlob): Promise<PreviewBackupRecord> {
