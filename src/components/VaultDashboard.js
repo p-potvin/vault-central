@@ -13,14 +13,12 @@ import React, { useEffect, useState, useMemo, useRef, useDeferredValue } from 'r
 // creates O(N) performance bottlenecks. This cache prevents redundant URL parsing
 // and gracefully handles invalid URLs without crashing the React tree.
 const domainCache = new Map();
-
 // ⚡ BOLT OPTIMIZATION:
 // `new Date().toLocaleDateString()` and `.toLocaleString()` inside render loops
 // create an enormous performance bottleneck because V8 must re-parse and instantiate
 // the locale formatter on every call. Using `Intl.DateTimeFormat` prevents this overhead.
 const dateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
-
 async function getPreviewForVideo(video) {
     const primary = await getPreview(video.url);
     if (primary || !video.rawVideoSrc || video.rawVideoSrc === video.url) {
@@ -71,6 +69,7 @@ function getDomainFromUrl(url, removeWww = false) {
 // Wrapping `PreviewThumb` in `React.memo` prevents unnecessary and costly re-renders
 // when parent components update state (e.g., when opening a video modal or changing themes).
 const PreviewThumb = React.memo(({ video }) => {
+    const [blob, setBlob] = useState(null);
     const [previewBlob, setPreviewBlob] = useState(null);
     const [isHovering, setIsHovering] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -85,7 +84,7 @@ const PreviewThumb = React.memo(({ video }) => {
                 if (!active)
                     return;
                 if (blob) {
-                    setPreviewBlob(URL.createObjectURL(blob));
+                    setBlob(blob);
                 }
                 else if (retryIndex < retryDelays.length) {
                     const delay = retryDelays[retryIndex++];
@@ -115,11 +114,12 @@ const PreviewThumb = React.memo(({ video }) => {
         }
     }, [isHovering, previewBlob]);
     useEffect(() => {
-        return () => {
-            if (previewBlob)
-                URL.revokeObjectURL(previewBlob);
-        };
-    }, [previewBlob]);
+        if (!blob)
+            return;
+        const url = URL.createObjectURL(blob);
+        setPreviewBlob(url);
+        return () => { URL.revokeObjectURL(url); };
+    }, [blob]);
     const handleMouseEnter = async () => {
         setIsHovering(true);
         // Check if we already have it in state
@@ -129,7 +129,7 @@ const PreviewThumb = React.memo(({ video }) => {
         // Check if it exists in the database (may have been written since mount)
         const blob = await getPreviewForVideo(video);
         if (blob) {
-            setPreviewBlob(URL.createObjectURL(blob));
+            setBlob(blob);
             return;
         }
         /**
@@ -155,7 +155,7 @@ const PreviewThumb = React.memo(({ video }) => {
                     const poll = setInterval(async () => {
                         const retryBlob = await getPreviewForVideo(video);
                         if (retryBlob) {
-                            setPreviewBlob(URL.createObjectURL(retryBlob));
+                            setBlob(retryBlob);
                             setIsProcessing(false);
                             clearInterval(poll);
                         }
@@ -884,7 +884,7 @@ export const VaultDashboard = () => {
                                                     finally {
                                                         setIsRefreshing(false);
                                                     }
-                                                }, disabled: isRefreshing, children: isRefreshing ? 'Refreshing Link...' : 'Try Refreshing Link' }), _jsx("a", { href: playingVideo.url, target: "_blank", rel: "noreferrer", className: "vault-btn text-sm px-4 py-2 bg-vault-accent text-vault-bg flex items-center gap-2 hover:bg-vault-accentHover", children: "Open Original Page" })] })] })) : (_jsx("video", { src: playingVideo.rawVideoSrc || undefined, controls: true, autoPlay: true, className: "w-full h-full outline-none", onError: () => setVideoError(true), children: _jsx("source", { src: playingVideo.rawVideoSrc || undefined }) })) }), _jsxs("div", { className: "p-4 bg-vault-cardBg flex items-center justify-between text-sm text-vault-muted", children: [_jsxs("div", { children: [_jsx("span", { className: "font-semibold text-vault-text", children: playingVideo.domain || getDomainFromUrl(playingVideo.url) }), playingVideo.author && _jsxs("span", { className: "ml-2 px-2 border-l border-vault-border", children: ["By: ", playingVideo.author] })] }), _jsx("div", { className: "font-mono text-xs", children: new Date(playingVideo.timestamp).toLocaleString() })] })] }) })), pinSetupOpen && (_jsx("div", { className: "fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-sm", children: _jsxs("div", { className: "bg-vault-bg border border-vault-border rounded-lg shadow-2xl p-6 w-80 flex flex-col items-center gap-5 animate-in zoom-in-95 duration-200", children: [_jsxs("div", { className: "relative", children: [_jsx(Icons.PinIcon, { size: 28, className: "text-vault-accent" }), _jsx("div", { className: "absolute -inset-1 blur-lg bg-vault-accent/20 rounded-full" })] }), _jsxs("div", { className: "text-center", children: [_jsx("h3", { className: "text-sm font-black uppercase tracking-widest text-vault-text", children: "Set New PIN" }), _jsxs("p", { className: "text-[10px] text-vault-muted mt-1", children: ["Enter a ", pinSetupLength, "-digit security sequence"] })] }), _jsx("div", { className: "flex gap-2 w-full", children: [4, 6].map(len => (_jsxs("button", { onClick: () => handlePinSetupLengthChange(len), className: cn("flex-1 py-1 text-[10px] font-black rounded-sm border transition-all", pinSetupLength === len
+                                                }, disabled: isRefreshing, children: isRefreshing ? 'Refreshing Link...' : 'Try Refreshing Link' }), _jsx("a", { href: playingVideo.url, target: "_blank", rel: "noreferrer", className: "vault-btn text-sm px-4 py-2 bg-vault-accent text-vault-bg flex items-center gap-2 hover:bg-vault-accentHover", children: "Open Original Page" })] })] })) : (_jsx("video", { src: playingVideo.rawVideoSrc || undefined, controls: true, autoPlay: true, className: "w-full h-full outline-none", onError: () => setVideoError(true), children: _jsx("source", { src: playingVideo.rawVideoSrc || undefined }) })) }), _jsxs("div", { className: "p-4 bg-vault-cardBg flex items-center justify-between text-sm text-vault-muted", children: [_jsxs("div", { children: [_jsx("span", { className: "font-semibold text-vault-text", children: playingVideo.domain || getDomainFromUrl(playingVideo.url) }), playingVideo.author && _jsxs("span", { className: "ml-2 px-2 border-l border-vault-border", children: ["By: ", playingVideo.author] })] }), _jsx("div", { className: "font-mono text-xs", children: dateTimeFormatter.format(new Date(playingVideo.timestamp)) })] })] }) })), pinSetupOpen && (_jsx("div", { className: "fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-sm", children: _jsxs("div", { className: "bg-vault-bg border border-vault-border rounded-lg shadow-2xl p-6 w-80 flex flex-col items-center gap-5 animate-in zoom-in-95 duration-200", children: [_jsxs("div", { className: "relative", children: [_jsx(Icons.PinIcon, { size: 28, className: "text-vault-accent" }), _jsx("div", { className: "absolute -inset-1 blur-lg bg-vault-accent/20 rounded-full" })] }), _jsxs("div", { className: "text-center", children: [_jsx("h3", { className: "text-sm font-black uppercase tracking-widest text-vault-text", children: "Set New PIN" }), _jsxs("p", { className: "text-[10px] text-vault-muted mt-1", children: ["Enter a ", pinSetupLength, "-digit security sequence"] })] }), _jsx("div", { className: "flex gap-2 w-full", children: [4, 6].map(len => (_jsxs("button", { onClick: () => handlePinSetupLengthChange(len), className: cn("flex-1 py-1 text-[10px] font-black rounded-sm border transition-all", pinSetupLength === len
                                     ? "bg-vault-accent border-vault-accent text-vault-bg"
                                     : "bg-transparent border-vault-border text-vault-muted hover:border-vault-muted"), children: [len, " DIGITS"] }, len))) }), _jsx("div", { className: "flex gap-3 justify-center", children: pinSetupBoxes.map((digit, idx) => (_jsx("input", { ref: el => { pinSetupRefs.current[idx] = el; }, type: "password", inputMode: "numeric", pattern: "[0-9]*", maxLength: 1, value: digit, onChange: e => handlePinSetupChange(idx, e.target.value), onKeyDown: e => handlePinSetupKeyDown(idx, e), className: cn("w-10 h-14 bg-vault-cardBg/50 border-2 rounded-xl text-center text-xl font-bold", "focus:border-vault-accent focus:bg-vault-accent/5 outline-none transition-all", pinSetupError ? 'border-red-500/50' : 'border-vault-border/50', digit ? 'border-vault-accent/50 scale-105 shadow-[0_0_12px_-4px_var(--vault-accent)]' : ''), autoFocus: idx === 0 }, `${pinSetupLength}-${idx}`))) }), pinSetupError && (_jsxs("p", { className: "text-[10px] font-black text-red-500 uppercase tracking-tight animate-in slide-in-from-top-1", children: ["Enter exactly ", pinSetupLength, " numeric digits"] })), _jsxs("div", { className: "flex gap-3 w-full mt-1", children: [_jsx("button", { onClick: cancelPinSetup, className: "flex-1 px-4 py-2 text-xs font-bold text-vault-muted hover:text-vault-text border border-vault-border rounded hover:border-vault-muted transition-all", children: "Cancel" }), _jsx("button", { onClick: confirmPinSetup, className: "flex-1 px-4 py-2 text-xs font-black bg-vault-accent text-vault-bg rounded hover:bg-vault-accentHover transition-all", children: "Activate PIN" })] })] }) }))] }));
 };

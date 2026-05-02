@@ -129,10 +129,6 @@ async function doTabExtraction(targetUrl) {
             resolve(result);
         };
         try {
-            // BUG FIX: Do NOT call browser.tabs.hide() on a newly-created tab.
-            // Chrome's API explicitly states: "Tabs hidden since creation are never loaded."
-            // Also, to bypass autoplay/decode throttling on inactive tabs, we briefly
-            // spawn it as active, and immediately switch back to the original tab.
             const queryTabs = await browser.tabs.query({ active: true, currentWindow: true });
             const prevActiveTabId = queryTabs.length > 0 ? queryTabs[0].id : undefined;
             const scraperTab = await browser.tabs.create({ url: targetUrl, active: true });
@@ -140,9 +136,6 @@ async function doTabExtraction(targetUrl) {
             scraperTabId = scraperTab.id;
             scraperWindowId = scraperTab.windowId;
             if (prevActiveTabId && scraperTabId !== prevActiveTabId) {
-                // Instantly flip back to the user's active tab. The scraper tab will have been
-                // momentarily active, which is enough to satisfy Chromium's media autoplay policy 
-                // in most cases WITHOUT visibly flashing the screen given it's async.
                 setTimeout(async () => {
                     try {
                         logger.log("[doTabExtraction] Flipping focus back to original tab:", prevActiveTabId);
@@ -154,7 +147,7 @@ async function doTabExtraction(targetUrl) {
             globalTimeoutId = setTimeout(() => {
                 logger.warn("[doTabExtraction] Global timeout reached after 35s. latestM3u8:", latestM3u8);
                 cleanup(latestM3u8 ? { src: latestM3u8, metadata: defaultMetadata } : null, "Timeout reached");
-            }, 35000); // Extended timeout for WebM generation
+            }, 35000);
             if (browser.webRequest) {
                 webRequestListener = (details) => {
                     const lowercaseUrl = details.url.toLowerCase();
@@ -174,11 +167,6 @@ async function doTabExtraction(targetUrl) {
             else {
                 logger.warn("[doTabExtraction] browser.webRequest is not available - network interception disabled.");
             }
-            // BUG FIX (race condition): tabs.onUpdated listener is attached after tabs.create(),
-            // so a page that loads instantly from cache can fire status='complete' before the
-            // listener is registered and injectScript() would never be called.
-            // Fix: attach the listener first, then also check the current tab status in case
-            // the page already finished loading while we were setting up.
             tabUpdateListener = (tabId, info) => {
                 if (tabId === scraperTabId && info.status === 'complete') {
                     logger.log("[doTabExtraction] Scraper tab loaded (status=complete) via onUpdated. Injecting script...");
@@ -188,8 +176,6 @@ async function doTabExtraction(targetUrl) {
                 }
             };
             browser.tabs.onUpdated.addListener(tabUpdateListener);
-            // Check if the tab already reached 'complete' before our listener was attached
-            // (can happen for cached pages or very fast redirects).
             browser.tabs.get(scraperTab.id).then(tab => {
                 if (tab.status === 'complete') {
                     logger.log("[doTabExtraction] Tab was already 'complete' before listener attached (cache hit). Injecting immediately.");
@@ -330,16 +316,11 @@ async function doTabExtraction(targetUrl) {
                     });
                     const foundResult = results[0]?.result;
                     logger.log("[doTabExtraction] Injected script result - src:", foundResult?.src ?? 'null', "| thumbnail length:", foundResult?.metadata?.thumbnail?.length ?? 0, "| latestM3u8:", latestM3u8 ?? 'null');
-                    // BUG FIX: captureTab expects a tabId, NOT a windowId.
-                    // Previously this passed scraperWindowId (window ID) to captureTab which
-                    // silently failed, leaving the thumbnail empty.
                     if (!foundResult?.metadata?.thumbnail && scraperTabId !== undefined) {
                         try {
                             logger.log("[doTabExtraction] No thumbnail from injected script. Attempting captureTab fallback on tabId:", scraperTabId);
                             await browser.tabs.update(scraperTabId, { active: true });
                             await new Promise(r => setTimeout(r, 800));
-                            // captureTab is Firefox-specific; captureVisibleTab is cross-browser.
-                            // We prefer captureTab(tabId) to avoid switching the visible tab.
                             const captureTabFn = browser.tabs.captureTab;
                             const snap = captureTabFn
                                 ? await captureTabFn(scraperTabId, { format: "jpeg", quality: 30 })
@@ -434,11 +415,6 @@ async function runCapturePipeline(data, tabId, windowId) {
         if (extracted && extracted.src) {
             finalSrc = extracted.src;
             if (extracted.metadata) {
-                // BUG FIX: Object.assign would unconditionally overwrite data.thumbnail with "" when
-                // the scraper tab fails to capture a thumbnail (defaultMetadata.thumbnail = "").
-                // This silently destroyed the fallback thumbnail sent by the content script.
-                // Fix: only merge scraped metadata fields that are non-empty/non-zero.
-                const preThumb = data.thumbnail;
                 const meta = extracted.metadata;
                 if (meta.title) {
                     logger.log("[runCapturePipeline] Scraped title:", meta.title);
@@ -457,7 +433,7 @@ async function runCapturePipeline(data, tabId, windowId) {
                     data.thumbnail = meta.thumbnail;
                 }
                 else {
-                    logger.log("[runCapturePipeline] Scraped thumbnail is EMPTY. Preserving existing thumbnail (len:", preThumb?.length ?? 0, ").");
+                    logger.log("[runCapturePipeline] Scraped thumbnail is EMPTY. Preserving existing thumbnail.");
                 }
                 if (meta.duration) {
                     data.duration = meta.duration;
@@ -487,9 +463,7 @@ async function runCapturePipeline(data, tabId, windowId) {
             logger.warn("[runCapturePipeline] Item already exists in vault. Aborting save. url:", data.url);
             return { success: false, message: "Item already in vault" };
         }
-        data.timestamp = Date.now(); // BUG FIX: Dashboard scan for missing previews relies on this!
-        // Keep binary previews out of chrome.storage metadata. WebM data URLs are stored
-        // in IndexedDB under the stable vault item URL and rendered through PreviewThumb.
+        data.timestamp = Date.now();
         if (!capturedWebmPreviewDataUrl && data.thumbnail?.startsWith('data:video')) {
             capturedWebmPreviewDataUrl = data.thumbnail;
         }
@@ -530,9 +504,6 @@ async function runCapturePipeline(data, tabId, windowId) {
                     logger.warn("[runCapturePipeline] generate_preview message failed:", e);
                 });
             });
-        }
-        else {
-            logger.log("[runCapturePipeline] Skipping preview generation (no rawVideoSrc or thumbnail is already a WebM).");
         }
         return { success: true, data };
     }
@@ -590,7 +561,7 @@ async function setupOffscreenDocument() {
 browser.runtime.onMessage.addListener((request, sender) => {
     logger.log("[onMessage] Received action:", request.action, "| from tab:", sender?.tab?.id, "url:", sender?.tab?.url?.substring(0, 80));
     if (request.action === "extract_fresh_m3u8")
-        return doTabExtraction(request.url).then(res => ({ src: res?.src || null }));
+        return doTabExtraction(request.url).then((res) => ({ src: res?.src || null }));
     if (request.action === "open_dashboard") {
         openDashboard();
         return Promise.resolve(true);

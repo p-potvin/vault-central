@@ -87,7 +87,7 @@ function getDomainFromUrl(url: string, removeWww = false): string {
 // when parent components update state (e.g., when opening a video modal or changing themes).
 const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
   const [blob, setBlob] = useState<Blob | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewBlob, setPreviewBlob] = useState<string | null>(null);
   const [isHovering, setIsHovering] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -102,7 +102,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
         .then(blob => {
           if (!active) return;
           if (blob) {
-            setPreviewBlob(URL.createObjectURL(blob));
+            setBlob(blob);
           } else if (retryIndex < retryDelays.length) {
             const delay = retryDelays[retryIndex++];
             setTimeout(attempt, delay);
@@ -113,11 +113,6 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
           const delay = retryDelays[retryIndex++];
           setTimeout(attempt, delay);
         });
-    const checkPreview = async () => {
-      const dbBlob = await getPreviewForVideo(video);
-      if (dbBlob && active) {
-        setBlob(dbBlob);
-      }
     };
 
     attempt();
@@ -138,7 +133,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
   useEffect(() => {
     if (!blob) return;
     const url = URL.createObjectURL(blob);
-    setPreviewUrl(url);
+    setPreviewBlob(url);
     return () => { URL.revokeObjectURL(url); };
   }, [blob]);
 
@@ -153,7 +148,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
     // Check if it exists in the database (may have been written since mount)
     const blob = await getPreviewForVideo(video);
     if (blob) {
-      setPreviewBlob(URL.createObjectURL(blob));
+      setBlob(blob);
       return;
     }
 
@@ -181,7 +176,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
             const poll = setInterval(async () => {
                 const retryBlob = await getPreviewForVideo(video);
                 if (retryBlob) {
-                    setPreviewBlob(URL.createObjectURL(retryBlob));
+                    setBlob(retryBlob);
                     setIsProcessing(false);
                     clearInterval(poll);
                 }
@@ -211,7 +206,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
         // The play/pause is driven by the isHovering useEffect above.
         <video
           ref={videoRef}
-          src={previewUrl}
+          src={previewBlob}
           className="w-full h-full object-cover"
           muted
           loop
@@ -238,7 +233,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
           <Icons.LoaderIcon className="text-vault-accent animate-spin" size={20} />
         </div>
       ) : (
-        !previewUrl && isHovering && (
+        !previewBlob && isHovering && (
           <div className="absolute bottom-2 left-2 bg-black/60 text-[8px] text-white px-1 rounded uppercase tracking-tighter">
             Processing...
           </div>
