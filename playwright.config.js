@@ -13,7 +13,6 @@ export default defineConfig({
     },
     projects: [
         { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
-        // Uncomment to add Chromium:
-        // { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+        { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
     ],
 });

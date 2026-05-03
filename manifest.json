@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "VaultWares — Vault Central",
+  "name": "VaultWares - Vault Central",
   "short_name": "Vault Central",
   "version": "3.2.0",
   "description": "A privacy-first video vault. Save and revisit favorite videos from around the web without hidden tracking.",
@@ -26,7 +26,7 @@
     "<all_urls>"
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval' blob: https://unpkg.com; connect-src 'self' https://unpkg.com https://test-videos.co.uk; object-src 'self'"
   },
   "action": {
     "default_title": "Open Vault Central",
@@ -45,9 +45,7 @@
     "128": "icons/icon128.png"
   },
   "background": {
-    "scripts": ["background/scripts/background.js"],
-    "service_worker": "background/scripts/background.js",
-    "type": "module"
+    "service_worker": "background-worker.js"
   },
   "content_scripts": [
     {
