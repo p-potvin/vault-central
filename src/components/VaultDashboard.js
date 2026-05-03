@@ -19,6 +19,14 @@ const domainCache = new Map();
 // the locale formatter on every call. Using `Intl.DateTimeFormat` prevents this overhead.
 const dateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+
+// ⚡ BOLT OPTIMIZATION:
+// `String.prototype.localeCompare` is notoriously slow when called repeatedly inside `.sort()`.
+// Instantiating `Intl.Collator` once outside the render/sort loops and reusing `.compare` provides
+// massive performance gains when sorting strings, and avoids the heavy V8 instantiation cost
+// on every re-render or search filter update.
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
 async function getPreviewForVideo(video) {
     const primary = await getPreview(video.url);
     if (primary || !video.rawVideoSrc || video.rawVideoSrc === video.url) {
@@ -718,11 +726,6 @@ export const VaultDashboard = () => {
         });
     }, [items, effectiveSearch, searchField]);
     const sorted = useMemo(() => {
-        // ⚡ BOLT OPTIMIZATION:
-        // `String.prototype.localeCompare` is notoriously slow when called repeatedly inside `.sort()`.
-        // Instantiating `Intl.Collator` once outside the sort loop and reusing `.compare` provides
-        // massive performance gains (up to 100x faster) when sorting large collections of strings.
-        const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
         return [...filtered].sort((a, b) => {
             if (sortBy === 'DateDesc')
                 return b.timestamp - a.timestamp;
