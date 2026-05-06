@@ -796,22 +796,36 @@ export const VaultDashboard: React.FC = () => {
     }
   };
 
+  // ⚡ BOLT OPTIMIZATION:
+  // Hoisting `.toLowerCase()` conversion out of the filter loop avoids O(N) redundant
+  // string instantiations on every keystroke during live searches.
+  const searchableValues = useMemo(() => {
+    return items.map(item => {
+      const targetValue = item[searchField];
+      if (targetValue === null || targetValue === undefined) return null;
+      if (Array.isArray(targetValue)) {
+        return targetValue.map(v => v.toString().toLowerCase());
+      }
+      return targetValue.toString().toLowerCase();
+    });
+  }, [items, searchField]);
+
   const filtered = useMemo(() => {
     if (!effectiveSearch) return items;
 
     const searchStr = effectiveSearch.toLowerCase();
 
-    return items.filter(f => {
-      const targetValue = f[searchField];
-      if (targetValue === null || targetValue === undefined) return false;
+    return items.filter((_, index) => {
+      const targetValue = searchableValues[index];
+      if (!targetValue) return false;
       
       if (Array.isArray(targetValue)) {
-        return targetValue.some(v => v.toString().toLowerCase().includes(searchStr));
+        return targetValue.some(v => v.includes(searchStr));
       }
       
-      return targetValue.toString().toLowerCase().includes(searchStr);
+      return targetValue.includes(searchStr);
     });
-  }, [items, effectiveSearch, searchField]);
+  }, [items, effectiveSearch, searchableValues]);
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {

@@ -22,3 +22,7 @@
 **Learning:** Repetitive string concatenation (`binary += chunk`) inside a loop for large data payloads (like Blob to Base64 conversion) causes an O(N^2) memory reallocation overhead in V8.
 **Action:** Use an array to collect chunks (`chunks.push(chunk)`) and call `.join('')` at the end to assemble the final string, significantly reducing memory footprint and improving execution time.
 ## 2026-05-03 - [Avoid lockfile side-effects on npm install]\n**Learning:** Running `npm install <package>` to resolve missing testing dependencies or binaries implicitly causes NPM to update and write to `package-lock.json`.\n**Action:** ALWAYS run `git checkout -- package.json package-lock.json` after installing temporary dependencies for testing purposes to avoid uninstructed lockfile commits.
+
+## 2024-05-06 - [React Search Filter Performance Pattern]
+**Learning:** During live search filtering in large lists (like `VaultDashboard`), executing `toLowerCase()` inside the `.filter()` loop array creates a significant O(N) performance bottleneck because of synchronous redundant string instantiations on every single keystroke.
+**Action:** Always hoist string conversions (like `toLowerCase`) out of filter loops. For React lists, use `useMemo` to pre-compute an array of lowercased target values that maps 1:1 to the original items array, then check `precomputedValues[index].includes(searchStr)` inside the filter loop.
