@@ -26,3 +26,7 @@
 ## 2024-05-06 - [React Search Filter Performance Pattern]
 **Learning:** During live search filtering in large lists (like `VaultDashboard`), executing `toLowerCase()` inside the `.filter()` loop array creates a significant O(N) performance bottleneck because of synchronous redundant string instantiations on every single keystroke.
 **Action:** Always hoist string conversions (like `toLowerCase`) out of filter loops. For React lists, use `useMemo` to pre-compute an array of lowercased target values that maps 1:1 to the original items array, then check `precomputedValues[index].includes(searchStr)` inside the filter loop.
+
+## 2024-05-06 - [WebM Capture via Canvas & MediaRecorder]
+**Learning:** Using FFmpeg WASM via an offscreen document or iframe to generate video thumbnails is slow, memory-intensive, and prone to CORS/timeout failures. Furthermore, offscreen documents are not universally supported (e.g., Firefox MV3).
+**Action:** Use native browser capabilities like `MediaRecorder` combined with `canvas.captureStream()` inside an injected tab script. Seeking through the video and drawing frames to the canvas allows for generating a fast, robust WebM preview without downloading the entire video or needing WASM.
