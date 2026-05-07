@@ -275,9 +275,27 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
 
                                             // Wait for seeked event or timeout
                                             await new Promise(r => {
-                                                const seeked = () => { video.removeEventListener('seeked', seeked); r(null); };
+                                                let finished = false;
+                                                let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+                                                const done = () => {
+                                                    if (finished) return;
+                                                    finished = true;
+                                                    video.removeEventListener('seeked', seeked);
+                                                    if (timeoutId !== null) {
+                                                        clearTimeout(timeoutId);
+                                                    }
+                                                    r(null);
+                                                };
+
+                                                const seeked = () => {
+                                                    done();
+                                                };
+
                                                 video.addEventListener('seeked', seeked);
-                                                setTimeout(r, 400);
+                                                timeoutId = setTimeout(() => {
+                                                    done();
+                                                }, 400);
                                             });
 
                                             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
