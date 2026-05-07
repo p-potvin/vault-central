@@ -715,7 +715,8 @@ export const VaultDashboard = () => {
     const searchableValues = useMemo(() => {
         return items.map(item => {
             const targetValue = item[searchField];
-            if (targetValue === null || targetValue === undefined) return null;
+            if (targetValue === null || targetValue === undefined)
+                return null;
             if (Array.isArray(targetValue)) {
                 return targetValue.map(v => v.toString().toLowerCase());
             }

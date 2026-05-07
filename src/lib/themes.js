@@ -1,12 +1,13 @@
 export const VAULT_THEMES = {
-    1: { id: 1, name: 'vintage-velvet', mode: 'light' },
-    2: { id: 2, name: 'cyberpunk-cinder', mode: 'dark' },
-    3: { id: 3, name: 'golden-slate', mode: 'dark' },
-    4: { id: 4, name: 'modern-monolith', mode: 'light' },
-    5: { id: 5, name: 'crimson-bloom', mode: 'dark' },
-    6: { id: 6, name: 'ocean-mist', mode: 'light' },
-    7: { id: 7, name: 'neon-void', mode: 'dark' },
+    1: { id: 1, name: 'golden-slate', mode: 'dark' },
+    2: { id: 2, name: 'codex-solarized-light-revisited', mode: 'light' },
+    3: { id: 3, name: 'cyberpunk-cinder', mode: 'dark' },
+    4: { id: 4, name: 'vintage-velvet', mode: 'light' },
+    5: { id: 5, name: 'modern-monolith', mode: 'light' },
+    6: { id: 6, name: 'neon-void', mode: 'dark' },
+    7: { id: 7, name: 'ocean-mist', mode: 'light' },
     8: { id: 8, name: 'royal-tangerine', mode: 'dark' },
-    9: { id: 9, name: 'amethyst-frost', mode: 'light' },
+    9: { id: 9, name: 'crimson-bloom', mode: 'dark' },
+    10: { id: 10, name: 'amethyst-frost', mode: 'light' },
 };
 export const getThemeClass = (id) => `vault-theme-${VAULT_THEMES[id]?.name || 'cyberpunk-cinder'}`;
