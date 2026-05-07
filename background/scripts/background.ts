@@ -260,10 +260,10 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
                                         recorder.start();
 
                                         const duration = (video.duration && !isNaN(video.duration) && video.duration > 0) ? video.duration : 60;
-                                        // Take 10 snapshots spaced evenly across the first 20% to 80% of the video
+                                        // Take 10 snapshots spaced evenly across 10% to 90% of the video
                                         const startOffset = duration * 0.1;
                                         const endOffset = duration * 0.9;
-                                        const segmentLength = (endOffset - startOffset) / 10;
+                                        const segmentLength = (endOffset - startOffset) / 9;
 
                                         // Play to make sure readyState is sufficiently advanced
                                         video.muted = true;
