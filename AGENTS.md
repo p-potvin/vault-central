@@ -1,25 +1,18 @@
-# Vault Central Global Instructions
+# vault-central
 
-This project is a browser extension for both Chrome AND Firefox, do not assume chrome settings only. In fact, prefer firefox-first development.
+> For company-wide rules, read `vaultwares-docs/AGENTS.md` first.
+
+## Repo-Specific Rules
+
+This project is a browser extension for both Chrome AND Firefox. Do not assume
+Chrome settings only. Prefer Firefox-first development.
 
 <!-- VAULT-THEMES-SUBMODULE:START -->
-## Vault Themes Submodule Rules
+## vault-themes Submodule
 
-This repository includes `vault-themes`. Before changing UI, branding, design
-systems, theme tokens, shared components, authentication UX, encrypted
-client-to-client communication UX, Figma-derived implementation, or agent/IDE
-instructions, read these stable root files:
-
+Before UI, branding, or token work, read:
 - `vault-themes/AGENTS.md`
 - `vault-themes/CONTEXT.md`
-
-When the submodule has the cleaned layout, also read:
-
-- `vault-themes/brand/brand-guide.md`
-- `vault-themes/brand/tokens/tokens.ts`
-
-Treat `vault-themes` as the shared VaultWares source of truth. Do not copy its
-rules into this repo unless a tool-specific file requires a short pointer.
 <!-- VAULT-THEMES-SUBMODULE:END -->
 
 ## 2026-05-06 - [WebM Capture via Canvas & MediaRecorder]
