@@ -228,6 +228,14 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
 
                             const captureWebmPreview = async (video: HTMLVideoElement): Promise<string | null> => {
                                 return new Promise(async (resolve) => {
+                                    let cleanup: (() => void) | null = null;
+                                    let resolved = false;
+                                    const finish = (value: string | null) => {
+                                        if (resolved) return;
+                                        resolved = true;
+                                        cleanup?.();
+                                        resolve(value);
+                                    };
                                     try {
                                         const canvas = document.createElement('canvas');
                                         canvas.width = 426;
@@ -236,6 +244,9 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
                                         if (!ctx) return resolve(null);
 
                                         const stream = canvas.captureStream(10); // 10 fps
+                                        cleanup = () => {
+                                            stream.getTracks().forEach((track) => track.stop());
+                                        };
                                         let recorder: MediaRecorder;
                                         try {
                                             recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
@@ -244,7 +255,7 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
                                                 recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
                                             } catch (e2) {
                                                 console.error("[VaultCentral] MediaRecorder setup failed:", e2);
-                                                return resolve(null);
+                                                return finish(null);
                                             }
                                         }
 
@@ -253,8 +264,16 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
                                         recorder.onstop = () => {
                                             const blob = new Blob(chunks, { type: 'video/webm' });
                                             const reader = new FileReader();
-                                            reader.onload = () => resolve(reader.result as string);
+                                            reader.onload = () => finish(reader.result as string);
+                                            reader.onerror = () => {
+                                                console.error("[VaultCentral] Failed to read WebM blob from FileReader.");
+                                                finish(null);
+                                            };
                                             reader.readAsDataURL(blob);
+                                        };
+                                        recorder.onerror = () => {
+                                            console.error("[VaultCentral] MediaRecorder encountered an error while recording.");
+                                            finish(null);
                                         };
 
                                         recorder.start();
@@ -303,10 +322,12 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
                                             await new Promise(r => setTimeout(r, 100));
                                         }
 
-                                        recorder.stop();
+                                        if (recorder.state !== 'inactive') {
+                                            recorder.stop();
+                                        }
                                     } catch (e) {
                                         console.error("[VaultCentral] captureWebmPreview failed:", e);
-                                        resolve(null);
+                                        finish(null);
                                     }
                                 });
                             };
