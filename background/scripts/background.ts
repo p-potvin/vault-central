@@ -158,9 +158,6 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
         };
 
         try {
-            const queryTabs = await browser.tabs.query({ active: true, currentWindow: true });
-            const prevActiveTabId = queryTabs.length > 0 ? queryTabs[0].id : undefined;
-
             const scraperTab = await browser.tabs.create({ url: targetUrl, active: false });
             logger.log("[doTabExtraction] Scraper tab created. tabId:", scraperTab.id, "windowId:", scraperTab.windowId, "| active: false (hidden tab)");
             
