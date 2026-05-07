@@ -32,24 +32,33 @@ function addHeartIndicator(el) {
     }
     const heart = document.createElement("div");
     heart.className = "vault-heart-indicator";
-    heart.innerHTML = `
-        <style>
-            .vault-heart-indicator svg {
-                width: 14px;
-                height: 14px;
-                background: #22c55e;
-                padding: 4px;
-                border-radius: 4px;
-                fill: white;
-                stroke: white;
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-            }
-            .vault-heart-indicator:hover svg {
-                border: 2px dashed white;
-                padding: 2px;
-            }
-        </style>
-        <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>`;
+    const svgNS = "http://www.w3.org/2000/svg";
+    const styleEl = document.createElement("style");
+    styleEl.textContent = `
+        .vault-heart-indicator svg {
+            width: 14px;
+            height: 14px;
+            background: #22c55e;
+            padding: 4px;
+            border-radius: 4px;
+            fill: white;
+            stroke: white;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .vault-heart-indicator:hover svg {
+            border: 2px dashed white;
+            padding: 2px;
+        }
+    `;
+    const svgEl = document.createElementNS(svgNS, "svg");
+    svgEl.setAttribute("viewBox", "0 0 24 24");
+    svgEl.setAttribute("fill", "currentColor");
+    svgEl.setAttribute("stroke", "none");
+    const pathEl = document.createElementNS(svgNS, "path");
+    pathEl.setAttribute("d", "M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z");
+    svgEl.appendChild(pathEl);
+    heart.appendChild(styleEl);
+    heart.appendChild(svgEl);
     Object.assign(heart.style, {
         position: "absolute",
         top: "4px",
@@ -121,15 +130,26 @@ function showVaultNotification(type, message, id) {
         error: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width: 18px; height: 18px; color: #ef4444; margin-right: 8px;"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>`,
         processing: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width: 18px; height: 18px; color: #3b82f6; margin-right: 8px; animation: vault-spin 1s linear infinite;"><style>@keyframes vault-spin { 100% { transform: rotate(360deg); } }</style><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>`
     };
-    el.innerHTML = `
-        <div style="display: flex; align-items: center;">
-            ${iconMap[type] || iconMap.error}
-            <span class="vault-notification-message" style="flex: 1;"></span>
-        </div>
-    `;
-    const messageEl = el.querySelector(".vault-notification-message");
-    if (messageEl)
-        messageEl.textContent = message.toUpperCase();
+    const container = document.createElement("div");
+    container.style.display = "flex";
+    container.style.alignItems = "center";
+
+    // Parse safely with text/html to properly handle SVG namespace
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(iconMap[type] || iconMap.error, "text/html");
+    const svgNode = doc.body.firstElementChild;
+    if (svgNode) {
+        container.appendChild(svgNode);
+    }
+
+    const messageSpan = document.createElement("span");
+    messageSpan.className = "vault-notification-message";
+    messageSpan.style.flex = "1";
+    messageSpan.textContent = message.toUpperCase();
+    container.appendChild(messageSpan);
+
+    // Replace children to mimic innerHTML clearing behavior
+    el.replaceChildren(container);
     const themeMap = {
         success: { bg: "#10b981", border: "#059669" },
         removed: { bg: "#f97316", border: "#ea580c" },
