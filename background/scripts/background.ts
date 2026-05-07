@@ -158,23 +158,11 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
         };
 
         try {
-            const queryTabs = await browser.tabs.query({ active: true, currentWindow: true });
-            const prevActiveTabId = queryTabs.length > 0 ? queryTabs[0].id : undefined;
-
-            const scraperTab = await browser.tabs.create({ url: targetUrl, active: true });
-            logger.log("[doTabExtraction] Scraper tab created. tabId:", scraperTab.id, "windowId:", scraperTab.windowId, "| active: true (to bypass media throttle)");
+            const scraperTab = await browser.tabs.create({ url: targetUrl, active: false });
+            logger.log("[doTabExtraction] Scraper tab created. tabId:", scraperTab.id, "windowId:", scraperTab.windowId, "| active: false (hidden tab)");
             
             scraperTabId = scraperTab.id;
             scraperWindowId = scraperTab.windowId;
-
-            if (prevActiveTabId && scraperTabId !== prevActiveTabId) {
-                setTimeout(async () => {
-                    try {
-                        logger.log("[doTabExtraction] Flipping focus back to original tab:", prevActiveTabId);
-                        await browser.tabs.update(prevActiveTabId, { active: true });
-                    } catch(e) {}
-                }, 50);
-            }
 
             globalTimeoutId = setTimeout(() => {
                 logger.warn("[doTabExtraction] Global timeout reached after 35s. latestM3u8:", latestM3u8);
@@ -238,26 +226,110 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
                         func: async () => {
                             const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-                            const captureJpegFrame = async (video: HTMLVideoElement): Promise<string | null> => {
-                                try {
-                                    if (video.currentTime === 0) {
-                                        video.currentTime = 5;
-                                        await new Promise((r) => {
-                                            const seeked = () => { video.removeEventListener('seeked', seeked); r(null); };
-                                            video.addEventListener('seeked', seeked);
-                                            setTimeout(r, 1000);
-                                        });
+                            const captureWebmPreview = async (video: HTMLVideoElement): Promise<string | null> => {
+                                return new Promise(async (resolve) => {
+                                    let cleanup: (() => void) | null = null;
+                                    let resolved = false;
+                                    const finish = (value: string | null) => {
+                                        if (resolved) return;
+                                        resolved = true;
+                                        cleanup?.();
+                                        resolve(value);
+                                    };
+                                    try {
+                                        const canvas = document.createElement('canvas');
+                                        canvas.width = 426;
+                                        canvas.height = 240;
+                                        const ctx = canvas.getContext('2d');
+                                        if (!ctx) return resolve(null);
+
+                                        const stream = canvas.captureStream(10); // 10 fps
+                                        cleanup = () => {
+                                            stream.getTracks().forEach((track) => track.stop());
+                                        };
+                                        let recorder: MediaRecorder;
+                                        try {
+                                            recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
+                                        } catch (e) {
+                                            try {
+                                                recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+                                            } catch (e2) {
+                                                console.error("[VaultCentral] MediaRecorder setup failed:", e2);
+                                                return finish(null);
+                                            }
+                                        }
+
+                                        const chunks: Blob[] = [];
+                                        recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+                                        recorder.onstop = () => {
+                                            const blob = new Blob(chunks, { type: 'video/webm' });
+                                            const reader = new FileReader();
+                                            reader.onload = () => finish(reader.result as string);
+                                            reader.onerror = () => {
+                                                console.error("[VaultCentral] Failed to read WebM blob from FileReader.");
+                                                finish(null);
+                                            };
+                                            reader.readAsDataURL(blob);
+                                        };
+                                        recorder.onerror = () => {
+                                            console.error("[VaultCentral] MediaRecorder encountered an error while recording.");
+                                            finish(null);
+                                        };
+
+                                        recorder.start();
+
+                                        const duration = (video.duration && !isNaN(video.duration) && video.duration > 0) ? video.duration : 60;
+                                        // Take 10 snapshots spaced evenly across 10% to 90% of the video
+                                        const startOffset = duration * 0.1;
+                                        const endOffset = duration * 0.9;
+                                        const segmentLength = (endOffset - startOffset) / 9;
+
+                                        // Play to make sure readyState is sufficiently advanced
+                                        video.muted = true;
+                                        await video.play().catch(() => {});
+                                        video.pause();
+
+                                        for (let i = 0; i < 10; i++) {
+                                            video.currentTime = startOffset + (i * segmentLength);
+
+                                            // Wait for seeked event or timeout
+                                            await new Promise(r => {
+                                                let finished = false;
+                                                let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+                                                const done = () => {
+                                                    if (finished) return;
+                                                    finished = true;
+                                                    video.removeEventListener('seeked', seeked);
+                                                    if (timeoutId !== null) {
+                                                        clearTimeout(timeoutId);
+                                                    }
+                                                    r(null);
+                                                };
+
+                                                const seeked = () => {
+                                                    done();
+                                                };
+
+                                                video.addEventListener('seeked', seeked);
+                                                timeoutId = setTimeout(() => {
+                                                    done();
+                                                }, 400);
+                                            });
+
+                                            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                            // Give stream a moment to encode frame
+                                            await new Promise(r => setTimeout(r, 100));
+                                        }
+
+                                        if (recorder.state !== 'inactive') {
+                                            recorder.stop();
+                                        }
+                                    } catch (e) {
+                                        console.error("[VaultCentral] captureWebmPreview failed:", e);
+                                        finish(null);
                                     }
-                                    const canvas = document.createElement('canvas');
-                                    canvas.width = video.videoWidth || 640;
-                                    canvas.height = video.videoHeight || 360;
-                                    const ctx = canvas.getContext('2d');
-                                    if (ctx) {
-                                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                                        return canvas.toDataURL('image/jpeg', 0.5);
-                                    }
-                                } catch (e) { return null; }
-                                return null;
+                                });
                             };
 
                             const clickAllPlayers = async () => {
@@ -322,8 +394,8 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
                                 }
 
                                 if (bestVideoEl) {
-                                    const jpeg = await captureJpegFrame(bestVideoEl);
-                                    if (jpeg) metadata.thumbnail = jpeg;
+                                    const webm = await captureWebmPreview(bestVideoEl);
+                                    if (webm) metadata.thumbnail = webm;
                                 }
 
                                 return { src: bestSrc, metadata };

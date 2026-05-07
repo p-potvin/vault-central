@@ -356,6 +356,7 @@ export const VaultDashboard = () => {
     const [pages, setPages] = useState({});
     const [sectionLimit, setSectionLimit] = useState(50);
     const mainRef = useRef(null);
+    const scrollThrottle = useRef(false);
     // Video Player Modal states
     const [playingVideo, setPlayingVideo] = useState(null);
     const [videoError, setVideoError] = useState(false);
@@ -702,11 +703,18 @@ export const VaultDashboard = () => {
     };
     // Infinite scroll
     const handleScroll = () => {
-        if (!mainRef.current || isolatedGroup)
+        if (!mainRef.current || isolatedGroup || scrollThrottle.current)
             return;
         const { scrollTop, scrollHeight, clientHeight } = mainRef.current;
         if (scrollHeight - scrollTop <= clientHeight * 1.5) {
+            // ⚡ BOLT OPTIMIZATION:
+            // Throttling the infinite scroll handler prevents rapid, redundant state updates
+            // and main-thread blocking when users scroll quickly near the bottom of the list.
+            scrollThrottle.current = true;
             setSectionLimit(prev => prev + 20); // soft load 20 more
+            setTimeout(() => {
+                scrollThrottle.current = false;
+            }, 300);
         }
     };
     // ⚡ BOLT OPTIMIZATION:
