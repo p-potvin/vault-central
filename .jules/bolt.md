@@ -26,3 +26,7 @@
 ## 2024-05-06 - [React Search Filter Performance Pattern]
 **Learning:** During live search filtering in large lists (like `VaultDashboard`), executing `toLowerCase()` inside the `.filter()` loop array creates a significant O(N) performance bottleneck because of synchronous redundant string instantiations on every single keystroke.
 **Action:** Always hoist string conversions (like `toLowerCase`) out of filter loops. For React lists, use `useMemo` to pre-compute an array of lowercased target values that maps 1:1 to the original items array, then check `precomputedValues[index].includes(searchStr)` inside the filter loop.
+
+## 2024-05-24 - [Throttling Scroll Handlers]
+**Learning:** Adding an infinite scroll handler without throttling can cause dozens of sequential state updates in `VaultDashboard` when the user scrolls near the bottom trigger zone, blocking the main thread.
+**Action:** Always add a simple `useRef` throttle (e.g., 300ms) to any scroll-based `setSectionLimit` logic to gracefully debounce DOM recalculations.

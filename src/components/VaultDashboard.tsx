@@ -426,6 +426,7 @@ export const VaultDashboard: React.FC = () => {
   const [pages, setPages] = useState<Record<string, number>>({});
   const [sectionLimit, setSectionLimit] = useState(50);
   const mainRef = useRef<HTMLElement>(null);
+  const scrollThrottle = useRef(false);
 
   // Video Player Modal states
   const [playingVideo, setPlayingVideo] = useState<VideoData | null>(null);
@@ -789,10 +790,17 @@ export const VaultDashboard: React.FC = () => {
 
   // Infinite scroll
   const handleScroll = () => {
-    if (!mainRef.current || isolatedGroup) return;
+    if (!mainRef.current || isolatedGroup || scrollThrottle.current) return;
     const { scrollTop, scrollHeight, clientHeight } = mainRef.current;
     if (scrollHeight - scrollTop <= clientHeight * 1.5) {
+      // ⚡ BOLT OPTIMIZATION:
+      // Throttling the infinite scroll handler prevents rapid, redundant state updates
+      // and main-thread blocking when users scroll quickly near the bottom of the list.
+      scrollThrottle.current = true;
       setSectionLimit(prev => prev + 20); // soft load 20 more
+      setTimeout(() => {
+        scrollThrottle.current = false;
+      }, 300);
     }
   };
 
