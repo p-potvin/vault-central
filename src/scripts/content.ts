@@ -72,24 +72,42 @@ function addHeartIndicator(el: HTMLElement) {
     el.appendChild(heart);
 }
 
+// ⚡ BOLT OPTIMIZATION: Cache saved URLs to prevent redundant extension storage reads
+// and array iterations on every DOM mutation.
+let cachedSavedUrls: Set<string> | null = null;
+
+// Listen for storage changes to keep cache fresh
+if (browser.storage && browser.storage.onChanged) {
+    browser.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName === 'local' && changes[STORAGE_KEYS.SAVED_VIDEOS]) {
+            const newValue = changes[STORAGE_KEYS.SAVED_VIDEOS].newValue || [];
+            cachedSavedUrls = new Set(newValue.map((v: VideoData) => v.url));
+            console.log(`${LOG_PREFIX} Storage changed. Updated cachedSavedUrls count: ${cachedSavedUrls.size}`);
+            highlightVaultItems();
+        }
+    });
+}
+
 /**
  * Scans the page for saved videos and marks them
  */
 async function highlightVaultItems() {
     console.log(`${LOG_PREFIX} highlightVaultItems: scanning page for saved URLs...`);
     try {
-        const storage = await browser.storage.local.get(STORAGE_KEYS.SAVED_VIDEOS);
-        const savedVideos = (storage[STORAGE_KEYS.SAVED_VIDEOS] || []) as VideoData[];
-        console.log(`${LOG_PREFIX} highlightVaultItems: found ${savedVideos.length} saved items in vault.`);
+        if (!cachedSavedUrls) {
+            const storage = await browser.storage.local.get(STORAGE_KEYS.SAVED_VIDEOS);
+            const savedVideos = (storage[STORAGE_KEYS.SAVED_VIDEOS] || []) as VideoData[];
+            cachedSavedUrls = new Set(savedVideos.map((v: VideoData) => v.url));
+            console.log(`${LOG_PREFIX} highlightVaultItems: populated cache with ${cachedSavedUrls.size} items.`);
+        }
         
-        if (savedVideos.length === 0) return;
+        if (cachedSavedUrls.size === 0) return;
 
-        const savedUrls = new Set(savedVideos.map((v: VideoData) => v.url));
         const links = document.querySelectorAll("a");
         let marked = 0;
 
         links.forEach(link => {
-            if (savedUrls.has(link.href)) {
+            if (cachedSavedUrls && cachedSavedUrls.has(link.href)) {
                 addHeartIndicator(link as HTMLElement);
                 marked++;
             }
