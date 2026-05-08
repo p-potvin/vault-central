@@ -446,7 +446,7 @@ function attemptExtraction(target, notificationId) {
     }).catch((e) => {
         console.error(`${LOG_PREFIX} attemptExtraction: Message passing error:`, e);
         showVaultNotification('error', 'Connection to Vault lost', notificationId);
-        return { success: false, message: e.message || 'Connection to Vault lost' };
+        return { success: false, message: 'Connection to Vault lost' };
     });
 }
 browser.runtime.onMessage.addListener((request, sender) => {

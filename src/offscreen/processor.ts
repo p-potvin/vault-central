@@ -47,7 +47,7 @@ async function handleGeneratePreviewProcess(message: any) {
     return { success: false, error: 'Preview generation returned no blob' };
   } catch (err) {
     console.error('[VaultProcessor] Preview generation failed:', err);
-    return { success: false, error: String(err) };
+    return { success: false, error: 'Preview generation failed' };
   }
 }
 

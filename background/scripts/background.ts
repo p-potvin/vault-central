@@ -87,7 +87,7 @@ async function runAutomaticBackup() {
         logger.log("[backup] Automatic backup complete:", result);
     } catch (err) {
         logger.error("[backup] Automatic backup failed:", err);
-        await recordBackupResult('error', err instanceof Error ? err.message : String(err));
+        await recordBackupResult('error', 'Backup operation failed');
     }
 }
 
@@ -589,7 +589,7 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
         return { success: true, data };
     } catch (err: any) {
         logger.error("[runCapturePipeline] Unhandled error:", err);
-        return { success: false, message: err.message };
+        return { success: false, message: 'Capture pipeline failed' };
     }
 }
 
@@ -659,18 +659,27 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
     if (request.action === "run_full_backup") {
         return downloadFullVaultBackup('manual')
             .then(result => result)
-            .catch(err => ({ success: false, error: err instanceof Error ? err.message : String(err) }));
+            .catch(err => {
+                logger.error("[manual_backup] failed:", err);
+                return { success: false, error: 'Backup operation failed' };
+            });
     }
     if (request.action === "get_backup_settings") {
         return getBackupSettings()
             .then(settings => ({ success: true, settings }))
-            .catch(err => ({ success: false, error: err instanceof Error ? err.message : String(err) }));
+            .catch(err => {
+                logger.error("[get_backup_settings] failed:", err);
+                return { success: false, error: 'Failed to retrieve backup settings' };
+            });
     }
     if (request.action === "save_backup_settings") {
         return saveBackupSettings(request.settings)
             .then(scheduleDailyBackupAlarm)
             .then(() => ({ success: true }))
-            .catch(err => ({ success: false, error: err instanceof Error ? err.message : String(err) }));
+            .catch(err => {
+                logger.error("[save_backup_settings] failed:", err);
+                return { success: false, error: 'Failed to save backup settings' };
+            });
     }
     logger.warn("[onMessage] Unknown action received:", request.action);
     return undefined;

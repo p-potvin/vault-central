@@ -122,7 +122,7 @@ export async function downloadFullVaultBackup(source) {
         };
     }
     catch (err) {
-        await recordBackupResult('error', err instanceof Error ? err.message : String(err));
+        await recordBackupResult('error', 'Backup operation failed');
         throw err;
     }
 }

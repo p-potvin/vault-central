@@ -36,7 +36,7 @@ async function handleGeneratePreviewProcess(message) {
     }
     catch (err) {
         console.error('[VaultProcessor] Preview generation failed:', err);
-        return { success: false, error: String(err) };
+        return { success: false, error: 'Preview generation failed' };
     }
 }
 async function processVideoPreview(url, duration) {
