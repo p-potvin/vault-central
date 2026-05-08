@@ -1,0 +1,4 @@
+## 2023-10-27 - [XSS vulnerability in notification innerHTML]
+**Vulnerability:** The `src/scripts/content.ts` (and `.js`) files use `el.innerHTML` and string interpolation to construct notifications, including SVGs. While `message.toUpperCase()` uses `textContent`, the initial `innerHTML` with `type` from the map is somewhat safe but we can improve security overall by replacing `innerHTML` with DOM creation or `DOMPurify` to follow the rule "Security & Coding Convention: Avoid using innerHTML with dynamic strings".
+**Learning:** Hardcoded innerHTML structures for UI components in content scripts can be targeted if any dynamic part slips into the template string or if malicious SVG is provided.
+**Prevention:** Always construct DOM elements safely using `document.createElement` and `Element.append` or `.textContent`, rather than setting `.innerHTML`.
