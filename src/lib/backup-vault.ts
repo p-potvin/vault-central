@@ -193,7 +193,10 @@ export async function downloadFullVaultBackup(source: BackupSource) {
       previews: backup.previews.length
     };
   } catch (err) {
-    await recordBackupResult('error', err instanceof Error ? err.message : String(err));
+    // Real error rethrows below for the caller to log; the persisted state
+    // gets a generic message so it isn't surfaced through getBackupSettings.
+    console.error('[backup-vault] downloadFullVaultBackup failed:', err);
+    await recordBackupResult('error', 'Backup operation failed');
     throw err;
   }
 }
