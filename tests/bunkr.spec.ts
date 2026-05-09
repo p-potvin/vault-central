@@ -2,10 +2,11 @@ import { test, expect } from './extension.fixture';
 import { injectFirefoxContentScript, openFirefoxMockPage, readSavedVideos } from './firefox-utils';
 
 test.describe('Bunkr Video Capture', () => {
-  test('should capture video source after navigating from an album page', async ({ page, extensionBaseUrl }) => {
+  test('should capture video source after navigating from an album page', async ({ page, firefoxHarness }) => {
+    test.setTimeout(60000);
     await openFirefoxMockPage(
       page,
-      extensionBaseUrl,
+      firefoxHarness,
       `
         <main>
           <a id="album-item" href="https://vaultwares.test/__tests__/bunkr-item">Album Item</a>
@@ -18,21 +19,20 @@ test.describe('Bunkr Video Capture', () => {
 
     await openFirefoxMockPage(
       page,
-      extensionBaseUrl,
+      firefoxHarness,
       `
         <main>
           <video id="bunkr-video" controls src="https://cdn.example.test/bunkr/final-video.webm"></video>
         </main>
       `,
     );
-    await injectFirefoxContentScript(page, extensionBaseUrl);
 
     await page.locator('#bunkr-video').hover();
     await page.keyboard.press('Alt+X');
 
+    await expect(page.locator('.vault-notification-message')).toContainText('ADDED TO VAULT', { timeout: 5000 });
+    await expect.poll(() => readSavedVideos(page), { timeout: 50000, intervals: [500, 2000, 5000] }).toHaveLength(1);
     const savedVideos = await readSavedVideos(page);
-    expect(savedVideos).toHaveLength(1);
     expect(savedVideos[0].url).toBe('https://cdn.example.test/bunkr/final-video.webm');
-    await expect(page.locator('.vault-notification-message')).toContainText('ADDED TO VAULT');
   });
 });

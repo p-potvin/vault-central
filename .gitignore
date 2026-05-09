@@ -16,3 +16,6 @@ vault_central.zip
 package-lock.json
 dummy/*
 .playwright-user-data*
+tests/fixtures/*.xpi
+tests/fixtures/ublock-origin/
+node_modules

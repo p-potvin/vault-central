@@ -69,6 +69,8 @@
     "@ffmpeg/core": "^0.12.6",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
+    "@noble/hashes": "^2.2.0",
+    "@noble/post-quantum": "^0.6.1",
     "@tanstack/react-query": "^5.95.0",
     "clsx": "^2.1.1",
     "crypto-js": "^4.2.0",

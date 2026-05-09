@@ -452,14 +452,20 @@ function getBestTarget(element: HTMLElement | null): { url: string, isDirectVide
     return result;
 }
 
-function startCaptureFlow() {    
+function startCaptureFlow() {
     const target = getBestTarget(lastHoveredElement);
     console.log(`${LOG_PREFIX} startCaptureFlow: resolved target URL:`, target.url, "| isDirectVideo:", target.isDirectVideo, "| fallbackThumbnail present:", !!target.fallbackThumbnail, "(len:", target.fallbackThumbnail?.length ?? 0, ")");
 
-    const notificationId = `capture-${Date.now()}`;
-    showVaultNotification("processing", `Infiltrating: ${target.localMeta.title?.substring(0, 20)}...`, notificationId);
+    // Optimistic notification: once a candidate link is locked in, the chance
+    // of a fatal pipeline failure is low. We tell the user "saved" immediately
+    // and let the heavy work run detached. If the pipeline genuinely fails
+    // later, attemptExtraction surfaces a separate error toast.
+    const titleHint = (target.localMeta.title?.substring(0, 28))
+        || target.url.split('/').pop()?.substring(0, 28)
+        || 'Item';
+    showVaultNotification('success', `Added to Vault: ${titleHint}`);
 
-    attemptExtraction(target, notificationId);
+    void attemptExtraction(target);
 }
 
 export interface TargetPayload {
@@ -475,7 +481,7 @@ export interface TargetPayload {
 
 type CaptureResponse = { success?: boolean; message?: string };
 
-function attemptExtraction(target: TargetPayload, notificationId?: string): Promise<CaptureResponse> {
+function attemptExtraction(target: TargetPayload): Promise<CaptureResponse> {
     console.log(`${LOG_PREFIX} attemptExtraction: url=${target.url} | isDirectVideo=${target.isDirectVideo} | thumbnail present=${!!target.fallbackThumbnail} (len=${target.fallbackThumbnail?.length ?? 0})`);
     
     const isLocalCapture = target.url === window.location.href || target.isDirectVideo;
@@ -503,6 +509,12 @@ function attemptExtraction(target: TargetPayload, notificationId?: string): Prom
 
     const payload = {
         url: target.url,
+        // Origin URL = page the user fired Alt+X from. The decision tree
+        // distinguishes "scraper tab landed on the same page" (1b — duplicate)
+        // from "landed somewhere new". When duplicate, origin metadata is
+        // already canonical so the scraper just needs the source URL/preview.
+        originUrl: window.location.href,
+        originTitle: document.title || '',
         thumbnail: target.fallbackThumbnail || "",
         ...metaDataPayload
     };
@@ -515,20 +527,22 @@ function attemptExtraction(target: TargetPayload, notificationId?: string): Prom
     }).then((res: unknown) => {
         const response = res as CaptureResponse | undefined;
         console.log(`${LOG_PREFIX} attemptExtraction: background responded:`, response);
+        // The optimistic success toast was already shown by startCaptureFlow.
+        // Only surface a NEW error toast on actual failure — and only if it's
+        // not the harmless "already saved" duplicate path.
         if (!response) {
-            showVaultNotification('error', 'Extension background offline', notificationId);
+            showVaultNotification('error', 'Capture failed: background unavailable');
             return { success: false, message: 'Extension background offline' };
         }
         if (response.success) {
-            showVaultNotification('success', 'Added to Vault', notificationId);
             highlightVaultItems();
-        } else {
-            showVaultNotification('error', response.message || 'Failed to capture', notificationId);
+        } else if (response.message && !/already in vault/i.test(response.message)) {
+            showVaultNotification('error', `Capture failed: ${response.message}`);
         }
         return response;
     }).catch((e: Error) => {
         console.error(`${LOG_PREFIX} attemptExtraction: Message passing error:`, e);
-        showVaultNotification('error', 'Connection to Vault lost', notificationId);
+        showVaultNotification('error', 'Capture failed: connection lost');
         return { success: false, message: e.message || 'Connection to Vault lost' };
     });
 }
@@ -536,11 +550,18 @@ function attemptExtraction(target: TargetPayload, notificationId?: string): Prom
 browser.runtime.onMessage.addListener((request: any, sender: any) => {
     console.log(`${LOG_PREFIX} onMessage: received action="${request.action || request.type}"`);
     if (request.action === "ping") return Promise.resolve(true);
-    
+
     if (request.action === "extract_video") {
         console.log(`${LOG_PREFIX} onMessage: extract_video requested. Forcing extraction from DOM...`);
         const target = getBestTarget(lastHoveredElement);
         return attemptExtraction(target);
+    }
+
+    if (request.action === "capture_failed") {
+        // Background reports a fatal capture failure. Surface as error toast so
+        // the user knows the optimistic success was wrong.
+        showVaultNotification('error', `Capture failed: ${request.message || 'unknown error'}`);
+        return Promise.resolve(true);
     }
 
     if (request.type === "capture-video" || request.action === "capture-video") {
@@ -550,6 +571,53 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
     }
     return undefined;
 });
+
+// Test bridge: gated by the ?__vaultTest=1 URL marker that the Playwright fixture sets.
+// Allows the test page (main world) to talk to the extension via window.postMessage.
+// Inert on every other page — does not run unless the marker is present.
+if (location.search.includes('__vaultTest=1')) {
+    window.addEventListener('message', async (event) => {
+        if (event.source !== window) return;
+        const msg = event.data;
+        if (!msg || msg.__vaultTest !== 'request' || typeof msg.id !== 'string') return;
+        const reply = (payload: any, error?: string) => {
+            window.postMessage({ __vaultTest: 'response', id: msg.id, payload, error }, '*');
+        };
+        try {
+            switch (msg.action) {
+                case 'storage.get': {
+                    const result = await browser.storage.local.get(msg.key);
+                    reply(result[msg.key]);
+                    break;
+                }
+                case 'storage.set': {
+                    await browser.storage.local.set({ [msg.key]: msg.value });
+                    reply(true);
+                    break;
+                }
+                case 'runtime.send': {
+                    const res = await browser.runtime.sendMessage(msg.payload);
+                    reply(res);
+                    break;
+                }
+                case 'runtime.getURL': {
+                    reply(browser.runtime.getURL(msg.path || ''));
+                    break;
+                }
+                case 'tabs.query': {
+                    const tabs = await browser.tabs.query(msg.query || {});
+                    reply(tabs.map(t => ({ id: t.id, url: t.url, active: t.active })));
+                    break;
+                }
+                default:
+                    reply(null, `unknown action: ${msg.action}`);
+            }
+        } catch (e: any) {
+            reply(null, e?.message || String(e));
+        }
+    });
+    console.log(`${LOG_PREFIX} Test bridge active.`);
+}
 
 const observer = new MutationObserver(() => {
     if (mutationTimeout) clearTimeout(mutationTimeout);

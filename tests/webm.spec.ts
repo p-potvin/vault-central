@@ -5,10 +5,8 @@ test.describe('WebM Preview Generation', () => {
     // FFmpeg WASM can be slow
     test.setTimeout(90000);
 
-    // This test requires a real browser environment.
-    // if (test.info().project.name !== 'chromium') {
-    //   test.skip();
-    // }
+    // This test uses chrome.* APIs and is Chromium-specific.
+    test.skip(test.info().project.name !== 'chromium', 'Chromium-only — uses chrome.* API directly');
 
     const videoUrl = 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4';
     
