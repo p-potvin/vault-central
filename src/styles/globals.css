@@ -105,29 +105,103 @@
     --vault-accent-hover: #9B30FF;
   }
 
+  /* Motion system — keep these tight and consistent across the app.
+   *
+   * Durations are intentionally short (110–220ms). The "soft" curve
+   * decelerates through ~80% of its travel and lands quietly; never
+   * overshoots. No bounce/spring. Animations should be opacity- and
+   * subtle-transform-only to avoid layout shift.
+   */
+  :root {
+    --vault-ease-soft: cubic-bezier(0.16, 1, 0.3, 1);
+    --vault-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+    --vault-dur-fast: 110ms;
+    --vault-dur-base: 180ms;
+    --vault-dur-slow: 280ms;
+
+    --vault-radius-sm: 6px;
+    --vault-radius-md: 10px;
+    --vault-radius-lg: 14px;
+
+    --vault-shadow-resting:
+      0 0 0 1px rgb(0 0 0 / 0.04),
+      0 1px 2px -1px rgb(0 0 0 / 0.06),
+      0 4px 12px -6px rgb(0 0 0 / 0.10);
+    --vault-shadow-hover:
+      0 0 0 1px rgb(0 0 0 / 0.06),
+      0 2px 4px -2px rgb(0 0 0 / 0.10),
+      0 12px 28px -10px rgb(0 0 0 / 0.18);
+  }
+
   body {
     @apply bg-vault-bg text-vault-text antialiased;
     font-family: var(--vault-font);
-    transition: background-color 0.4s ease, color 0.4s ease;
+    /* Themes swap many surface colors; cross-fade at the body level so
+     * children inherit a single timing source instead of staggering. */
+    transition:
+      background-color var(--vault-dur-slow) var(--vault-ease-soft),
+      color var(--vault-dur-slow) var(--vault-ease-soft);
+    font-feature-settings: "ss01" on, "cv11" on;
+    letter-spacing: -0.005em;
+  }
+
+  /* Selection should match the brand accent without being loud. */
+  ::selection {
+    background-color: color-mix(in srgb, var(--vault-accent) 28%, transparent);
+    color: var(--vault-text);
+  }
+
+  /* Visible focus ring is part of the accessibility contract. Soft accent
+   * ring instead of the default dotted/blue UA outline. */
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--vault-bg), 0 0 0 4px color-mix(in srgb, var(--vault-accent) 65%, transparent);
+    border-radius: var(--vault-radius-sm);
   }
 }
 
-/* Glassmorphism subtle sleek components */
+/* Card surface. Hover lifts via shadow only (no translate) — keeps the grid
+ * stable as the cursor moves across many cards. */
 .vault-card {
-  @apply border border-vault-border rounded-lg overflow-hidden transition-all duration-300 backdrop-blur-md;
+  @apply border border-vault-border overflow-hidden;
   background-color: var(--vault-card-bg);
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  border-radius: var(--vault-radius-md);
+  box-shadow: var(--vault-shadow-resting);
+  transition:
+    box-shadow var(--vault-dur-base) var(--vault-ease-soft),
+    border-color var(--vault-dur-base) var(--vault-ease-soft),
+    background-color var(--vault-dur-base) var(--vault-ease-soft);
 }
 
 .vault-card:hover {
-  @apply shadow-md;
-  border-color: var(--vault-accent);
-  transform: translateY(-2px);
+  box-shadow: var(--vault-shadow-hover);
+  border-color: color-mix(in srgb, var(--vault-accent) 35%, var(--vault-border));
 }
 
-/* Vault button base styles */
+/* Button base. No uppercase; relies on weight and a quiet hover shift
+ * (background tint, not full inversion). Active state nudges down 1px to
+ * give a tactile "press" without animating layout for non-presses. */
 .vault-btn {
-  @apply px-4 py-2 rounded-md border border-vault-border bg-transparent text-vault-text hover:text-vault-bg hover:bg-vault-accent transition-all uppercase tracking-wide text-xs font-semibold;
+  @apply inline-flex items-center justify-center gap-2 px-3.5 py-1.5 border border-vault-border bg-transparent text-vault-text text-[12px] font-medium tracking-tight;
+  border-radius: var(--vault-radius-sm);
+  transition:
+    background-color var(--vault-dur-fast) var(--vault-ease-soft),
+    border-color var(--vault-dur-fast) var(--vault-ease-soft),
+    color var(--vault-dur-fast) var(--vault-ease-soft),
+    transform var(--vault-dur-fast) var(--vault-ease-soft);
+}
+.vault-btn:hover {
+  background-color: color-mix(in srgb, var(--vault-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--vault-accent) 60%, var(--vault-border));
+  color: var(--vault-text);
+}
+.vault-btn:active {
+  transform: translateY(0.5px);
+  background-color: color-mix(in srgb, var(--vault-accent) 18%, transparent);
+}
+.vault-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* Fix Lucide SVG icons inside all button contexts.

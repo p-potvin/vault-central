@@ -1168,7 +1168,7 @@ export const VaultDashboard: React.FC = () => {
             <div className="space-y-4">
             {/* View Mode */}
             <div>
-              <label className="text-xs font-bold text-vault-muted uppercase tracking-widest flex items-center gap-2 mb-2">
+              <label className="text-[11px] font-semibold text-vault-muted/85 flex items-center gap-1.5 mb-1.5 tracking-tight">
                 <Icons.ViewModeIcon size={14} className="text-vault-accent" /> View Mode
               </label>
               <input 
@@ -1187,7 +1187,7 @@ export const VaultDashboard: React.FC = () => {
 
             {/* Theme Config */}
             <div>
-              <label className="text-xs font-bold text-vault-muted uppercase tracking-widest flex items-center gap-2 mb-2">
+              <label className="text-[11px] font-semibold text-vault-muted/85 flex items-center gap-1.5 mb-1.5 tracking-tight">
                 <Icons.ThemeIcon size={14} className="text-vault-accent" /> UI Theme
               </label>
               <select 
@@ -1202,7 +1202,7 @@ export const VaultDashboard: React.FC = () => {
             </div>
             {/* Grouping */}
             <div>
-              <label className="text-xs font-bold text-vault-muted uppercase tracking-widest flex items-center gap-2 mb-2">
+              <label className="text-[11px] font-semibold text-vault-muted/85 flex items-center gap-1.5 mb-1.5 tracking-tight">
                 <Icons.GroupIcon size={14} className="text-vault-accent" /> Group By
               </label>
               <select 
@@ -1217,7 +1217,7 @@ export const VaultDashboard: React.FC = () => {
 
             {/* Sorting */}
             <div className="space-y-2">
-               <label className="text-xs font-bold text-vault-muted uppercase tracking-widest flex items-center gap-2 mb-2">
+               <label className="text-[11px] font-semibold text-vault-muted/85 flex items-center gap-1.5 mb-1.5 tracking-tight">
                 <Icons.SortIcon size={14} className="text-vault-accent" /> Sort Params
               </label>
               <div className="flex gap-2">
@@ -1254,7 +1254,7 @@ export const VaultDashboard: React.FC = () => {
             
             {/* PIN System */}
             <div className="pt-2">
-              <label className="text-xs font-bold text-vault-muted uppercase tracking-widest flex items-center gap-2 mb-3">
+              <label className="text-[11px] font-semibold text-vault-muted/85 flex items-center gap-1.5 mb-2 tracking-tight">
                 <Icons.PinIcon size={14} className="text-vault-accent" /> PIN Protection
               </label>
               <div className="space-y-4">
@@ -1333,7 +1333,7 @@ export const VaultDashboard: React.FC = () => {
             
             {/* Sync Option */}
             <div className="pt-2">
-              <label className="text-xs font-bold text-vault-muted uppercase tracking-widest flex items-center gap-2 mb-2">
+              <label className="text-[11px] font-semibold text-vault-muted/85 flex items-center gap-1.5 mb-1.5 tracking-tight">
                 <Icons.DebugIcon size={14} className="text-vault-accent" /> Persistence
               </label>
               <button
@@ -1421,7 +1421,8 @@ export const VaultDashboard: React.FC = () => {
                       className={cn("flex items-center gap-3", !isolatedGroup && "cursor-pointer group")}
                       onClick={() => !isolatedGroup && setIsolatedGroup(groupName)}
                     >
-                      <h2 className="text-lg font-bold text-vault-text border-b-2 border-vault-accent pb-1 pr-4 inline-block transition-colors group-hover:text-vault-accent">
+                      <h2 className="text-base font-semibold text-vault-text inline-flex items-center gap-2.5 tracking-tight transition-colors group-hover:text-vault-accent">
+                        <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-vault-accent shrink-0" />
                         {groupName}
                       </h2>
                       <span className="text-xs bg-vault-cardBg border border-vault-border px-2 py-0.5 rounded-full text-vault-muted font-bold">
@@ -1507,11 +1508,8 @@ export const VaultDashboard: React.FC = () => {
                               )
                             )}
 
-                            {/* Corner Accents */}
-                            <div className="absolute top-0 left-0 w-2 h-2 border-t-2 border-l-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" />
-                            <div className="absolute top-0 right-0 w-2 h-2 border-t-2 border-r-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" />
-                            <div className="absolute bottom-0 left-0 w-2 h-2 border-b-2 border-l-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" />
-                            <div className="absolute bottom-0 right-0 w-2 h-2 border-b-2 border-r-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" />
+                            {/* Subtle inset stroke replaces the four corner accents — quieter, no hover animation. */}
+                            <div className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-white/5 rounded-[inherit]" />
 
                             {/* Internal Thumbnail Actions */}
                             {viewSize > 2 && (
@@ -1536,24 +1534,21 @@ export const VaultDashboard: React.FC = () => {
                               </div>
                             )}
 
-                            {/* Hover Overlay / Play Preview */}
-                            <div className="absolute inset-0 bg-vault-cardBg/10 group-hover/thumb:bg-vault-cardBg/30 transition-colors flex items-center justify-center z-10">
-                              {fav.type === 'video' ? (
-                                <div className="w-12 h-12 rounded-full bg-vault-accent/90 opacity-0 group-hover/thumb:opacity-100 transition-all flex items-center justify-center shadow-2xl transform scale-75 group-hover/thumb:scale-100 duration-300">
-                                  <Icons.PlayIcon fill="currentColor" className="text-vault-bg ml-1" size={20} />
-                                </div>
-                              ) : (
-                                <div className="w-12 h-12 rounded-full bg-vault-cardBg opacity-0 group-hover/thumb:opacity-100 transition-all flex items-center justify-center shadow-xl transform scale-75 group-hover/thumb:scale-100 duration-300 border border-vault-border">
-                                  <Icons.ChevronRightIcon className="text-vault-text" size={20} />
-                                </div>
-                              )}
+                            {/* Hover overlay — gentle dim + play affordance fade. No scale jump. */}
+                            <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+                              <div className="absolute inset-0 bg-black/0 group-hover/thumb:bg-black/15 transition-colors duration-200" />
+                              <div className="relative w-11 h-11 rounded-full bg-white/90 opacity-0 group-hover/thumb:opacity-100 flex items-center justify-center shadow-lg transition-opacity duration-200">
+                                {fav.type === 'video'
+                                  ? <Icons.PlayIcon fill="currentColor" className="text-vault-bg ml-0.5" size={18} />
+                                  : <Icons.ChevronRightIcon className="text-vault-bg" size={18} />}
+                              </div>
                             </div>
                             
-                            {/* Hover Status Info (Internal to Thumb) */}
-                            <div className="absolute bottom-2 left-2 z-20 opacity-0 group-hover/thumb:opacity-100 transition-opacity pointer-events-none">
-                              <div className="flex items-center gap-1.5 bg-black/80 px-2 py-1 rounded text-[10px] font-mono font-bold text-vault-accent border border-vault-accent/30 backdrop-blur-sm">
-                                <span className="w-1.5 h-1.5 rounded-full bg-vault-accent animate-pulse" />
-                                {fav.type === 'video' ? 'SCANNING' : 'LINK'}
+                            {/* Type chip — sentence case, no animation noise. */}
+                            <div className="absolute bottom-2 left-2 z-20 opacity-0 group-hover/thumb:opacity-100 transition-opacity duration-200 pointer-events-none">
+                              <div className="flex items-center gap-1.5 bg-black/55 px-2 py-0.5 rounded-full text-[10px] font-medium text-white/90 backdrop-blur-sm tracking-tight">
+                                <span className="w-1 h-1 rounded-full bg-vault-accent" />
+                                {fav.type === 'video' ? 'Video' : 'Link'}
                               </div>
                             </div>
                           </div>
@@ -1667,12 +1662,18 @@ export const VaultDashboard: React.FC = () => {
         </main>
       </div>
 
-      {/* TOAST SYSTEM */}
+      {/* Toast — soft pill, fades up. */}
       {toastMessage && (
-        <div className={cn(
-          "fixed bottom-6 right-6 z-[100] px-4 py-2 rounded shadow-2xl font-bold text-sm tracking-wide animate-in slide-in-from-bottom border",
-          toastMessage.type === 'success' ? "bg-green-500/20 text-green-400 border-green-500/30" : "bg-red-500/20 text-red-400 border-red-500/30"
-        )}>
+        <div
+          role="status"
+          aria-live="polite"
+          className={cn(
+            'fixed bottom-6 right-6 z-[100] px-4 py-2.5 rounded-full shadow-lg backdrop-blur-md text-[13px] font-medium tracking-tight border animate-in slide-in-from-bottom-2 fade-in duration-200',
+            toastMessage.type === 'success'
+              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25'
+              : 'bg-red-500/15 text-red-300 border-red-500/25',
+          )}
+        >
           {toastMessage.msg}
         </div>
       )}
