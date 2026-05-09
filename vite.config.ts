@@ -8,7 +8,13 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
     globals: true,
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    include: [
+      'src/**/*.{test,spec}.{ts,tsx}',
+      // Crypto module lives in the vault-themes submodule but its unit
+      // tests must still run as part of vault-central's vitest suite,
+      // since vault-themes ships source-only (no own test runner).
+      'vault-themes/security/**/*.{test,spec}.{ts,tsx}',
+    ],
     exclude: ['tests/**', 'dist/**', 'node_modules/**'],
   },
   plugins: [

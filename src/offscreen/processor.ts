@@ -1,7 +1,7 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
 import browser from 'webextension-polyfill';
-import { savePreview } from '../lib/dexie-store';
+import { savePreview } from '../lib/vault-client';
 
 let ffmpeg: FFmpeg | null = null;
 

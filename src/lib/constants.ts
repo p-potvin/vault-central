@@ -1,6 +1,7 @@
 export const STORAGE_KEYS = {
   SAVED_VIDEOS: 'savedVideos',
   PIN_SETTINGS: 'pinSettings',
+  VAULT_MATERIAL: 'vaultMaterial',
   CUSTOM_THEME: 'customTheme',
   ACTIVE_TAB_ID: 'activeDashboardTabId'
 } as const;

@@ -36,9 +36,14 @@ export const StorageSchema = z.object({
 
 export type StorageData = z.infer<typeof StorageSchema>;
 
+// PIN settings store the lock policy and (legacy) the raw PIN. Post-upgrade,
+// the `pin` field is migrated to the new VaultMaterial on first unlock and
+// then cleared. Keep the field optional and zod-tolerant so existing vaults
+// load without a deserialization error during the migration window.
 export const PinSettingsSchema = z.object({
   enabled: z.boolean().default(false),
-  pin: z.string().optional(), // Hashed or plain (browser.storage.local/sync is usually safe enough for local vault)
+  /** @deprecated Legacy plaintext PIN. Cleared after migration to VaultMaterial. */
+  pin: z.string().optional(),
   length: z.union([z.literal(4), z.literal(6)]).default(4),
   lockTimeout: z.union([
     z.literal(600000),    // 10 min
@@ -51,3 +56,18 @@ export const PinSettingsSchema = z.object({
 });
 
 export type PinSettings = z.infer<typeof PinSettingsSchema>;
+
+// VaultMaterial — at-rest envelope state per the zero-knowledge standard.
+// All Uint8Array fields are stored as base64 strings so they survive
+// browser.storage.local serialization. The runtime helpers convert.
+export const VaultMaterialSchema = z.object({
+  schemaVersion: z.literal(1).default(1),
+  algorithm: z.union([z.literal('ml-kem-1024'), z.literal('ml-kem-512'), z.literal('aes-only')]),
+  argonSalt: z.string(),                  // base64 — 16 bytes
+  pinVerifier: z.string(),                // base64 — 32 bytes (sha256 of KEK || 'verify')
+  publicKey: z.string().optional(),       // base64 — ML-KEM public key (omitted in 'aes-only')
+  wrappedPrivateKey: z.string().optional(),    // base64 — AES-GCM ciphertext of ML-KEM private key
+  wrappedPrivateKeyIv: z.string().optional(),  // base64 — 12 bytes
+});
+
+export type VaultMaterialPersisted = z.infer<typeof VaultMaterialSchema>;
