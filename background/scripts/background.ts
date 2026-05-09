@@ -97,7 +97,9 @@ async function runAutomaticBackup() {
         logger.log("[backup] Automatic backup complete:", result);
     } catch (err) {
         logger.error("[backup] Automatic backup failed:", err);
-        await recordBackupResult('error', err instanceof Error ? err.message : String(err));
+        // Avoid leaking internal error details to persisted state. Real error
+        // already in the debug log above.
+        await recordBackupResult('error', 'Backup operation failed');
     }
 }
 
@@ -714,7 +716,7 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
         return { success: true, data };
     } catch (err: any) {
         logger.error("[runCapturePipeline] Unhandled error:", err);
-        return { success: false, message: err.message };
+        return { success: false, message: 'Capture pipeline failed' };
     }
 }
 
@@ -796,12 +798,18 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
     if (request.action === "vault.setup") {
         return runtimeSetupVault(request.pin, request.algorithm)
             .then(() => ({ success: true }))
-            .catch((e: any) => ({ success: false, error: e?.message || String(e) }));
+            .catch((e: any) => {
+                logger.error('[vault.setup] failed:', e);
+                return { success: false, error: 'Vault setup failed' };
+            });
     }
     if (request.action === "vault.unlock") {
         return runtimeUnlockVault(request.pin)
             .then(ok => ({ success: ok }))
-            .catch((e: any) => ({ success: false, error: e?.message || String(e) }));
+            .catch((e: any) => {
+                logger.error('[vault.unlock] failed:', e);
+                return { success: false, error: 'Vault unlock failed' };
+            });
     }
     if (request.action === "vault.lock") {
         runtimeLockVault();
@@ -818,7 +826,10 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
         const blob = new Blob([new Uint8Array(request.blobBytes)], { type: request.mimeType || 'application/octet-stream' });
         return savePreviewBlob(request.videoUrl, blob)
             .then(() => ({ success: true }))
-            .catch((e: any) => ({ success: false, error: e?.message || String(e) }));
+            .catch((e: any) => {
+                logger.error('[preview.save] failed:', e);
+                return { success: false, error: 'Preview save failed' };
+            });
     }
     if (request.action === "preview.get") {
         return getPreviewBlob(request.videoUrl).then(async (blob) => {
@@ -826,7 +837,10 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
             const bytes = new Uint8Array(await blob.arrayBuffer());
             // Convert to a transferable plain array for runtime messaging.
             return { success: true, found: true, bytes: Array.from(bytes), mimeType: blob.type };
-        }).catch((e: any) => ({ success: false, error: e?.message || String(e) }));
+        }).catch((e: any) => {
+            logger.error('[preview.get] failed:', e);
+            return { success: false, error: 'Preview retrieval failed' };
+        });
     }
     if (request.action === "preview.delete") {
         return deletePreview(request.videoUrl).then(() => ({ success: true }));
@@ -840,18 +854,27 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
     if (request.action === "run_full_backup") {
         return downloadFullVaultBackup('manual')
             .then(result => result)
-            .catch(err => ({ success: false, error: err instanceof Error ? err.message : String(err) }));
+            .catch(err => {
+                logger.error('[run_full_backup] failed:', err);
+                return { success: false, error: 'Backup operation failed' };
+            });
     }
     if (request.action === "get_backup_settings") {
         return getBackupSettings()
             .then(settings => ({ success: true, settings }))
-            .catch(err => ({ success: false, error: err instanceof Error ? err.message : String(err) }));
+            .catch(err => {
+                logger.error('[get_backup_settings] failed:', err);
+                return { success: false, error: 'Failed to retrieve backup settings' };
+            });
     }
     if (request.action === "save_backup_settings") {
         return saveBackupSettings(request.settings)
             .then(scheduleDailyBackupAlarm)
             .then(() => ({ success: true }))
-            .catch(err => ({ success: false, error: err instanceof Error ? err.message : String(err) }));
+            .catch(err => {
+                logger.error('[save_backup_settings] failed:', err);
+                return { success: false, error: 'Failed to save backup settings' };
+            });
     }
     logger.warn("[onMessage] Unknown action received:", request.action);
     return undefined;
