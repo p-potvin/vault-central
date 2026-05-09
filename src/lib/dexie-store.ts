@@ -1,14 +1,33 @@
 import Dexie, { Table } from 'dexie';
 import CryptoJS from 'crypto-js';
-import { getPinSettings, isVaultLocked } from './storage-vault';
 
+/**
+ * Preview-blob persistence.
+ *
+ * v1 (legacy): blob is either plaintext (PIN disabled) or CryptoJS-AES
+ * encrypted with the raw PIN as the key. `encrypted: true` flagged the
+ * encrypted variant.
+ *
+ * v2 (current): preview is an envelope-encrypted Uint8Array per the
+ * zero-knowledge standard (vault-themes/security/crypto-vault.ts).
+ * `schemaVersion: 2` flags the new format. The encryption itself is
+ * performed by the background script's vault-runtime; dexie-store only
+ * persists the envelope bytes.
+ *
+ * Legacy records are migrated on first new-flow PIN unlock by
+ * vault-runtime, which decrypts with the old PIN and re-encrypts via
+ * envelope encryption before clearing the legacy PIN field.
+ */
 export interface PreviewBlob {
   id?: number;
   videoUrl: string;
-  blob: Blob | Uint8Array; // Can be raw or encrypted bytes
+  blob: Blob | Uint8Array;
   mimeType: string;
   timestamp: number;
+  /** legacy flag — only set on v1 records */
   encrypted?: boolean;
+  /** v2+ records carry this. Absent on v1. */
+  schemaVersion?: number;
 }
 
 export class VaultDexie extends Dexie {
@@ -22,128 +41,101 @@ export class VaultDexie extends Dexie {
   }
 }
 
-const enableLogging = true;
-
-function dbLog(...args: any[]) {
-    if (enableLogging) console.log('[VaultDexie]', ...args);
-}
-
 export const db = new VaultDexie();
 
-// Attach db to window for debugging
-if (typeof window !== 'undefined') {
-    (window as any).__VAULT_DEXIE_DB__ = db;
-    (window as any).__VAULT_TEST_PREVIEW__ = async (url: string) => {
-        const preview = await getPreview(url);
-        console.log("TEST PREVIEW RESULT:", preview);
-        if (preview) {
-             const url = URL.createObjectURL(preview);
-             console.log("TEST PREVIEW URL:", url);
-             window.open(url, "_blank");
-        }
-    };
-    dbLog("Debug tools attached to window.__VAULT_DEXIE_DB__ and window.__VAULT_TEST_PREVIEW__");
+const enableLogging = true;
+function dbLog(...args: any[]) {
+  if (enableLogging) console.log('[VaultDexie]', ...args);
 }
 
 /**
- * [VaultAuth] Secure Blob Store
- * Encrypts previews with the user's PIN if PIN is enabled.
+ * Save a plain Blob preview. PIN-disabled vaults store plaintext;
+ * PIN-enabled vaults must call savePreviewEnvelope (background-side).
+ * This function exists so non-encrypted callers (no PIN, or test code)
+ * can write directly without going through the background.
  */
-export async function savePreview(videoUrl: string, blob: Blob): Promise<void> {
-  dbLog(`savePreview called for ${videoUrl}. Blob size: ${blob.size}, type: ${blob.type}`);
-  const settings = await getPinSettings();
-  let finalData: Blob | Uint8Array = blob;
-  let isEncrypted = false;
+export async function savePreviewPlain(videoUrl: string, blob: Blob): Promise<void> {
+  await db.previews.where('videoUrl').equals(videoUrl).delete();
+  await db.previews.add({
+    videoUrl,
+    blob,
+    mimeType: blob.type,
+    timestamp: Date.now(),
+    schemaVersion: 2,
+  });
+}
 
-  if (settings.enabled && settings.pin) {
-    dbLog(`PIN is enabled. Encrypting blob...`);
-    const arrayBuffer = await blob.arrayBuffer();
-    const wordArray = CryptoJS.lib.WordArray.create(arrayBuffer as any);
-    const encrypted = CryptoJS.AES.encrypt(wordArray, settings.pin).toString();
-    finalData = new TextEncoder().encode(encrypted);
-    isEncrypted = true;
-    dbLog(`Encryption complete. Encrypted size: ${finalData.byteLength}`);
-  } else {
-    dbLog(`PIN disabled. Storing plaintext blob.`);
-  }
-
-  try {
-      await db.previews.where('videoUrl').equals(videoUrl).delete();
-      dbLog(`Deleted old preview (if any) for ${videoUrl}`);
-      await db.previews.add({
-        videoUrl,
-        blob: finalData,
-        mimeType: blob.type,
-        timestamp: Date.now(),
-        encrypted: isEncrypted
-      });
-      dbLog(`Successfully saved new preview for ${videoUrl}`);
-  } catch (err) {
-      dbLog(`Failed to save preview:`, err);
-      throw err;
-  }
+/** Save an already-encrypted envelope produced by vault-runtime. */
+export async function savePreviewEnvelope(videoUrl: string, envelope: Uint8Array, mimeType: string): Promise<void> {
+  await db.previews.where('videoUrl').equals(videoUrl).delete();
+  await db.previews.add({
+    videoUrl,
+    blob: envelope,
+    mimeType,
+    timestamp: Date.now(),
+    schemaVersion: 2,
+  });
 }
 
 export async function deletePreview(videoUrl: string): Promise<void> {
-  dbLog(`deletePreview called for ${videoUrl}`);
+  dbLog(`deletePreview ${videoUrl}`);
   await db.previews.where('videoUrl').equals(videoUrl).delete();
 }
 
 export async function clearPreviews(): Promise<void> {
-  dbLog(`clearPreviews called`);
+  dbLog('clearPreviews');
   await db.previews.clear();
 }
 
 export async function getAllPreviewRecords(): Promise<PreviewBlob[]> {
-  dbLog(`getAllPreviewRecords called`);
   return db.previews.toArray();
 }
 
 /**
- * [VaultAuth] Secure Blob Retrieval
- * Decrypts previews on the fly. Returns null if vault is locked.
+ * Returns the raw record for a video URL. Caller decides how to interpret
+ * (plaintext blob vs envelope vs legacy CryptoJS) using the schemaVersion
+ * and `encrypted` markers.
  */
-export async function getPreview(videoUrl: string): Promise<Blob | null> {
-  dbLog(`getPreview called: ${videoUrl}`);
-  if (await isVaultLocked()) {
-      dbLog(`Vault looks locked! Cannot getPreview for ${videoUrl}`);
-      return null;
-  }
-
+export async function getPreviewRecord(videoUrl: string): Promise<PreviewBlob | null> {
   const record = await db.previews.where('videoUrl').equals(videoUrl).first();
-  if (!record) {
-      dbLog(`No preview found in DB for ${videoUrl}`);
-      return null;
+  return record ?? null;
+}
+
+/**
+ * Read a plaintext preview if the record is unencrypted. Returns null for
+ * encrypted records (caller must go through the background's get_preview
+ * runtime message which handles envelope decryption).
+ */
+export async function getPlainPreview(videoUrl: string): Promise<Blob | null> {
+  const record = await getPreviewRecord(videoUrl);
+  if (!record) return null;
+  if (record.encrypted) return null;     // legacy encrypted — needs migration via background
+  if (record.schemaVersion === 2 && record.blob instanceof Uint8Array) {
+    // v2 envelope without encryption marker still requires background to decrypt.
+    // Plaintext v2 records store a Blob directly; envelopes store a Uint8Array.
+    return null;
   }
-
-  if (record.encrypted) {
-    dbLog(`Preview record found and is encrypted. Proceeding to decrypt...`);
-    const settings = await getPinSettings();
-    if (!settings.pin) {
-        dbLog(`Preview is encrypted but no PIN provided. Returning null.`);
-        return null;
-    }
-
-    try {
-      const encryptedStr = new TextDecoder().decode(record.blob as Uint8Array);
-      const decrypted = CryptoJS.AES.decrypt(encryptedStr, settings.pin);
-      const typedArray = new Uint8Array(decrypted.sigBytes);
-      
-      const words = decrypted.words;
-      const sigBytes = decrypted.sigBytes;
-      for (let i = 0; i < sigBytes; i++) {
-        typedArray[i] = (words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
-      }
-
-      dbLog(`Successfully decrypted WebM! Returning ${record.mimeType}`);
-      return new Blob([typedArray], { type: record.mimeType });
-    } catch (e) {
-      console.error("[VaultAuth] Decryption failed:", e);
-      dbLog(`Decryption failure:`, e);
-      return null;
-    }
-  }
-
-  dbLog(`Preview record found (plaintext). Yielding Blob:`, record.blob);
   return record.blob as Blob;
+}
+
+/** Migration helper: list every record encrypted with the legacy CryptoJS scheme. */
+export async function getLegacyEncryptedRecords(): Promise<PreviewBlob[]> {
+  return db.previews.filter(r => r.encrypted === true).toArray();
+}
+
+/**
+ * Migration helper: decrypt a single legacy CryptoJS record using the old PIN.
+ * Returns the plaintext Blob, ready to be re-encrypted with the new envelope.
+ * Throws on decryption failure (caller should log and skip).
+ */
+export async function decryptLegacyRecord(record: PreviewBlob, legacyPin: string): Promise<Blob> {
+  const encryptedStr = new TextDecoder().decode(record.blob as Uint8Array);
+  const decrypted = CryptoJS.AES.decrypt(encryptedStr, legacyPin);
+  const sigBytes = decrypted.sigBytes;
+  const words = decrypted.words;
+  const out = new Uint8Array(sigBytes);
+  for (let i = 0; i < sigBytes; i++) {
+    out[i] = (words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
+  }
+  return new Blob([out], { type: record.mimeType });
 }

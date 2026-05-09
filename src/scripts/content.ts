@@ -89,7 +89,7 @@ let cachedSavedUrls: Set<string> | null = null;
 if (browser.storage && browser.storage.onChanged) {
     browser.storage.onChanged.addListener((changes, areaName) => {
         if (areaName === 'local' && changes[STORAGE_KEYS.SAVED_VIDEOS]) {
-            const newValue = changes[STORAGE_KEYS.SAVED_VIDEOS].newValue || [];
+            const newValue = (changes[STORAGE_KEYS.SAVED_VIDEOS].newValue as VideoData[] | undefined) || [];
             cachedSavedUrls = new Set(newValue.map((v: VideoData) => v.url));
             console.log(`${LOG_PREFIX} Storage changed. Updated cachedSavedUrls count: ${cachedSavedUrls.size}`);
             highlightVaultItems();

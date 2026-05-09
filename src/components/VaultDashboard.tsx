@@ -13,7 +13,7 @@ import {
   setSyncEnabled,
   type BackupSettings
 } from '../lib/storage-vault';
-import { clearPreviews, deletePreview, getPreview } from '../lib/dexie-store';
+import { clearPreviews, deletePreview, getPreview, vaultSetup, vaultStatus } from '../lib/vault-client';
 import { VAULT_THEMES, getThemeClass } from '../lib/themes'; // Added for binary previews
 import { type VideoData, VideoDataSchema } from '../types/schemas';
 import { STORAGE_KEYS } from '../lib/constants';
@@ -766,13 +766,21 @@ export const VaultDashboard: React.FC = () => {
   };
 
   const doConfirmPinSetup = async (pin: string, length: 4 | 6) => {
-    const updated = { ...pinSettings, enabled: true, pin, length, lastUnlocked: Date.now() };
+    // Provision the zero-knowledge vault: derives the master KEK from the
+    // PIN via Argon2id, mints an ML-KEM-1024 keypair, wraps the private
+    // key, persists material, and unlocks. The raw PIN is never stored.
+    const res = await vaultSetup(pin);
+    if (!res.success) {
+      setToastMessage({ msg: `PIN activation failed: ${res.error || 'unknown'}`, type: 'error' });
+      return;
+    }
+    const updated = { ...pinSettings, enabled: true, length, lastUnlocked: Date.now() };
     await savePinSettings(updated);
     setPinSettings(updated);
     setPinSetupOpen(false);
     setPinSetupBoxes([]);
     setPinSetupError(false);
-    setToastMessage({ msg: `${length}-digit PIN activated.`, type: "success" });
+    setToastMessage({ msg: `${length}-digit PIN activated.`, type: 'success' });
   };
 
   const handlePinSetupChange = (index: number, value: string) => {

@@ -6,7 +6,17 @@ import {
     saveBackupSettings,
     saveVideos
 } from '../../src/lib/storage-vault';
-import { savePreview } from '../../src/lib/dexie-store';
+import { deletePreview, clearPreviews as dbClearPreviews } from '../../src/lib/dexie-store';
+import {
+    savePreviewBlob,
+    getPreviewBlob,
+    setupVault as runtimeSetupVault,
+    unlockVault as runtimeUnlockVault,
+    lockVault as runtimeLockVault,
+    vaultStatus,
+    destroyVault,
+    isVaultUnlocked,
+} from '../../src/lib/vault-runtime';
 import { DAILY_BACKUP_ALARM, downloadFullVaultBackup } from '../../src/lib/backup-vault';
 import { STORAGE_KEYS } from '../../src/lib/constants';
 
@@ -669,8 +679,13 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
             try {
                 const response = await fetch(capturedWebmPreviewDataUrl);
                 const blob = await response.blob();
-                await savePreview(data.url, blob);
-                logger.log("[runCapturePipeline] Successfully saved injected WebM preview to Dexie.");
+                try {
+                    await savePreviewBlob(data.url, blob);
+                    logger.log("[runCapturePipeline] Successfully saved injected WebM preview to Dexie.");
+                } catch (e) {
+                    // Vault may be locked — preview will be regenerated on next view
+                    logger.warn("[runCapturePipeline] Could not save preview now (vault state):", e);
+                }
             } catch (err) {
                 logger.warn("[runCapturePipeline] Failed to save injected WebM to Dexie:", err);
             }
@@ -773,6 +788,54 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
         });
     }
     if (request.action === "generate_preview_process") return undefined;
+
+    // === Vault runtime handlers ===
+    // The unlocked vault state lives in this background context only.
+    // Other contexts (dashboard, content, offscreen) talk to it via these
+    // runtime messages. See src/lib/vault-runtime.ts.
+    if (request.action === "vault.setup") {
+        return runtimeSetupVault(request.pin, request.algorithm)
+            .then(() => ({ success: true }))
+            .catch((e: any) => ({ success: false, error: e?.message || String(e) }));
+    }
+    if (request.action === "vault.unlock") {
+        return runtimeUnlockVault(request.pin)
+            .then(ok => ({ success: ok }))
+            .catch((e: any) => ({ success: false, error: e?.message || String(e) }));
+    }
+    if (request.action === "vault.lock") {
+        runtimeLockVault();
+        return Promise.resolve({ success: true });
+    }
+    if (request.action === "vault.status") {
+        return vaultStatus().then(s => ({ success: true, ...s }));
+    }
+    if (request.action === "vault.destroy") {
+        return destroyVault().then(() => ({ success: true }));
+    }
+    if (request.action === "preview.save") {
+        // request: { videoUrl, blobBytes (number[]), mimeType }
+        const blob = new Blob([new Uint8Array(request.blobBytes)], { type: request.mimeType || 'application/octet-stream' });
+        return savePreviewBlob(request.videoUrl, blob)
+            .then(() => ({ success: true }))
+            .catch((e: any) => ({ success: false, error: e?.message || String(e) }));
+    }
+    if (request.action === "preview.get") {
+        return getPreviewBlob(request.videoUrl).then(async (blob) => {
+            if (!blob) return { success: true, found: false };
+            const bytes = new Uint8Array(await blob.arrayBuffer());
+            // Convert to a transferable plain array for runtime messaging.
+            return { success: true, found: true, bytes: Array.from(bytes), mimeType: blob.type };
+        }).catch((e: any) => ({ success: false, error: e?.message || String(e) }));
+    }
+    if (request.action === "preview.delete") {
+        return deletePreview(request.videoUrl).then(() => ({ success: true }));
+    }
+    if (request.action === "preview.clear_all") {
+        return dbClearPreviews().then(() => ({ success: true }));
+    }
+    // === end vault runtime handlers ===
+
     if (request.action === "download_debug_logs") { logger.downloadLogFile(); return Promise.resolve(true); }
     if (request.action === "run_full_backup") {
         return downloadFullVaultBackup('manual')
