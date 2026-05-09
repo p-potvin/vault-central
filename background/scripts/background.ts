@@ -106,8 +106,13 @@ export interface ExtractionResult {
 }
 
 
-async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | null> {
-    logger.log("[doTabExtraction] Starting extraction for:", targetUrl);
+interface ExtractionContext {
+    originUrl?: string;
+    originTitle?: string;
+}
+
+async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): Promise<ExtractionResult | null> {
+    logger.log("[doTabExtraction] Starting extraction for:", targetUrl, "| origin:", ctx.originUrl, "| originTitle:", ctx.originTitle);
 
     let scraperTabId: number | undefined = undefined;
     let webRequestListener: ((details: browser.WebRequest.OnBeforeRequestDetailsType) => void) | null = null;
@@ -165,9 +170,11 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
             scraperWindowId = scraperTab.windowId;
 
             globalTimeoutId = setTimeout(() => {
-                logger.warn("[doTabExtraction] Global timeout reached after 35s. latestM3u8:", latestM3u8);
+                logger.warn("[doTabExtraction] Global timeout reached after 18s. latestM3u8:", latestM3u8);
+                // Even on hard timeout, return what we got — the pipeline always
+                // saves SOMETHING, never errors out (per decision-tree spec #2b3/#2c).
                 cleanup(latestM3u8 ? { src: latestM3u8, metadata: defaultMetadata } : null, "Timeout reached");
-            }, 35000); 
+            }, 18000);
 
             if (browser.webRequest) {
                 webRequestListener = (details) => {
@@ -223,8 +230,24 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
                 try {
                     const results = await browser.scripting.executeScript({
                         target: { tabId: scraperTabId },
-                        func: async () => {
+                        args: [{ originUrl: ctx.originUrl ?? '', originTitle: ctx.originTitle ?? '' }],
+                        func: async (injectedCtx: { originUrl: string; originTitle: string }) => {
                             const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+                            // Decision-tree #1b detection: did the scraper tab land on the
+                            // same page the user fired Alt+X from? When yes, the metadata
+                            // we already gathered in the origin tab is canonical and we
+                            // just need a video src + preview from this same DOM.
+                            const isDuplicateOfOrigin = (() => {
+                                if (!injectedCtx.originUrl) return false;
+                                try {
+                                    const origin = new URL(injectedCtx.originUrl);
+                                    const here = new URL(window.location.href);
+                                    if (origin.hostname === here.hostname && origin.pathname === here.pathname) return true;
+                                } catch { /* fall through */ }
+                                if (injectedCtx.originTitle && injectedCtx.originTitle === document.title) return true;
+                                return false;
+                            })();
 
                             const captureWebmPreview = async (video: HTMLVideoElement): Promise<string | null> => {
                                 return new Promise(async (resolve) => {
@@ -332,83 +355,157 @@ async function doTabExtraction(targetUrl: string): Promise<ExtractionResult | nu
                                 });
                             };
 
-                            const clickAllPlayers = async () => {
-                                const selectors = [
-                                    'video', 'iframe', 'button[aria-label*="Play"]', 
-                                    '.vjs-big-play-button', '.ytp-large-play-button', 
-                                    '[class^="media-player"]', '[role="button"]'
+                            // Decision-tree #2b: aggressive ladder for messy pages with no
+                            // clear video player. Tiers run in order, stopping early if a
+                            // <video> starts producing a non-blob src.
+                            const aggressiveTrigger = async () => {
+                                const tiers: string[][] = [
+                                    // Tier 1: known player libraries' big-play affordances
+                                    [
+                                        '.jwplayer .jw-icon-display',
+                                        '.jwplayer .jw-button-display',
+                                        '.video-js .vjs-big-play-button',
+                                        '.ytp-large-play-button',
+                                        '.plyr__control--overlaid',
+                                        '.shaka-play-button',
+                                        '.flowplayer .play',
+                                    ],
+                                    // Tier 2: generic accessible-name play buttons + ARIA roles
+                                    [
+                                        'button[aria-label*="Play" i]',
+                                        'button[title*="Play" i]',
+                                        '[role="button"][aria-label*="Play" i]',
+                                        '[class*="play-button" i]',
+                                        '[class*="play_button" i]',
+                                        '[class*="playButton"]',
+                                    ],
+                                    // Tier 3: hidden-ish embeds that need to materialise
+                                    [
+                                        'iframe[src*="player" i]',
+                                        'iframe[src*="embed" i]',
+                                        '[data-video]',
+                                        '[data-src*=".m3u8"]',
+                                    ],
+                                    // Tier 4: blunt force — any <video> regardless
+                                    ['video'],
                                 ];
-                                for (const selector of selectors) {
-                                    try {
-                                        const elements = document.querySelectorAll(selector);
-                                        for (const el of Array.from(elements)) {
-                                            if (el instanceof HTMLVideoElement) {
-                                                el.muted = true;
-                                                el.play().catch(() => {});
-                                            } else {
-                                                (el as HTMLElement).focus();
-                                                (el as HTMLElement).click();
+
+                                for (const tier of tiers) {
+                                    let triggeredAny = false;
+                                    for (const selector of tier) {
+                                        try {
+                                            const elements = document.querySelectorAll(selector);
+                                            for (const el of Array.from(elements)) {
+                                                if (el instanceof HTMLVideoElement) {
+                                                    el.muted = true;
+                                                    el.play().catch(() => {});
+                                                    triggeredAny = true;
+                                                } else {
+                                                    (el as HTMLElement).focus?.();
+                                                    (el as HTMLElement).click?.();
+                                                    triggeredAny = true;
+                                                }
+                                                await delay(150);
                                             }
-                                            await delay(200);
+                                        } catch (e) {
+                                            console.debug("[VaultCentral] aggressiveTrigger tier failed:", e);
                                         }
-                                    } catch (e) {
-                                        console.debug("[VaultCentral] Soft-gate interaction attempt failed:", e);
+                                    }
+                                    if (triggeredAny) {
+                                        // Give the tier a chance to spin up a real <video> with a non-blob src
+                                        await delay(800);
+                                        const playing = Array.from(document.querySelectorAll('video'))
+                                            .some(v => (v.src && !v.src.startsWith('blob:')) || v.currentSrc && !v.currentSrc.startsWith('blob:'));
+                                        if (playing) return;
                                     }
                                 }
+                            };
+
+                            // Decision-tree #2b2: candidate ladder when several <video>
+                            // elements are visible and none is the obvious primary.
+                            //   1. Player-library boost (id/class match)
+                            //   2. Largest visible by area
+                            //   3. Closest to viewport center
+                            //   4. Highest URL score (mp4/webm/m3u8 > generic)
+                            const scoreMediaUrl = (url: string | null | undefined): number => {
+                                if (!url || url.startsWith('javascript:') || url.startsWith('blob:')) return -1;
+                                const u = url.toLowerCase();
+                                let s = 0;
+                                if (/\.(mp4|webm|mkv|flv|mov|m3u8|ts)(\?|$)/.test(u)) s += 1000;
+                                if (/(video|player|embed|watch|clip|media|vod)/.test(u)) s += 200;
+                                return s;
+                            };
+                            const distanceToCenter = (rect: DOMRect): number => {
+                                const cx = window.innerWidth / 2;
+                                const cy = window.innerHeight / 2;
+                                return Math.hypot((rect.left + rect.width / 2) - cx, (rect.top + rect.height / 2) - cy);
                             };
 
                             const findBestVideoAndMeta = async () => {
-                                const metadata = { title: document.title, thumbnail: "", duration: 0, author: "", views: "", tags: [] as string[], likes: "", date: "" };
-                                
+                                const metadata = { title: document.title, thumbnail: '', duration: 0, author: '', views: '', tags: [] as string[], likes: '', date: '' };
                                 const getMeta = (prop: string, name: string) => {
                                     const el = document.querySelector(`meta[property="${prop}"], meta[name="${name}"]`);
-                                    return el ? (el as HTMLMetaElement).content : "";
+                                    return el ? (el as HTMLMetaElement).content : '';
                                 };
-
-                                metadata.title = getMeta("og:title", "title") || metadata.title;
-                                metadata.thumbnail = getMeta("og:image", "image") || "";
-                                metadata.author = getMeta("og:site_name", "author");
-                                metadata.tags = (getMeta("og:video:tag", "keywords") || '').split(',').map(s => s.trim());
+                                metadata.title = getMeta('og:title', 'title') || metadata.title;
+                                metadata.thumbnail = getMeta('og:image', 'image') || '';
+                                metadata.author = getMeta('og:site_name', 'author');
+                                metadata.tags = (getMeta('og:video:tag', 'keywords') || '').split(',').map(s => s.trim()).filter(Boolean);
 
                                 const videos = Array.from(document.querySelectorAll('video'));
-                                let bestSrc: string | null = null;
-                                let maxScore = -1;
-                                let bestVideoEl: HTMLVideoElement | null = null;
-
+                                interface Candidate { el: HTMLVideoElement; src: string | null; area: number; centerDistance: number; urlScore: number; idClassBoost: number; }
+                                const candidates: Candidate[] = [];
                                 for (const v of videos) {
                                     const rect = v.getBoundingClientRect();
-                                    let score = rect.width * rect.height;
-                                    const idClass = (v.id + " " + v.className).toLowerCase();
-                                    if (idClass.match(/player|main|primary|hero|video-js|vjs|jwplayer/)) score += 1000000;
-
-                                    if (v.src && !v.src.startsWith('blob:')) {
-                                        if (score > maxScore) { maxScore = score; bestSrc = v.src; bestVideoEl = v; if (!isNaN(v.duration)) metadata.duration = v.duration; }
-                                    } else {
-                                        const sources = Array.from(v.querySelectorAll('source'));
-                                        for (const s of sources) {
-                                            if (s.src && !s.src.startsWith('blob:')) {
-                                                if (score > maxScore) { maxScore = score; bestSrc = s.src; bestVideoEl = v; if (!isNaN(v.duration)) metadata.duration = v.duration; }
-                                            }
-                                        }
+                                    if (rect.width <= 0 || rect.height <= 0) continue;
+                                    const idClass = (v.id + ' ' + v.className).toLowerCase();
+                                    const idClassBoost = /player|main|primary|hero|video-js|vjs|jwplayer/.test(idClass) ? 1_000_000 : 0;
+                                    let src: string | null = null;
+                                    if (v.src && !v.src.startsWith('blob:')) src = v.src;
+                                    else {
+                                        const source = Array.from(v.querySelectorAll('source')).find(s => s.src && !s.src.startsWith('blob:'));
+                                        if (source) src = source.src;
                                     }
+                                    candidates.push({
+                                        el: v,
+                                        src,
+                                        area: rect.width * rect.height,
+                                        centerDistance: distanceToCenter(rect),
+                                        urlScore: scoreMediaUrl(src),
+                                        idClassBoost,
+                                    });
                                 }
 
-                                if (bestVideoEl) {
-                                    const webm = await captureWebmPreview(bestVideoEl);
-                                    if (webm) metadata.thumbnail = webm;
-                                }
+                                if (candidates.length === 0) return { src: null, metadata };
 
-                                return { src: bestSrc, metadata };
+                                const sorted = [...candidates].sort((a, b) => {
+                                    if (b.idClassBoost !== a.idClassBoost) return b.idClassBoost - a.idClassBoost;
+                                    if (b.area !== a.area) return b.area - a.area;
+                                    if (a.centerDistance !== b.centerDistance) return a.centerDistance - b.centerDistance;
+                                    return b.urlScore - a.urlScore;
+                                });
+                                const best = sorted[0];
+
+                                if (best.el.duration && !isNaN(best.el.duration)) metadata.duration = best.el.duration;
+                                const webm = await captureWebmPreview(best.el);
+                                if (webm) metadata.thumbnail = webm;
+
+                                return { src: best.src, metadata };
                             };
 
+                            // First pass: maybe the page already has the player ready
                             let result = await findBestVideoAndMeta();
                             if (!result.src && !result.metadata.thumbnail.startsWith('data:video')) {
-                                await delay(2500);
-                                await clickAllPlayers();
-                                await delay(3000);
+                                // Decision-tree #2b: messy page — escalate
+                                await delay(1500);
+                                await aggressiveTrigger();
+                                await delay(1500);
                                 result = await findBestVideoAndMeta();
                             }
-                            return result;
+
+                            // Always-save guarantee (#2b3 / #2c): never throw. Caller handles
+                            // null src by saving with originUrl as link.
+                            return { ...result, isDuplicateOfOrigin };
                         }
                     });
 
@@ -502,8 +599,21 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
         }
 
         logger.log("[runCapturePipeline] Starting doTabExtraction for:", targetUrl);
-        const extracted = await doTabExtraction(targetUrl);
+        const extracted = await doTabExtraction(targetUrl, {
+            originUrl: data.originUrl,
+            originTitle: data.originTitle,
+        });
         logger.log("[runCapturePipeline] doTabExtraction returned. src:", extracted?.src ?? 'null', "| scraped thumbnail length:", extracted?.metadata?.thumbnail?.length ?? 0);
+
+        // Decision-tree type assignment:
+        //   - extraction returned a media src → type='video'
+        //   - no media src found (#2b3, #2c, #3 fall-through) → type='link'
+        // The current page URL is still saved either way (always-save guarantee).
+        if (extracted && extracted.src) {
+            data.type = 'video';
+        } else if (!data.type) {
+            data.type = 'link';
+        }
 
         if (extracted && extracted.src) {
             finalSrc = extracted.src;
@@ -643,6 +753,14 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
     if (request.action === "extract_fresh_m3u8") return doTabExtraction(request.url).then((res: ExtractionResult | null) => ({ src: res?.src || null }));
     if (request.action === "open_dashboard") { openDashboard(); return Promise.resolve(true); }
     if (request.action === "process_capture") return runCapturePipeline(request.data, sender?.tab?.id, sender?.tab?.windowId);
+    if (request.action === "capture-video" || request.type === "capture-video") {
+        // Mirror the keyboard-shortcut command path: forward to the sending
+        // tab's content script (which holds the user's hover state).
+        if (sender?.tab?.id) {
+            void browser.tabs.sendMessage(sender.tab.id, { type: "capture-video" }).catch(() => {});
+        }
+        return Promise.resolve(true);
+    }
     if (request.action === "generate_preview") {
         return setupOffscreenDocument().then(async (ready: boolean) => {
             if (!ready) {

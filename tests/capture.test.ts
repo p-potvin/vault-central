@@ -1,11 +1,12 @@
 import { test, expect } from './extension.fixture';
-import { injectFirefoxContentScript, openFirefoxMockPage, readSavedVideos } from './firefox-utils';
+import { openFirefoxMockPage, readSavedVideos, sendRuntimeMessage } from './firefox-utils';
 
 test.describe('Video Capture E2E', () => {
-  test('should capture the current page video source via runtime command', async ({ page, extensionBaseUrl }) => {
+  test('should capture the current page video source via runtime command', async ({ page, firefoxHarness }) => {
+    test.setTimeout(60000);
     await openFirefoxMockPage(
       page,
-      extensionBaseUrl,
+      firefoxHarness,
       `
         <html>
           <head>
@@ -18,17 +19,14 @@ test.describe('Video Capture E2E', () => {
         </html>
       `,
     );
-    await injectFirefoxContentScript(page, extensionBaseUrl);
 
     await page.locator('#demo-video').hover();
-    await page.evaluate(async () => {
-      await (globalThis as any).browser.runtime.sendMessage({ type: 'capture-video' });
-    });
+    await sendRuntimeMessage(page, { type: 'capture-video' });
 
+    await expect(page.locator('.vault-notification-message')).toContainText('ADDED TO VAULT', { timeout: 5000 });
+    await expect.poll(() => readSavedVideos(page), { timeout: 50000, intervals: [500, 2000, 5000] }).toHaveLength(1);
     const savedVideos = await readSavedVideos(page);
-    expect(savedVideos).toHaveLength(1);
     expect(savedVideos[0].url).toBe('https://cdn.example.test/video/topvid-demo.mp4');
     expect(savedVideos[0].author).toBe('VaultWares QA');
-    await expect(page.locator('.vault-notification-message')).toContainText('ADDED TO VAULT');
   });
 });

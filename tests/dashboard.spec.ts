@@ -1,5 +1,16 @@
 import { test, expect } from './extension.fixture';
 
+// TODO: Firefox blocks external navigation to moz-extension:// URLs
+// (web_accessible_resources doesn't help — host page security policy still blocks).
+// Background-initiated tabs.create({ url: 'dashboard-v2.html' }) opens a tab but
+// Playwright's BrowserContext doesn't surface it as a 'page' event under
+// playwright-webextext + temporary add-on. Dashboard tests must run on Chromium
+// or be replaced with a different harness (web-ext, manual). Skipping on Firefox.
+test.skip(
+  ({ browserName }) => browserName === 'firefox',
+  'Firefox cannot load extension pages externally; run dashboard tests on Chromium',
+);
+
 test.describe('Vault Central E2E Tests', () => {
 
   test('Dashboard should load with correct title and branding', async ({ context, extensionBaseUrl }) => {
