@@ -13,7 +13,7 @@ import {
   setSyncEnabled,
   type BackupSettings
 } from '../lib/storage-vault';
-import { clearPreviews, deletePreview, getPreview, vaultSetup, vaultStatus } from '../lib/vault-client';
+import { clearPreviews, deletePreview, getPreview, vaultSetup, vaultStatus, vaultUnlock, vaultLock } from '../lib/vault-client';
 import { VAULT_THEMES, getThemeClass } from '../lib/themes'; // Added for binary previews
 import { type VideoData, VideoDataSchema } from '../types/schemas';
 import { STORAGE_KEYS } from '../lib/constants';
@@ -99,6 +99,106 @@ const PromptDialog: React.FC<{
         <div className="flex justify-end gap-3 mt-6">
           <button onClick={onCancel} className="px-4 py-1.5 text-xs font-bold text-vault-muted hover:text-vault-text transition-colors">Cancel</button>
           <button onClick={submit} className="px-4 py-1.5 text-xs font-black bg-vault-accent text-vault-bg rounded hover:bg-vault-accentHover transition-all shadow-lg">Submit</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// LockedBanner — surfaces when the auto-lock timer fires while the user is on
+// the dashboard. Inline PIN entry returns the user to a working state without
+// having to navigate to the popup. Renders nothing when the vault is unlocked
+// or PIN is disabled.
+const LockedBanner: React.FC<{
+  visible: boolean;
+  pinLength: number;
+  onUnlocked: () => void;
+}> = ({ visible, pinLength, onUnlocked }) => {
+  const [pin, setPin] = useState<string[]>(() => new Array(pinLength).fill(''));
+  const [error, setError] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const inputs = useRef<(HTMLInputElement | null)[]>([]);
+
+  useEffect(() => {
+    if (visible) {
+      setPin(new Array(pinLength).fill(''));
+      setError(false);
+      // Defer focus so the transition completes first
+      const t = setTimeout(() => inputs.current[0]?.focus(), 120);
+      return () => clearTimeout(t);
+    }
+  }, [visible, pinLength]);
+
+  const verify = async (full: string) => {
+    setBusy(true);
+    const res = await vaultUnlock(full);
+    setBusy(false);
+    if (res.success) {
+      onUnlocked();
+    } else {
+      setError(true);
+      setPin(new Array(pinLength).fill(''));
+      inputs.current[0]?.focus();
+    }
+  };
+
+  const onChange = (idx: number, v: string) => {
+    if (!/^\d*$/.test(v)) return;
+    const next = [...pin];
+    next[idx] = v.slice(-1);
+    setPin(next);
+    setError(false);
+    if (v && idx < pinLength - 1) inputs.current[idx + 1]?.focus();
+    const full = next.join('');
+    if (full.length === pinLength) verify(full);
+  };
+
+  const onKeyDown = (idx: number, e: React.KeyboardEvent) => {
+    if (e.key === 'Backspace' && !pin[idx] && idx > 0) inputs.current[idx - 1]?.focus();
+  };
+
+  if (!visible) return null;
+  return (
+    <div
+      role="alert"
+      aria-live="polite"
+      className={cn(
+        'fixed inset-x-0 top-0 z-[120] flex justify-center pointer-events-none transition-all duration-300',
+      )}
+    >
+      <div className="pointer-events-auto mt-4 max-w-lg w-full mx-4 bg-vault-cardBg border border-vault-border rounded-xl shadow-2xl backdrop-blur-md p-5 flex items-center gap-4 animate-in slide-in-from-top-4 fade-in duration-300">
+        <Icons.PinIcon size={24} className={cn('shrink-0', error ? 'text-red-400' : 'text-vault-accent')} />
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-bold text-vault-text tracking-tight">Vault locked</h3>
+          <p className="text-[11px] text-vault-muted mt-0.5">
+            {error ? 'Wrong PIN — try again' : `Auto-lock fired. Enter your ${pinLength}-digit PIN to continue.`}
+          </p>
+        </div>
+        <div className="flex gap-1.5 shrink-0">
+          {pin.map((digit, i) => (
+            <input
+              key={i}
+              ref={el => { inputs.current[i] = el; }}
+              type="password"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={1}
+              value={digit}
+              disabled={busy}
+              onChange={e => onChange(i, e.target.value)}
+              onKeyDown={e => onKeyDown(i, e)}
+              className={cn(
+                'w-7 h-9 text-center text-sm font-mono font-bold rounded-md border outline-none transition-all duration-150',
+                'bg-vault-bg/60 text-vault-text',
+                error
+                  ? 'border-red-400/60 text-red-400'
+                  : digit
+                    ? 'border-vault-accent/60'
+                    : 'border-vault-border focus:border-vault-accent',
+                busy && 'opacity-50',
+              )}
+            />
+          ))}
         </div>
       </div>
     </div>
@@ -511,6 +611,22 @@ export const VaultDashboard: React.FC = () => {
 
   // PIN Settings
   const [pinSettings, setPinSettings] = useState<any>(null);
+  // Vault lock state — polled from background. The banner appears whenever
+  // the vault is enabled but locked (auto-lock fired while dashboard open).
+  const [vaultLocked, setVaultLocked] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const s = await vaultStatus();
+        if (cancelled) return;
+        setVaultLocked(s.success && s.enabled && s.locked);
+      } catch { /* background may be cycling — ignore one tick */ }
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
 
   // Browser Sync State
   const [isSyncing, setIsSyncing] = useState(false);
@@ -975,7 +1091,13 @@ export const VaultDashboard: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-vault-bg text-vault-text font-sans antialiased transition-colors duration-500">
-      
+
+      <LockedBanner
+        visible={vaultLocked}
+        pinLength={pinSettings?.length ?? 4}
+        onUnlocked={() => setVaultLocked(false)}
+      />
+
       {/* HEADER */}
       <header style={{ backgroundColor: 'var(--vault-card-bg)' }} className="flex-none h-16 flex items-center justify-between px-4 md:px-6 z-20 backdrop-blur-md border-b border-vault-border shadow-sm relative">
         <div className="flex items-center gap-4">
@@ -1187,11 +1309,16 @@ export const VaultDashboard: React.FC = () => {
                     </div>
 
                     <button
-                      onClick={() => {
-                        const next = { ...pinSettings, lastUnlocked: 1 }; // Force lock
-                        savePinSettings(next);
+                      onClick={async () => {
+                        // Tell background to clear its in-memory unlocked
+                        // vault. The polling effect picks up the new state
+                        // and surfaces the LockedBanner.
+                        await vaultLock();
+                        const next = { ...pinSettings, lastUnlocked: 1 };
+                        await savePinSettings(next);
                         setPinSettings(next);
-                        setItems([]); 
+                        setVaultLocked(true);
+                        setItems([]);
                       }}
                       className="w-full py-1.5 text-[10px] font-black uppercase tracking-widest bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white transition-all rounded-sm"
                     >

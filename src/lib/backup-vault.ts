@@ -4,9 +4,11 @@ import {
   getBackupSettings,
   getPinSettings,
   getSavedVideos,
+  getVaultMaterial,
   recordBackupResult,
   type BackupSettings
 } from './storage-vault';
+import type { VaultMaterialPersisted } from '../types/schemas';
 
 export const DAILY_BACKUP_ALARM = 'vault-central-daily-backup';
 
@@ -16,13 +18,16 @@ type PreviewBackupRecord = {
   videoUrl: string;
   mimeType: string;
   timestamp: number;
+  /** Legacy CryptoJS marker. v2 records use `schemaVersion: 2` instead. */
   encrypted: boolean;
+  /** Present on v2+ records. Absent on legacy v1 records. */
+  schemaVersion?: number;
   dataEncoding: 'base64';
   data: string;
 };
 
 type FullVaultBackup = {
-  version: 1;
+  version: 1 | 2;
   app: 'vault-central';
   kind: 'full-vault-backup';
   source: BackupSource;
@@ -34,8 +39,17 @@ type FullVaultBackup = {
   };
   security: {
     pinEnabled: boolean;
+    /** v2: ML-KEM-1024 / ML-KEM-512 / aes-only / null (PIN disabled). */
+    algorithm?: string | null;
+    /** Whether this backup carries any encrypted previews. */
     encryptedPreviewsPreserved: boolean;
   };
+  /**
+   * VaultMaterial — included in v2 backups so users can restore on a new
+   * device. Same Argon2id salt + same PIN re-derives the same KEK and
+   * unwraps the private key. Omitted on v1 backups.
+   */
+  vaultMaterial?: VaultMaterialPersisted | null;
   videos: Awaited<ReturnType<typeof getSavedVideos>>;
   previews: PreviewBackupRecord[];
 };
@@ -93,6 +107,7 @@ async function serializePreview(record: PreviewBlob): Promise<PreviewBackupRecor
     mimeType: record.mimeType,
     timestamp: record.timestamp,
     encrypted: Boolean(record.encrypted),
+    schemaVersion: record.schemaVersion,
     dataEncoding: 'base64',
     data: await blobLikeToBase64(record.blob)
   };
@@ -125,17 +140,23 @@ async function downloadTextFile(filename: string, contents: string): Promise<num
 }
 
 export async function createFullVaultBackup(source: BackupSource): Promise<FullVaultBackup> {
-  const [settings, pinSettings, videos, previewRecords] = await Promise.all([
+  const [settings, pinSettings, videos, previewRecords, vaultMaterial] = await Promise.all([
     getBackupSettings(),
     getPinSettings(),
     getSavedVideos(true),
-    getAllPreviewRecords()
+    getAllPreviewRecords(),
+    getVaultMaterial()
   ]);
   const previews = await Promise.all(previewRecords.map(serializePreview));
   const createdAt = new Date();
 
+  // A v2 envelope is detected by any preview carrying schemaVersion === 2.
+  // Legacy backups (v1) had only `encrypted` flags.
+  const hasV2Previews = previews.some(p => p.schemaVersion === 2);
+  const hasEncryptedAny = previews.some(p => p.encrypted) || hasV2Previews;
+
   return {
-    version: 1,
+    version: 2,
     app: 'vault-central',
     kind: 'full-vault-backup',
     source,
@@ -147,8 +168,10 @@ export async function createFullVaultBackup(source: BackupSource): Promise<FullV
     },
     security: {
       pinEnabled: Boolean(pinSettings.enabled),
-      encryptedPreviewsPreserved: previews.some(preview => preview.encrypted)
+      algorithm: vaultMaterial?.algorithm ?? null,
+      encryptedPreviewsPreserved: hasEncryptedAny
     },
+    vaultMaterial: vaultMaterial ?? null,
     videos,
     previews
   };
