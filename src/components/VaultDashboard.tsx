@@ -41,6 +41,70 @@ const dateTimeFormatter = new Intl.DateTimeFormat(undefined, { year: 'numeric', 
 // on every re-render or search filter update.
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
+// Pagination row count keyed by viewSize. Picked to match the largest
+// Tailwind breakpoint defined in viewClasses for the same viewSize. Slightly
+// undersells small viewports (one fewer row of items per page than visually
+// fits) but never overshoots, and avoids the previous substring-match bug
+// where "grid-cols-4" matched before "grid-cols-5".
+const PER_ROW_BY_VIEW_SIZE: Record<number, number> = {
+  1: 1, // Details (flex column, single line per item; pagination uses items-per-page directly)
+  2: 2, // List
+  3: 5, // Small
+  4: 4, // Medium
+  5: 3, // Large
+  6: 2, // Biggest
+};
+function computePerRow(viewSize: number): number {
+  return PER_ROW_BY_VIEW_SIZE[viewSize] ?? 1;
+}
+
+// Duration display: integer seconds, 2-digit padded; H:MM:SS when ≥1h.
+// Accepts either a number of seconds or a pre-formatted string (passed through).
+function formatDuration(d: number | string): string {
+  if (typeof d !== 'number' || !isFinite(d)) return String(d ?? '');
+  const total = Math.max(0, Math.floor(d));
+  const s = (total % 60).toString().padStart(2, '0');
+  const m = (Math.floor(total / 60) % 60).toString();
+  const h = Math.floor(total / 3600);
+  return h > 0 ? `${h}:${m.padStart(2, '0')}:${s}` : `${m}:${s}`;
+}
+
+// Prompt dialog: keeps the input value in a ref instead of walking the DOM
+// from the Submit button (the previous version did
+// `e.currentTarget.parentElement?.previousElementSibling.value` which breaks
+// the moment any element is added between the input and the button row).
+const PromptDialog: React.FC<{
+  message: string;
+  type?: 'password' | 'text';
+  onCancel: () => void;
+  onConfirm: (value: string) => void;
+}> = ({ message, type, onCancel, onConfirm }) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const submit = () => onConfirm(inputRef.current?.value ?? '');
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+      <div className="bg-vault-cardBg border border-vault-border rounded-lg shadow-2xl max-w-sm w-full p-6 animate-in zoom-in-95">
+        <h3 className="text-vault-text font-bold mb-4 flex items-center gap-2"><Icons.DebugIcon size={20} className="text-vault-accent" /> Input Required</h3>
+        <p className="text-vault-muted text-sm mb-3">{message}</p>
+        <input
+          ref={inputRef}
+          autoFocus
+          type={type === 'password' ? 'password' : 'text'}
+          className="w-full bg-vault-bg border border-vault-border rounded p-2 text-sm text-vault-text focus:outline-none focus:border-vault-accent focus:ring-1 focus:ring-vault-accent/30"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submit();
+            if (e.key === 'Escape') onCancel();
+          }}
+        />
+        <div className="flex justify-end gap-3 mt-6">
+          <button onClick={onCancel} className="px-4 py-1.5 text-xs font-bold text-vault-muted hover:text-vault-text transition-colors">Cancel</button>
+          <button onClick={submit} className="px-4 py-1.5 text-xs font-black bg-vault-accent text-vault-bg rounded hover:bg-vault-accentHover transition-all shadow-lg">Submit</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 async function getPreviewForVideo(video: VideoData): Promise<Blob | null> {
   const primary = await getPreview(video.url);
   if (primary || !video.rawVideoSrc || video.rawVideoSrc === video.url) {
@@ -396,8 +460,20 @@ export const VaultDashboard: React.FC = () => {
     });
   };
   const [groupBy, setGroupBy] = useState(() => localStorage.getItem('vault-group-by') || 'Hostname');
-  const [sortBy, setSortBy] = useState<keyof VideoData | 'DateDesc' | 'DateAsc'>(() => (localStorage.getItem('vault-sort-by') as any) || 'DateDesc');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(() => (localStorage.getItem('vault-sort-order') as any) || 'desc');
+  // Sort model: sortBy is the field, sortOrder is the direction. Old localStorage
+  // values 'DateDesc' / 'DateAsc' encoded direction in the field name and
+  // contradicted sortOrder when the toggle button was clicked. Migrate on read.
+  const [sortBy, setSortBy] = useState<keyof VideoData>(() => {
+    const raw = localStorage.getItem('vault-sort-by');
+    if (raw === 'DateDesc' || raw === 'DateAsc' || !raw) return 'timestamp';
+    return raw as keyof VideoData;
+  });
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(() => {
+    const raw = localStorage.getItem('vault-sort-order');
+    if (raw === 'asc' || raw === 'desc') return raw;
+    // If old DateAsc was the saved field, the user wanted ascending dates.
+    return localStorage.getItem('vault-sort-by') === 'DateAsc' ? 'asc' : 'desc';
+  });
   const [viewSize, setViewSize] = useState<number>(() => {
     const saved = localStorage.getItem('vault-view-size');
     return saved ? parseInt(saved, 10) : 3;
@@ -780,7 +856,9 @@ export const VaultDashboard: React.FC = () => {
   };
 
   const cycleTheme = () => {
-    const nextTheme = currentTheme === 9 ? 1 : currentTheme + 1;
+    const themeIds = Object.keys(VAULT_THEMES).map(Number).sort((a, b) => a - b);
+    const idx = themeIds.indexOf(currentTheme);
+    const nextTheme = themeIds[(idx + 1) % themeIds.length] ?? themeIds[0];
     setCurrentTheme(nextTheme);
     const mode = VAULT_THEMES[nextTheme]?.mode || 'dark';
     document.documentElement.setAttribute('data-theme', getThemeClass(nextTheme));
@@ -837,11 +915,8 @@ export const VaultDashboard: React.FC = () => {
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
-      if (sortBy === 'DateDesc') return b.timestamp - a.timestamp;
-      if (sortBy === 'DateAsc') return a.timestamp - b.timestamp;
-      
-      const valA = a[sortBy as keyof VideoData];
-      const valB = b[sortBy as keyof VideoData];
+      const valA = a[sortBy];
+      const valB = b[sortBy];
 
       if (valA === undefined || valA === null) return 1;
       if (valB === undefined || valB === null) return -1;
@@ -876,17 +951,6 @@ export const VaultDashboard: React.FC = () => {
     5: 'grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3', // Large
     6: 'grid-cols-1 xl:grid-cols-2', // Biggest
   };
-
-  const itemsPerPageParams: Record<number, number> = {
-    1: 50, // Compact Details
-    2: 10, // List
-    3: 12, // Small
-    4: 8,  // Medium
-    5: 6,  // Large
-    6: 4   // Biggest
-  };
-
-  const maxItemsPerRow = itemsPerPageParams[viewSize];
 
   // If isolated, display that group. Else display UP TO `sectionLimit` groups.
   const groupsToRender = isolatedGroup 
@@ -1027,13 +1091,13 @@ export const VaultDashboard: React.FC = () => {
                 <Icons.SortIcon size={14} className="text-vault-accent" /> Sort Params
               </label>
               <div className="flex gap-2">
-                <select 
+                <select
                   value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as any)}
+                  onChange={(e) => setSortBy(e.target.value as keyof VideoData)}
                   className="flex-1 bg-vault-bg border border-vault-border text-[10px] p-1.5 rounded outline-none focus:border-vault-accent text-vault-text"
                 >
-                  <option value="DateDesc">Newest (System)</option>
-                  <option value="DateAsc">Oldest (System)</option>
+                  <option value="timestamp">Date Saved</option>
+                  <option value="datePublished">Date Published</option>
                   <optgroup label="Metadata Fields">
                     <option value="title">Title</option>
                     <option value="author">Author</option>
@@ -1044,8 +1108,6 @@ export const VaultDashboard: React.FC = () => {
                     <option value="quality">Quality</option>
                     <option value="resolution">Resolution</option>
                     <option value="size">Size</option>
-                    <option value="timestamp">Date Saved</option>
-                    <option value="datePublished">Date Published</option>
                   </optgroup>
                 </select>
                 <button
@@ -1203,10 +1265,11 @@ export const VaultDashboard: React.FC = () => {
               const currentPage = pages[groupName] || 0;
               // If isolated, show all items using simple array, otherwise paginate
               const maxRows = 2;
-              const perRow = viewClasses[viewSize as keyof typeof viewClasses].includes('grid-cols-4') ? 4 
-                           : viewClasses[viewSize as keyof typeof viewClasses].includes('grid-cols-3') ? 3
-                           : viewClasses[viewSize as keyof typeof viewClasses].includes('grid-cols-2') ? 2
-                           : 1;
+              // perRow comes from the actual breakpoint that matches the current
+              // viewport, not a substring search of the class string. The first
+              // search ("grid-cols-4") would otherwise win against "grid-cols-5",
+              // breaking pagination at every viewport size.
+              const perRow = computePerRow(viewSize);
               const itemsPerPage = isolatedGroup ? groupItems.length : perRow * maxRows;
               
               const displayItems = isolatedGroup 
@@ -1334,9 +1397,7 @@ export const VaultDashboard: React.FC = () => {
                             {/* Duration Badge */}
                             {fav.duration && (
                               <div className="absolute bottom-2 right-2 bg-black/80 text-white text-[10px] font-mono font-bold px-1.5 py-0.5 rounded shadow z-20">
-                                {typeof fav.duration === 'number' 
-                                  ? `${Math.floor(fav.duration / 60)}:${(fav.duration % 60).toString().padStart(2, '0')}` 
-                                  : fav.duration}
+                                {formatDuration(fav.duration)}
                               </div>
                             )}
 
@@ -1497,25 +1558,12 @@ export const VaultDashboard: React.FC = () => {
 
       {/* PROMPT MODAL */}
       {promptDialog && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-vault-cardBg border border-vault-border rounded-lg shadow-2xl max-w-sm w-full p-6 animate-in zoom-in-95">
-            <h3 className="text-vault-text font-bold mb-4 flex items-center gap-2"><Icons.DebugIcon size={20} className="text-vault-accent" /> Input Required</h3>
-            <p className="text-vault-muted text-sm mb-3">{promptDialog.message}</p>
-            <input 
-              autoFocus
-              type={promptDialog.type === 'password' ? 'password' : 'text'}
-              className="w-full bg-vault-bg border border-vault-border rounded p-2 text-sm text-vault-text focus:outline-none focus:border-vault-accent focus:ring-1 focus:ring-vault-accent/30"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') promptDialog.onConfirm((e.target as HTMLInputElement).value);
-                if (e.key === 'Escape') setPromptDialog(null);
-              }}
-            />
-            <div className="flex justify-end gap-3 mt-6">
-              <button onClick={() => setPromptDialog(null)} className="px-4 py-1.5 text-xs font-bold text-vault-muted hover:text-vault-text transition-colors">Cancel</button>
-              <button onClick={(e) => promptDialog.onConfirm((e.currentTarget.parentElement?.previousElementSibling as HTMLInputElement).value)} className="px-4 py-1.5 text-xs font-black bg-vault-accent text-vault-bg rounded hover:bg-vault-accentHover transition-all shadow-lg">Submit</button>
-            </div>
-          </div>
-        </div>
+        <PromptDialog
+          message={promptDialog.message}
+          type={promptDialog.type}
+          onCancel={() => setPromptDialog(null)}
+          onConfirm={promptDialog.onConfirm}
+        />
       )}
 
       {/* EDIT MODAL */}
