@@ -34,3 +34,7 @@
 ## 2026-05-14 - [Content Script Mutation Observer Performance]
 **Learning:** During mutation observer callbacks (like link highlight scans), repeatedly awaiting `browser.storage.local.get` to fetch large datasets like the entire vault creates enormous overhead, especially since DOM mutations can fire rapidly. Serializing/deserializing thousands of objects just to check if a URL exists causes significant IPC strain and main thread blocking.
 **Action:** Always maintain a module-level cache (e.g. `Set<string>`) of the data required by the content script, populate it once, and keep it fresh by listening to `browser.storage.onChanged`.
+
+## 2026-05-18 - [Optimization] Array formatting passing native timestamps to Intl.DateTimeFormat
+**Learning:** Instantiating `new Date(timestamp)` just to pass it to an `Intl.DateTimeFormat` inside large render loops in React creates an O(N) object allocation footprint and triggers frequent garbage collection.
+**Action:** `Intl.DateTimeFormat.prototype.format()` accepts a raw numeric timestamp natively. Directly pass `fav.timestamp` (or other timestamps) rather than allocating a `new Date(timestamp)` to reduce memory footprint and garbage collection overhead in hot paths.
