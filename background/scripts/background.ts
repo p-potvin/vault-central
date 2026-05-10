@@ -357,8 +357,38 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                                             await new Promise(r => setTimeout(r, 100));
                                         }
 
+                                        // Sanity check: if the source video is cross-origin without
+                                        // CORS headers, drawImage paints onto a "tainted" canvas
+                                        // and getImageData throws. captureStream/MediaRecorder
+                                        // produce a valid-looking but visually-empty webm in that
+                                        // case. Detect it here and bail so the FFmpeg fallback
+                                        // (which fetches the source bytes directly via the
+                                        // extension's host_permissions) runs instead.
+                                        let hadVisibleContent = false;
+                                        try {
+                                            // Sample center pixel + two off-center points.
+                                            const samples = [
+                                                ctx.getImageData(canvas.width >> 1, canvas.height >> 1, 1, 1).data,
+                                                ctx.getImageData(canvas.width >> 2, canvas.height >> 2, 1, 1).data,
+                                                ctx.getImageData((canvas.width * 3) >> 2, (canvas.height * 3) >> 2, 1, 1).data,
+                                            ];
+                                            for (const s of samples) {
+                                                if (s[0] > 8 || s[1] > 8 || s[2] > 8) { hadVisibleContent = true; break; }
+                                            }
+                                        } catch (e) {
+                                            // SecurityError -> tainted canvas. Treat as no content.
+                                            console.warn("[VaultCentral] Canvas tainted by cross-origin video; yielding to FFmpeg fallback.");
+                                            hadVisibleContent = false;
+                                        }
+
                                         if (recorder.state !== 'inactive') {
                                             recorder.stop();
+                                        }
+
+                                        if (!hadVisibleContent) {
+                                            // The webm we'd produce would be black. Discard so the
+                                            // pipeline's FFmpeg fallback path triggers.
+                                            return finish(null);
                                         }
                                     } catch (e) {
                                         console.error("[VaultCentral] captureWebmPreview failed:", e);

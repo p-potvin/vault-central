@@ -1,5 +1,5 @@
 import browser from 'webextension-polyfill';
-import { VideoDataSchema } from '../types/schemas';
+import { VideoDataSchema, VaultMaterialSchema } from '../types/schemas';
 import { STORAGE_KEYS, VAULT_CONFIG } from './constants';
 const SYNC_ENABLED_KEY = 'vaultSyncEnabled';
 const SYNC_META_KEY = 'savedVideosSyncMeta';
@@ -90,6 +90,38 @@ export async function getPinSettings() {
 }
 export async function savePinSettings(settings) {
     await browser.storage.local.set({ [STORAGE_KEYS.PIN_SETTINGS]: settings });
+}
+// Base64 codec for the binary fields in VaultMaterial. browser.storage.local
+// serializes via structured-clone but Uint8Array round-trips to plain object
+// shape across some browser versions, so we standardize on base64 strings.
+export function bytesToBase64(bytes) {
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
+    }
+    return btoa(binary);
+}
+export function base64ToBytes(b64) {
+    const binary = atob(b64);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++)
+        out[i] = binary.charCodeAt(i);
+    return out;
+}
+export async function getVaultMaterial() {
+    const data = await browser.storage.local.get(STORAGE_KEYS.VAULT_MATERIAL);
+    const raw = data[STORAGE_KEYS.VAULT_MATERIAL];
+    if (!raw)
+        return null;
+    const parsed = VaultMaterialSchema.safeParse(raw);
+    return parsed.success ? parsed.data : null;
+}
+export async function saveVaultMaterial(material) {
+    await browser.storage.local.set({ [STORAGE_KEYS.VAULT_MATERIAL]: material });
+}
+export async function clearVaultMaterial() {
+    await browser.storage.local.remove(STORAGE_KEYS.VAULT_MATERIAL);
 }
 export async function getBackupSettings() {
     const data = await browser.storage.local.get(BACKUP_SETTINGS_KEY);

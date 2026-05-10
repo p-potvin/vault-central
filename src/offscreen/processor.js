@@ -1,7 +1,7 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
 import browser from 'webextension-polyfill';
-import { savePreview } from '../lib/dexie-store';
+import { savePreview } from '../lib/vault-client';
 let ffmpeg = null;
 async function loadFFmpeg() {
     if (ffmpeg)
@@ -36,7 +36,7 @@ async function handleGeneratePreviewProcess(message) {
     }
     catch (err) {
         console.error('[VaultProcessor] Preview generation failed:', err);
-        return { success: false, error: String(err) };
+        return { success: false, error: 'Preview generation failed' };
     }
 }
 async function processVideoPreview(url, duration) {

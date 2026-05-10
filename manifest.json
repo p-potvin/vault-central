@@ -26,7 +26,7 @@
     "<all_urls>"
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval' blob: https://unpkg.com; connect-src 'self' https://unpkg.com https://test-videos.co.uk; object-src 'self'"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'; connect-src 'self' https://test-videos.co.uk; object-src 'self'"
   },
   "action": {
     "default_title": "Open Vault Central",

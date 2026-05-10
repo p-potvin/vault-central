@@ -1,6 +1,6 @@
 import browser from 'webextension-polyfill';
 import { getAllPreviewRecords } from './dexie-store';
-import { getBackupSettings, getPinSettings, getSavedVideos, recordBackupResult } from './storage-vault';
+import { getBackupSettings, getPinSettings, getSavedVideos, getVaultMaterial, recordBackupResult } from './storage-vault';
 export const DAILY_BACKUP_ALARM = 'vault-central-daily-backup';
 function pad(value) {
     return String(value).padStart(2, '0');
@@ -49,6 +49,7 @@ async function serializePreview(record) {
         mimeType: record.mimeType,
         timestamp: record.timestamp,
         encrypted: Boolean(record.encrypted),
+        schemaVersion: record.schemaVersion,
         dataEncoding: 'base64',
         data: await blobLikeToBase64(record.blob)
     };
@@ -79,16 +80,21 @@ async function downloadTextFile(filename, contents) {
     }
 }
 export async function createFullVaultBackup(source) {
-    const [settings, pinSettings, videos, previewRecords] = await Promise.all([
+    const [settings, pinSettings, videos, previewRecords, vaultMaterial] = await Promise.all([
         getBackupSettings(),
         getPinSettings(),
         getSavedVideos(true),
-        getAllPreviewRecords()
+        getAllPreviewRecords(),
+        getVaultMaterial()
     ]);
     const previews = await Promise.all(previewRecords.map(serializePreview));
     const createdAt = new Date();
+    // A v2 envelope is detected by any preview carrying schemaVersion === 2.
+    // Legacy backups (v1) had only `encrypted` flags.
+    const hasV2Previews = previews.some(p => p.schemaVersion === 2);
+    const hasEncryptedAny = previews.some(p => p.encrypted) || hasV2Previews;
     return {
-        version: 1,
+        version: 2,
         app: 'vault-central',
         kind: 'full-vault-backup',
         source,
@@ -100,8 +106,10 @@ export async function createFullVaultBackup(source) {
         },
         security: {
             pinEnabled: Boolean(pinSettings.enabled),
-            encryptedPreviewsPreserved: previews.some(preview => preview.encrypted)
+            algorithm: vaultMaterial?.algorithm ?? null,
+            encryptedPreviewsPreserved: hasEncryptedAny
         },
+        vaultMaterial: vaultMaterial ?? null,
         videos,
         previews
     };
@@ -122,7 +130,10 @@ export async function downloadFullVaultBackup(source) {
         };
     }
     catch (err) {
-        await recordBackupResult('error', err instanceof Error ? err.message : String(err));
+        // Real error rethrows below for the caller to log; the persisted state
+        // gets a generic message so it isn't surfaced through getBackupSettings.
+        console.error('[backup-vault] downloadFullVaultBackup failed:', err);
+        await recordBackupResult('error', 'Backup operation failed');
         throw err;
     }
 }
