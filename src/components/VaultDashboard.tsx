@@ -399,13 +399,13 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
       )}
       
       {isProcessing ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <Icons.LoaderIcon className="text-vault-accent animate-spin" size={20} />
         </div>
       ) : (
         !previewBlob && isHovering && (
-          <div className="absolute bottom-2 left-2 bg-black/60 text-[8px] text-white px-1 rounded uppercase tracking-tighter">
-            Processing...
+          <div className="absolute bottom-2 left-2 bg-black/60 text-[8px] text-white px-1 rounded uppercase tracking-tighter z-10">
+            Generating preview…
           </div>
         )
       )}
@@ -1076,10 +1076,38 @@ export const VaultDashboard: React.FC = () => {
     6: 'grid-cols-1 xl:grid-cols-2', // Biggest
   };
 
+  // Card shell classes per view size.
+  // Views 5 & 6 use landscape (flex-row) layout like view 2 because they're
+  // too wide for a portrait card proportions at 1-2 columns.
+  const CARD_CLASS: Record<number, string> = {
+    1: "flex-row items-center gap-2 h-10 px-3 py-1 border-b border-vault-border rounded-none shadow-none hover:bg-vault-cardBg/50",
+    2: "flex-row items-stretch p-0 h-[110px] hover:-translate-y-1",
+    3: "flex-col h-[200px]",
+    4: "flex-col h-[250px]",
+    5: "flex-row items-stretch p-0 h-[200px]",
+    6: "flex-row items-stretch p-0 h-[260px]",
+  };
+
+  // Thumbnail wrapper classes per view size.
+  const THUMB_CLASS: Record<number, string> = {
+    2: "relative w-2/5 flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border",
+    3: "relative w-full h-[130px] flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb border-b border-vault-border rounded-t-lg",
+    4: "relative w-full h-[163px] flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb border-b border-vault-border rounded-t-lg",
+    5: "relative w-[38%] flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border",
+    6: "relative w-2/5 flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border",
+  };
+
   // If isolated, display that group. Else display UP TO `sectionLimit` groups.
-  const groupsToRender = isolatedGroup 
+  const groupsToRender = isolatedGroup
     ? [ [isolatedGroup, grouped[isolatedGroup] || []] as const ]
     : Object.entries(grouped).slice(0, sectionLimit);
+
+  // When filter / sort options change while the user is in the isolated-group
+  // drill-down, automatically return to the main dashboard view so the
+  // filter applies across all groups (going back "with filter" as UX).
+  useEffect(() => {
+    setIsolatedGroup(null);
+  }, [effectiveSearch, sortBy, sortOrder, groupBy]);
 
   // Helper to change page for a group
   const setGroupPage = (groupName: string, delta: number) => {
@@ -1118,37 +1146,41 @@ export const VaultDashboard: React.FC = () => {
 
         <div className="flex items-center gap-3">
           <div className="relative group flex items-center">
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value as keyof VideoData)}
-              className="bg-vault-cardBg border border-vault-border border-r-0 rounded-l-full px-4 py-2 text-sm text-vault-text focus:border-vault-accent focus:z-10 outline-none appearance-none cursor-pointer"
-            >
-              <option value="title">Title</option>
-              <option value="author">Author</option>
-              <option value="domain">Domain</option>
-              <option value="url">URL</option>
-              <option value="quality">Quality</option>
-              <option value="resolution">Res</option>
-              <option value="description">Desc</option>
-              <option value="tags">Tags</option>
-            </select>
+            {/* Field selector — icon overlay on native select */}
+            <div className="relative flex-none">
+              <Icons.SortIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 text-vault-muted/70 pointer-events-none" size={13} />
+              <select
+                value={searchField}
+                onChange={(e) => setSearchField(e.target.value as keyof VideoData)}
+                className="bg-vault-cardBg border border-vault-border border-r-0 rounded-l-full pl-8 pr-4 py-2 text-sm text-vault-text focus:border-vault-accent focus:z-10 outline-none appearance-none cursor-pointer"
+              >
+                <option value="title">Title</option>
+                <option value="author">Author</option>
+                <option value="domain">Domain</option>
+                <option value="url">URL</option>
+                <option value="quality">Quality</option>
+                <option value="resolution">Res</option>
+                <option value="description">Desc</option>
+                <option value="tags">Tags</option>
+              </select>
+            </div>
             <div className="relative flex-1">
               <Icons.SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-vault-muted group-focus-within:text-vault-accent transition-colors" size={16} />
-              <input 
+              <input
                 type="text"
                 placeholder={`Search in ${searchField}...`}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 pr-4 py-2 w-64 bg-vault-cardBg border border-vault-border rounded-r-full outline-none focus:border-vault-accent focus:z-10 text-sm transition-all"
+                className="pl-12 pr-4 py-2 w-64 bg-vault-cardBg border border-vault-border rounded-r-full outline-none focus:border-vault-accent focus:z-10 text-sm transition-all"
               />
             </div>
           </div>
 
-          <button onClick={() => setIsSettingsOpen(true)} className="vault-btn flex items-center justify-center p-1.5 rounded-full h-8 w-8 group" title="Vault Settings">
-            <Icons.SettingsIcon size={16} className="w-4 h-4 text-vault-accent group-hover:text-vault-bg group-hover:rotate-90 transition-all duration-300" />
+          <button onClick={() => setIsSettingsOpen(true)} className="vault-btn flex items-center justify-center p-1.5 rounded-full h-7 w-7 group" title="Vault Settings">
+            <Icons.SettingsIcon size={14} className="text-vault-accent group-hover:text-vault-bg transition-colors duration-200" />
           </button>
-          <button onClick={cycleTheme} className="vault-btn flex items-center justify-center p-1.5 rounded-full h-8 w-8 group" title="Cycle Theme">
-            <Icons.ThemeIcon size={16} className="w-4 h-4 text-vault-accent group-hover:text-vault-bg group-hover:rotate-90 transition-all duration-300" />
+          <button onClick={cycleTheme} className="vault-btn flex items-center justify-center p-1.5 rounded-full h-7 w-7 group" title="Cycle Theme">
+            <Icons.ThemeIcon size={14} className="text-vault-accent group-hover:text-vault-bg transition-colors duration-200" />
           </button>
         </div>
       </header>
@@ -1267,7 +1299,7 @@ export const VaultDashboard: React.FC = () => {
                       checked={pinSettings?.enabled || false} 
                       onChange={togglePin}
                     />
-                    <div className="w-9 h-5 bg-vault-cardBg peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-vault-muted after:border-vault-border after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-vault-accent peer-checked:after:bg-vault-bg" />
+                    <div className="w-9 h-5 bg-vault-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-transparent after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-vault-bg after:border-vault-border after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-vault-accent peer-checked:after:bg-white" />
                   </label>
                 </div>
 
@@ -1341,8 +1373,8 @@ export const VaultDashboard: React.FC = () => {
                 disabled={isSyncBusy}
                 className={cn(
                   "w-full vault-btn p-2 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2",
-                  isSyncing 
-                    ? "bg-vault-accentHover text-vault-bg border-vault-accentHover hover:bg-vault-accent hover:border-vault-accent" 
+                  isSyncing
+                    ? "bg-vault-accent text-vault-bg border-vault-accent hover:bg-vault-accentHover hover:border-vault-accentHover"
                     : "border-dashed border-vault-border text-vault-muted opacity-60 hover:opacity-100",
                   isSyncBusy && "cursor-wait opacity-70"
                 )}
@@ -1462,11 +1494,7 @@ export const VaultDashboard: React.FC = () => {
                     {displayItems.map((fav, idx) => (
                       <div key={`${fav.url}-${idx}`} className={cn(
                         "vault-card group relative flex transform transition-all hover:shadow-lg overflow-hidden",
-                        viewSize === 1 
-                          ? "flex-row items-center gap-2 h-10 px-3 py-1 border-b border-vault-border rounded-none shadow-none hover:bg-vault-cardBg/50" 
-                          : viewSize === 2 
-                            ? "flex-row items-stretch gap-4 h-[110px] p-0 hover:-translate-y-1" 
-                            : "flex-col h-[280px]"
+                        CARD_CLASS[viewSize]
                       )}>
                         
                         {/* THUMBNAIL AREA */}
@@ -1492,7 +1520,7 @@ export const VaultDashboard: React.FC = () => {
                                 }
                               }
                             }}
-                            className={viewSize === 2 ? "relative w-2/5 flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border" : "relative w-full h-[180px] flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb border-b border-vault-border rounded-t-lg"}
+                            className={THUMB_CLASS[viewSize]}
                           >
                             {fav.type === 'video' ? (
                               <PreviewThumb video={fav} />
@@ -1705,7 +1733,7 @@ export const VaultDashboard: React.FC = () => {
       {/* EDIT MODAL */}
       {editingItem && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setEditingItem(null)}>
-          <div className="bg-vault-cardBg border border-vault-border rounded-lg shadow-2xl max-w-2xl w-full flex flex-col max-h-[90vh] animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
+          <div className="bg-vault-bg border border-vault-border rounded-lg shadow-2xl max-w-2xl w-full flex flex-col max-h-[90vh] animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between p-4 border-b border-vault-border">
               <h2 className="text-lg font-bold text-vault-text flex items-center gap-2">
                 <Icons.EditIcon size={20} className="text-vault-accent" /> Edit Metadata
@@ -1823,7 +1851,7 @@ export const VaultDashboard: React.FC = () => {
                            <Icons.ExportIcon size={16} className="text-vault-accent"/> Full Local Backup
                          </h4>
                          <p className="text-xs text-vault-muted mt-1 leading-relaxed">
-                           Includes metadata, thumbnails, and IndexedDB WebM previews. Folder is relative to the browser Downloads folder; leave it blank for the Downloads root.
+                           Includes metadata, thumbnails, and WebM previews. Folder is relative to the browser Downloads folder; leave it blank for the Downloads root.
                          </p>
                          {backupSettings.lastBackupAt && (
                            <p className={cn(
@@ -1895,9 +1923,9 @@ export const VaultDashboard: React.FC = () => {
                  <div className="bg-red-900/10 border border-red-900/30 rounded p-4 flex flex-col md:flex-row items-center justify-between gap-4">
                    <div>
                      <h4 className="text-red-400 font-bold flex items-center gap-2"><Icons.AlertIcon size={16}/> Wipe Vault Data</h4>
-                     <p className="text-xs text-red-400/70 mt-1">Permanently obliterate all bookmarks, metadata, and blob previews from IndexedDB.</p>
+                     <p className="text-xs text-red-400/70 mt-1">Permanently obliterate all bookmarks, metadata, and locally stored previews.</p>
                    </div>
-                   <button onClick={handleWipeVault} className="vault-btn py-2 px-4 shadow-[0_0_15px_-3px_var(--color-red-500)] text-xs font-black uppercase tracking-widest bg-red-600 hover:bg-red-500 text-white border-none whitespace-nowrap">
+                   <button onClick={handleWipeVault} className="vault-btn py-2 px-4 shadow-[0_0_15px_-3px_var(--color-red-500)] text-xs font-black uppercase tracking-widest bg-red-600 hover:bg-red-500 text-white border border-red-400/60 whitespace-nowrap">
                      Wipe Database
                    </button>
                  </div>

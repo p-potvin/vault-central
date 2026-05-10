@@ -1,22 +1,130 @@
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile } from '@ffmpeg/util';
+/**
+ * processor.ts — Offscreen document that orchestrates FFmpeg preview generation.
+ *
+ * FFmpeg's @ffmpeg/core is compiled with Emscripten and uses new Function() in
+ * its JS glue code.  Chrome MV3 forbids 'unsafe-eval' in extension_pages CSP,
+ * so we cannot run FFmpeg directly here.
+ *
+ * Solution: we load a sandboxed extension page (sandbox.html) as a hidden iframe.
+ * Sandboxed pages are exempt from the extension's CSP — they can freely use
+ * new Function() / eval().  We communicate with the sandbox exclusively via
+ * window.postMessage, passing data as transferable ArrayBuffers.
+ *
+ * Protocol (→ sandbox, ← sandbox):
+ *   → { type:'vc_init',    id, jsBytes, wasmBytes }  (clone, not transfer)
+ *   ← { type:'vc_sandbox_result', id, bytes:null }   (FFmpeg ready)
+ *   → { type:'vc_process', id, videoBytes, duration } (transfer videoBytes)
+ *   ← { type:'vc_sandbox_result', id, bytes }        (transfer result)
+ *   ← { type:'vc_sandbox_result', id, error }        (on failure)
+ */
 import browser from 'webextension-polyfill';
 import { savePreview } from '../lib/vault-client';
-let ffmpeg = null;
-async function loadFFmpeg() {
-    if (ffmpeg)
-        return ffmpeg;
-    ffmpeg = new FFmpeg();
-    await ffmpeg.load({
-        coreURL: browser.runtime.getURL('ffmpeg-core/ffmpeg-core.js'),
-        wasmURL: browser.runtime.getURL('ffmpeg-core/ffmpeg-core.wasm'),
+let _sandboxIframe = null;
+let _ffmpegCoreBytes = null;
+let _sandboxReady = false;
+let _initPromise = null;
+const _pending = new Map();
+window.addEventListener('message', (event) => {
+    const msg = event.data;
+    if (!msg || msg.type !== 'vc_sandbox_result')
+        return;
+    const entry = _pending.get(msg.id);
+    if (!entry)
+        return;
+    _pending.delete(msg.id);
+    if (msg.error)
+        entry.reject(new Error(msg.error));
+    else
+        entry.resolve(msg.bytes ?? null);
+});
+function createSandboxIframe() {
+    return new Promise((resolve) => {
+        const iframe = document.createElement('iframe');
+        iframe.src = browser.runtime.getURL('src/offscreen/sandbox.html');
+        iframe.style.cssText = 'position:absolute;width:0;height:0;border:0';
+        document.body.appendChild(iframe);
+        iframe.addEventListener('load', () => {
+            _sandboxIframe = iframe;
+            resolve(iframe);
+        }, { once: true });
     });
-    return ffmpeg;
 }
-browser.runtime.onMessage.addListener((message) => {
-    if (message.action !== 'generate_preview_process') {
-        return undefined;
+async function initSandbox() {
+    const iframe = await createSandboxIframe();
+    // Fetch FFmpeg core files (only once per offscreen document lifetime).
+    if (!_ffmpegCoreBytes) {
+        const [js, wasm] = await Promise.all([
+            fetch(browser.runtime.getURL('ffmpeg-core/ffmpeg-core.js')).then(r => r.arrayBuffer()),
+            fetch(browser.runtime.getURL('ffmpeg-core/ffmpeg-core.wasm')).then(r => r.arrayBuffer()),
+        ]);
+        _ffmpegCoreBytes = { js, wasm };
     }
+    // Send init message.  Do NOT transfer the buffers — processor must keep
+    // its copy so it can re-initialize a new sandbox if the iframe is torn down.
+    await new Promise((resolve, reject) => {
+        const id = '_init_' + Date.now();
+        const timeoutId = setTimeout(() => {
+            _pending.delete(id);
+            reject(new Error('[VaultProcessor] Sandbox init timed out'));
+        }, 60_000);
+        _pending.set(id, {
+            resolve: () => { clearTimeout(timeoutId); _sandboxReady = true; resolve(); },
+            reject: (e) => { clearTimeout(timeoutId); reject(e); },
+        });
+        iframe.contentWindow.postMessage({ type: 'vc_init', id, jsBytes: _ffmpegCoreBytes.js, wasmBytes: _ffmpegCoreBytes.wasm }, '*');
+    });
+}
+/**
+ * Returns a ready sandbox iframe, initialising it exactly once even under
+ * concurrent callers.
+ */
+async function ensureSandbox() {
+    if (_sandboxReady && _sandboxIframe && document.body.contains(_sandboxIframe)) {
+        return _sandboxIframe;
+    }
+    // Reset ready flag if iframe disappeared (e.g., offscreen doc recycled).
+    _sandboxReady = false;
+    if (!_initPromise) {
+        _initPromise = initSandbox().catch((e) => {
+            // Allow retry on next call.
+            _initPromise = null;
+            throw e;
+        });
+    }
+    await _initPromise;
+    return _sandboxIframe;
+}
+// ────────────────────────────────────────────────────────────
+// Video processing
+// ────────────────────────────────────────────────────────────
+async function processVideoPreview(mediaUrl, duration) {
+    const iframe = await ensureSandbox();
+    // Fetch the video bytes here (offscreen document benefits from <all_urls>
+    // host_permissions and can bypass CORS; the sandbox's null-origin cannot).
+    const videoBytes = await fetch(mediaUrl).then(r => r.arrayBuffer());
+    return new Promise((resolve, reject) => {
+        const id = Math.random().toString(36).slice(2);
+        const timeoutId = setTimeout(() => {
+            _pending.delete(id);
+            reject(new Error('[VaultProcessor] Sandbox processing timed out'));
+        }, 180_000);
+        _pending.set(id, {
+            resolve: (bytes) => {
+                clearTimeout(timeoutId);
+                resolve(bytes ? new Blob([bytes], { type: 'video/webm' }) : null);
+            },
+            reject: (e) => { clearTimeout(timeoutId); reject(e); },
+        });
+        // Transfer ownership of videoBytes to sandbox (zero-copy).
+        iframe.contentWindow.postMessage({ type: 'vc_process', id, videoBytes, duration }, '*', [videoBytes]);
+    });
+}
+// ────────────────────────────────────────────────────────────
+// Runtime message handler (called by background.ts)
+// ────────────────────────────────────────────────────────────
+browser.runtime.onMessage.addListener((message) => {
+    if (message.action !== 'generate_preview_process')
+        return undefined;
     return handleGeneratePreviewProcess(message);
 });
 async function handleGeneratePreviewProcess(message) {
@@ -27,9 +135,9 @@ async function handleGeneratePreviewProcess(message) {
         return { success: false, error: 'Missing preview source URL or storage key' };
     }
     try {
-        const result = await processVideoPreview(mediaUrl, duration);
-        if (result) {
-            await savePreview(storageKey, result);
+        const blob = await processVideoPreview(mediaUrl, typeof duration === 'number' ? duration : 60);
+        if (blob) {
+            await savePreview(storageKey, blob);
             return { success: true };
         }
         return { success: false, error: 'Preview generation returned no blob' };
@@ -38,73 +146,4 @@ async function handleGeneratePreviewProcess(message) {
         console.error('[VaultProcessor] Preview generation failed:', err);
         return { success: false, error: 'Preview generation failed' };
     }
-}
-async function processVideoPreview(url, duration) {
-    const fm = await loadFFmpeg();
-    const inputName = `input_${Date.now()}.mp4`;
-    const outputName = `preview_${Date.now()}.webm`;
-    let resultBlob = null;
-    try {
-        // WARNING: This will crash the WASM instance if the file is too large (e.g., > 500MB).
-        // Rely on the content script's Canvas MediaRecorder whenever possible.
-        const fileData = await fetchFile(url);
-        await fm.writeFile(inputName, fileData);
-        const baseEncodingArgs = [
-            '-an', // No audio
-            '-c:v', 'libvpx', // VP8 is significantly faster in WASM than VP9
-            '-crf', '40',
-            '-b:v', '0',
-            '-cpu-used', '5', // Speed optimization for VPx encoders
-            '-deadline', 'realtime',
-            '-threads', '4'
-        ];
-        if (duration <= 20) {
-            await fm.exec([
-                '-i', inputName,
-                '-t', '20',
-                '-vf', 'scale=426:240',
-                ...baseEncodingArgs,
-                outputName
-            ]);
-        }
-        else {
-            const segmentDuration = 2;
-            const numSegments = 10;
-            const interval = (duration - 20) / (numSegments - 1);
-            const inputArgs = [];
-            const filterParts = [];
-            // Use Input Seeking (-ss before -i) to jump directly to timestamps without decoding
-            for (let i = 0; i < numSegments; i++) {
-                const startTimestamp = (i * interval).toFixed(2);
-                inputArgs.push('-ss', startTimestamp, '-t', segmentDuration.toString(), '-i', inputName);
-                // Add scale filter to each segment before concatenation to ensure uniform size
-                filterParts.push(`[${i}:v]scale=426:240,setpts=PTS-STARTPTS[v${i}]; `);
-            }
-            // Concat the scaled segments
-            for (let i = 0; i < numSegments; i++) {
-                filterParts.push(`[v${i}]`);
-            }
-            filterParts.push(`concat=n=${numSegments}:v=1:a=0[outv]`);
-            await fm.exec([
-                ...inputArgs,
-                '-filter_complex', filterParts.join(''),
-                '-map', '[outv]',
-                ...baseEncodingArgs,
-                outputName
-            ]);
-        }
-        const data = await fm.readFile(outputName);
-        const dataArray = (data instanceof Uint8Array) ? data : new Uint8Array(data);
-        resultBlob = new Blob([dataArray], { type: 'video/webm' });
-    }
-    finally {
-        try {
-            await fm.deleteFile(inputName);
-            await fm.deleteFile(outputName);
-        }
-        catch (e) {
-            console.warn('[VaultProcessor] Failed to clean up FFmpeg temp files:', e);
-        }
-    }
-    return resultBlob;
 }

@@ -121,7 +121,15 @@ async function doTabExtraction(targetUrl, ctx = {}) {
                     logger.warn("[doTabExtraction] Error removing tabUpdateListener:", e);
                 }
             }
-            if (scraperTabId !== undefined) {
+            if (scraperWindowId !== undefined) {
+                try {
+                    await browser.windows.remove(scraperWindowId);
+                }
+                catch (e) {
+                    logger.warn("[doTabExtraction] Error closing scraper window:", e);
+                }
+            }
+            else if (scraperTabId !== undefined) {
                 try {
                     await browser.tabs.remove(scraperTabId);
                 }
@@ -132,10 +140,21 @@ async function doTabExtraction(targetUrl, ctx = {}) {
             resolve(result);
         };
         try {
-            const scraperTab = await browser.tabs.create({ url: targetUrl, active: false });
-            logger.log("[doTabExtraction] Scraper tab created. tabId:", scraperTab.id, "windowId:", scraperTab.windowId, "| active: false (hidden tab)");
-            scraperTabId = scraperTab.id;
-            scraperWindowId = scraperTab.windowId;
+            // Use a minimized popup window instead of a background tab so Firefox
+            // actually loads the page (Firefox discards non-active background tabs
+            // until the user clicks them, which breaks the extraction pipeline).
+            const scraperWindow = await browser.windows.create({
+                url: targetUrl,
+                type: 'popup',
+                state: 'minimized',
+                focused: false,
+                width: 1280,
+                height: 720,
+            });
+            const scraperTabFromWindow = scraperWindow.tabs?.[0];
+            logger.log("[doTabExtraction] Scraper window created (minimized popup). windowId:", scraperWindow.id, "tabId:", scraperTabFromWindow?.id);
+            scraperTabId = scraperTabFromWindow?.id;
+            scraperWindowId = scraperWindow.id;
             globalTimeoutId = setTimeout(() => {
                 logger.warn("[doTabExtraction] Global timeout reached after 18s. latestM3u8:", latestM3u8);
                 // Even on hard timeout, return what we got — the pipeline always
@@ -170,7 +189,7 @@ async function doTabExtraction(targetUrl, ctx = {}) {
                 }
             };
             browser.tabs.onUpdated.addListener(tabUpdateListener);
-            browser.tabs.get(scraperTab.id).then(tab => {
+            browser.tabs.get(scraperTabId).then(tab => {
                 if (tab.status === 'complete') {
                     logger.log("[doTabExtraction] Tab was already 'complete' before listener attached (cache hit). Injecting immediately.");
                     if (tabUpdateListener) {
