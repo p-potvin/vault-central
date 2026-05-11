@@ -123,10 +123,13 @@ const LockedBanner = ({ visible, pinLength, onUnlocked }) => {
                                 : 'border-vault-border focus:border-vault-accent', busy && 'opacity-50') }, i))) })] }) }));
 };
 async function getPreviewForVideo(video) {
+    console.debug('[getPreviewForVideo] Fetching primary for:', video.url);
     const primary = await getPreview(video.url);
     if (primary || !video.rawVideoSrc || video.rawVideoSrc === video.url) {
+        console.debug('[getPreviewForVideo] Returning primary / no fallback needed. Found primary?', !!primary);
         return primary;
     }
+    console.debug('[getPreviewForVideo] Primary not found, fetching fallback for:', video.rawVideoSrc);
     return getPreview(video.rawVideoSrc);
 }
 function isDisplayableImageThumbnail(thumbnail) {
@@ -177,24 +180,32 @@ const PreviewThumb = React.memo(({ video }) => {
     const [isHovering, setIsHovering] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
     const videoRef = useRef(null);
+    const wasHovering = useRef(false);
     useEffect(() => {
         let active = true;
         let retryIndex = 0;
         const retryDelays = [2000, 5000, 15000, 30000];
         const attempt = () => {
+            console.debug(`[PreviewThumb] attempt ${retryIndex + 1} for: ${video.url}`);
             getPreviewForVideo(video)
                 .then(blob => {
                 if (!active)
                     return;
                 if (blob) {
+                    console.debug(`[PreviewThumb] blob found on attempt ${retryIndex + 1} for: ${video.url}`);
                     setBlob(blob);
                 }
                 else if (retryIndex < retryDelays.length) {
+                    console.debug(`[PreviewThumb] no blob, scheduling retry ${retryIndex + 1} for: ${video.url}`);
                     const delay = retryDelays[retryIndex++];
                     setTimeout(attempt, delay);
                 }
+                else {
+                    console.debug(`[PreviewThumb] all polling attempts exhausted for: ${video.url}`);
+                }
             })
-                .catch(() => {
+                .catch((err) => {
+                console.error(`[PreviewThumb] error during attempt for: ${video.url}`, err);
                 if (!active || retryIndex >= retryDelays.length)
                     return;
                 const delay = retryDelays[retryIndex++];
@@ -209,16 +220,26 @@ const PreviewThumb = React.memo(({ video }) => {
         if (!videoRef.current || !previewBlob)
             return;
         if (isHovering) {
+            wasHovering.current = true;
             videoRef.current.play().catch(() => { });
         }
         else {
-            videoRef.current.pause();
-            videoRef.current.currentTime = 0;
+            if (wasHovering.current) {
+                videoRef.current.pause();
+                // Firefox cannot seek WebM created by MediaRecorder (missing Cues). 
+                // Using .load() resets the stream without throwing NS_ERROR_DOM_MEDIA_METADATA_ERR.
+                videoRef.current.load();
+            }
+            wasHovering.current = false;
         }
     }, [isHovering, previewBlob]);
     useEffect(() => {
         if (!blob)
             return;
+        if (blob.size < 100) {
+            console.warn('[PreviewThumb] Loaded blob is abnormally small:', blob.size, 'bytes');
+            return;
+        }
         const url = URL.createObjectURL(blob);
         setPreviewBlob(url);
         return () => { URL.revokeObjectURL(url); };
@@ -281,7 +302,7 @@ const PreviewThumb = React.memo(({ video }) => {
     return (_jsxs("div", { className: "absolute inset-0 z-20 overflow-hidden bg-black", onMouseEnter: handleMouseEnter, onMouseLeave: () => setIsHovering(false), children: [previewBlob ? (
             // Show as a static first-frame when not hovering; play on hover.
             // The play/pause is driven by the isHovering useEffect above.
-            _jsx("video", { ref: videoRef, src: previewBlob, className: "w-full h-full object-cover", muted: true, loop: true, playsInline: true })) : (isDisplayableImageThumbnail(video.thumbnail) ? (
+            _jsx("video", { ref: videoRef, src: previewBlob, className: "w-full h-full object-cover", preload: "none", muted: true, loop: true, playsInline: true })) : (isDisplayableImageThumbnail(video.thumbnail) ? (
             // ⚡ BOLT OPTIMIZATION:
             // Adding `loading="lazy"` defers the loading of off-screen thumbnails,
             // significantly reducing initial network payload and memory footprint for large lists.

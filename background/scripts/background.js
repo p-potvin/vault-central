@@ -140,21 +140,54 @@ async function doTabExtraction(targetUrl, ctx = {}) {
             resolve(result);
         };
         try {
-            // Use a minimized popup window instead of a background tab so Firefox
-            // actually loads the page (Firefox discards non-active background tabs
-            // until the user clicks them, which breaks the extraction pipeline).
-            const scraperWindow = await browser.windows.create({
-                url: targetUrl,
-                type: 'popup',
-                state: 'minimized',
-                focused: false,
-                width: 1280,
-                height: 720,
-            });
-            const scraperTabFromWindow = scraperWindow.tabs?.[0];
-            logger.log("[doTabExtraction] Scraper window created (minimized popup). windowId:", scraperWindow.id, "tabId:", scraperTabFromWindow?.id);
-            scraperTabId = scraperTabFromWindow?.id;
-            scraperWindowId = scraperWindow.id;
+            try {
+                // Use a popup window so Firefox actually loads the page. 
+                // We create it focused to bypass anti-popup block, then quickly restore focus.
+                const scraperWindow = await browser.windows.create({
+                    url: targetUrl,
+                    type: 'popup',
+                    state: 'normal',
+                    focused: true,
+                    width: 1280,
+                    height: 720,
+                });
+                const scraperTabFromWindow = scraperWindow.tabs?.[0];
+                logger.log("[doTabExtraction] Scraper window created (normal popup). windowId:", scraperWindow.id, "tabId:", scraperTabFromWindow?.id);
+                scraperTabId = scraperTabFromWindow?.id;
+                scraperWindowId = scraperWindow.id;
+                // Immediately switch focus back to original tab/window to minimize disruption
+                if (ctx.originWindowId !== undefined) {
+                    try {
+                        await browser.windows.update(ctx.originWindowId, { focused: true });
+                    }
+                    catch (e) { }
+                }
+                if (ctx.originTabId !== undefined) {
+                    try {
+                        await browser.tabs.update(ctx.originTabId, { active: true });
+                    }
+                    catch (e) { }
+                }
+            }
+            catch (popupErr) {
+                logger.warn("[doTabExtraction] windows.create failed (popup blocker?). Falling back to tabs.create with active:true:", popupErr);
+                const scraperTab = await browser.tabs.create({ url: targetUrl, active: true });
+                scraperTabId = scraperTab.id;
+                logger.log("[doTabExtraction] Scraper tab fallback (active:true) created. tabId:", scraperTabId);
+                // Immediately switch focus back to original tab/window
+                if (ctx.originWindowId !== undefined) {
+                    try {
+                        await browser.windows.update(ctx.originWindowId, { focused: true });
+                    }
+                    catch (e) { }
+                }
+                if (ctx.originTabId !== undefined) {
+                    try {
+                        await browser.tabs.update(ctx.originTabId, { active: true });
+                    }
+                    catch (e) { }
+                }
+            }
             globalTimeoutId = setTimeout(() => {
                 logger.warn("[doTabExtraction] Global timeout reached after 18s. latestM3u8:", latestM3u8);
                 // Even on hard timeout, return what we got — the pipeline always
@@ -623,6 +656,8 @@ async function runCapturePipeline(data, tabId, windowId) {
         const extracted = await doTabExtraction(targetUrl, {
             originUrl: data.originUrl,
             originTitle: data.originTitle,
+            originTabId: tabId,
+            originWindowId: windowId
         });
         logger.log("[runCapturePipeline] doTabExtraction returned. src:", extracted?.src ?? 'null', "| scraped thumbnail length:", extracted?.metadata?.thumbnail?.length ?? 0);
         // Decision-tree type assignment:

@@ -42,9 +42,11 @@ window.addEventListener('message', async (event) => {
             // internal new Worker(coreURL) call succeeds without CSP issues.
             const coreBlob = new Blob([jsBytes], { type: 'text/javascript' });
             const wasmBlob = new Blob([wasmBytes], { type: 'application/wasm' });
+            const workerBlob = new Blob([`importScripts('${URL.createObjectURL(coreBlob)}');`], { type: 'text/javascript' });
             await ffmpeg.load({
                 coreURL: URL.createObjectURL(coreBlob),
                 wasmURL: URL.createObjectURL(wasmBlob),
+                classWorkerURL: URL.createObjectURL(workerBlob)
             });
             reply({ type: 'vc_sandbox_result', id, bytes: null });
         }

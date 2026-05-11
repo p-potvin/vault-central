@@ -39,10 +39,12 @@ export async function savePreview(videoUrl, blob) {
         throw new Error(res.error || 'preview save failed');
 }
 export async function getPreview(videoUrl) {
+    console.debug('[vault-client] getPreview requested for:', videoUrl);
     const res = await send({
         action: 'preview.get',
         videoUrl,
     });
+    console.debug('[vault-client] getPreview response for:', videoUrl, 'success:', res.success, 'found:', res.found);
     if (!res.success || !res.found || !res.bytes)
         return null;
     return new Blob([new Uint8Array(res.bytes)], { type: res.mimeType || 'application/octet-stream' });

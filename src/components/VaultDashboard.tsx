@@ -206,10 +206,13 @@ const LockedBanner: React.FC<{
 };
 
 async function getPreviewForVideo(video: VideoData): Promise<Blob | null> {
+  console.debug('[getPreviewForVideo] Fetching primary for:', video.url);
   const primary = await getPreview(video.url);
   if (primary || !video.rawVideoSrc || video.rawVideoSrc === video.url) {
+    console.debug('[getPreviewForVideo] Returning primary / no fallback needed. Found primary?', !!primary);
     return primary;
   }
+  console.debug('[getPreviewForVideo] Primary not found, fetching fallback for:', video.rawVideoSrc);
   return getPreview(video.rawVideoSrc);
 }
 
@@ -261,6 +264,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
   const [isHovering, setIsHovering] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const wasHovering = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -268,17 +272,23 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
     const retryDelays = [2000, 5000, 15000, 30000];
 
     const attempt = () => {
+      console.debug(`[PreviewThumb] attempt ${retryIndex + 1} for: ${video.url}`);
       getPreviewForVideo(video)
         .then(blob => {
           if (!active) return;
           if (blob) {
+            console.debug(`[PreviewThumb] blob found on attempt ${retryIndex + 1} for: ${video.url}`);
             setBlob(blob);
           } else if (retryIndex < retryDelays.length) {
+            console.debug(`[PreviewThumb] no blob, scheduling retry ${retryIndex + 1} for: ${video.url}`);
             const delay = retryDelays[retryIndex++];
             setTimeout(attempt, delay);
+          } else {
+            console.debug(`[PreviewThumb] all polling attempts exhausted for: ${video.url}`);
           }
         })
-        .catch(() => {
+        .catch((err) => {
+          console.error(`[PreviewThumb] error during attempt for: ${video.url}`, err);
           if (!active || retryIndex >= retryDelays.length) return;
           const delay = retryDelays[retryIndex++];
           setTimeout(attempt, delay);
@@ -293,15 +303,25 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
   useEffect(() => {
     if (!videoRef.current || !previewBlob) return;
     if (isHovering) {
+      wasHovering.current = true;
       videoRef.current.play().catch(() => {});
     } else {
-      videoRef.current.pause();
-      videoRef.current.currentTime = 0;
+      if (wasHovering.current) {
+        videoRef.current.pause();
+        // Firefox cannot seek WebM created by MediaRecorder (missing Cues). 
+        // Using .load() resets the stream without throwing NS_ERROR_DOM_MEDIA_METADATA_ERR.
+        videoRef.current.load();
+      }
+      wasHovering.current = false;
     }
   }, [isHovering, previewBlob]);
 
   useEffect(() => {
     if (!blob) return;
+    if (blob.size < 100) {
+      console.warn('[PreviewThumb] Loaded blob is abnormally small:', blob.size, 'bytes');
+      return;
+    }
     const url = URL.createObjectURL(blob);
     setPreviewBlob(url);
     return () => { URL.revokeObjectURL(url); };
@@ -378,6 +398,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
           ref={videoRef}
           src={previewBlob}
           className="w-full h-full object-cover"
+          preload="none"
           muted
           loop
           playsInline

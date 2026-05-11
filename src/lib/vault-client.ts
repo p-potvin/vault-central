@@ -52,12 +52,14 @@ export async function savePreview(videoUrl: string, blob: Blob): Promise<void> {
 }
 
 export async function getPreview(videoUrl: string): Promise<Blob | null> {
-  const res = await send<{ found: boolean; bytes?: number[]; mimeType?: string }>({
-    action: 'preview.get',
-    videoUrl,
-  });
-  if (!res.success || !res.found || !res.bytes) return null;
-  return new Blob([new Uint8Array(res.bytes)], { type: res.mimeType || 'application/octet-stream' });
+    console.debug('[vault-client] getPreview requested for:', videoUrl);
+    const res = await send<{ found: boolean; bytes?: number[]; mimeType?: string }>({
+      action: 'preview.get',
+      videoUrl,
+    });
+    console.debug('[vault-client] getPreview response for:', videoUrl, 'success:', res.success, 'found:', res.found);
+    if (!res.success || !res.found || !res.bytes) return null;
+    return new Blob([new Uint8Array(res.bytes!)], { type: res.mimeType || 'application/octet-stream' });
 }
 
 export async function deletePreview(videoUrl: string) {
