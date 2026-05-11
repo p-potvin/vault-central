@@ -97,3 +97,53 @@
   --vault-accent: #6B30A8;
   --vault-accent-hover: #571c94;
 }
+
+[data-theme="vault-theme-catppuccin-mocha"] {
+  --vault-bg: #1E1E2E;
+  --vault-text: #F3F4F6;
+  --vault-border: #323242;
+  --vault-card-bg: rgba(0,0,0,0.5);
+  --vault-muted: #A0AEC0;
+  --vault-accent: #CBA6F7;
+  --vault-accent-hover: #dfbaff;
+}
+
+[data-theme="vault-theme-dracula"] {
+  --vault-bg: #282A36;
+  --vault-text: #F3F4F6;
+  --vault-border: #3c3e4a;
+  --vault-card-bg: rgba(0,0,0,0.5);
+  --vault-muted: #A0AEC0;
+  --vault-accent: #FF79C6;
+  --vault-accent-hover: #ff8dda;
+}
+
+[data-theme="vault-theme-tokyo-night-storm"] {
+  --vault-bg: #24283B;
+  --vault-text: #F3F4F6;
+  --vault-border: #383c4f;
+  --vault-card-bg: rgba(0,0,0,0.5);
+  --vault-muted: #A0AEC0;
+  --vault-accent: #7AA2F7;
+  --vault-accent-hover: #8eb6ff;
+}
+
+[data-theme="vault-theme-github-light-default"] {
+  --vault-bg: #FFFFFF;
+  --vault-text: #1A202C;
+  --vault-border: #ebebeb;
+  --vault-card-bg: rgba(255,255,255,0.7);
+  --vault-muted: #718096;
+  --vault-accent: #0969DA;
+  --vault-accent-hover: #0055c6;
+}
+
+[data-theme="vault-theme-monokai-pro"] {
+  --vault-bg: #2D2A2E;
+  --vault-text: #F3F4F6;
+  --vault-border: #413e42;
+  --vault-card-bg: rgba(0,0,0,0.5);
+  --vault-muted: #A0AEC0;
+  --vault-accent: #FFD866;
+  --vault-accent-hover: #ffec7a;
+}

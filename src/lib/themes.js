@@ -9,5 +9,10 @@ export const VAULT_THEMES = {
     8: { id: 8, name: 'royal-tangerine', mode: 'dark' },
     9: { id: 9, name: 'crimson-bloom', mode: 'dark' },
     10: { id: 10, name: 'amethyst-frost', mode: 'light' },
+    11: { id: 11, name: 'catppuccin-mocha', mode: 'dark' },
+    12: { id: 12, name: 'dracula', mode: 'dark' },
+    13: { id: 13, name: 'tokyo-night-storm', mode: 'dark' },
+    14: { id: 14, name: 'github-light-default', mode: 'light' },
+    15: { id: 15, name: 'monokai-pro', mode: 'dark' },
 };
 export const getThemeClass = (id) => `vault-theme-${VAULT_THEMES[id]?.name || 'cyberpunk-cinder'}`;

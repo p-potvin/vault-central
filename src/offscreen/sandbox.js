@@ -20,10 +20,12 @@
  */
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 let ffmpeg = null;
+console.log("[VaultSandbox] Sandbox scripts loaded.");
 window.addEventListener('message', async (event) => {
     const msg = event.data;
     if (!msg?.type)
         return;
+    console.log("[VaultSandbox] Received message:", msg.type);
     const src = event.source;
     const reply = (payload, transfer) => {
         if (transfer?.length) {
