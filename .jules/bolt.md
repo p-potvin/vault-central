@@ -38,3 +38,6 @@
 ## 2026-05-18 - [Optimization] Array formatting passing native timestamps to Intl.DateTimeFormat
 **Learning:** Instantiating `new Date(timestamp)` just to pass it to an `Intl.DateTimeFormat` inside large render loops in React creates an O(N) object allocation footprint and triggers frequent garbage collection.
 **Action:** `Intl.DateTimeFormat.prototype.format()` accepts a raw numeric timestamp natively. Directly pass `fav.timestamp` (or other timestamps) rather than allocating a `new Date(timestamp)` to reduce memory footprint and garbage collection overhead in hot paths.
+## 2024-05-11 - Repeated `new URL()` Parsing in Loops causes O(N) overhead
+**Learning:** Instantiating `new URL()` synchronously within loops, such as extraction attempts (`attemptExtraction` in content scripts) or React render loops, creates a significant O(N) performance bottleneck in the browser extension environment.
+**Action:** Always hoist domain parsing or use a module-level `Map` (like `domainCache`) to store and retrieve previously parsed URLs. This caches the results and prevents redundant, synchronous URL parsing overhead.

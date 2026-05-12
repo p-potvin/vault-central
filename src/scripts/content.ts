@@ -85,6 +85,22 @@ function addHeartIndicator(el: HTMLElement) {
 // and array iterations on every DOM mutation.
 let cachedSavedUrls: Set<string> | null = null;
 
+// ⚡ BOLT OPTIMIZATION: Cache parsed URLs to prevent redundant new URL() instantiation
+// which creates an O(N) synchronous bottleneck during repeated extraction attempts.
+const domainCache = new Map<string, string>();
+
+function getSafeHostname(url: string): string {
+    if (domainCache.has(url)) return domainCache.get(url)!;
+    try {
+        const hostname = new URL(url).hostname;
+        domainCache.set(url, hostname);
+        return hostname;
+    } catch {
+        domainCache.set(url, window.location.hostname);
+        return window.location.hostname;
+    }
+}
+
 // Listen for storage changes to keep cache fresh
 if (browser.storage && browser.storage.onChanged) {
     browser.storage.onChanged.addListener((changes, areaName) => {
@@ -487,12 +503,7 @@ function attemptExtraction(target: TargetPayload): Promise<CaptureResponse> {
     const isLocalCapture = target.url === window.location.href || target.isDirectVideo;
     console.log(`${LOG_PREFIX} attemptExtraction: isLocalCapture=${isLocalCapture} (target.url === window.location.href: ${target.url === window.location.href})`);
     
-    let safeHostname = window.location.hostname;
-    try {
-        safeHostname = new URL(target.url).hostname;
-    } catch (e) {
-        console.warn(`${LOG_PREFIX} attemptExtraction: Invalid URL passed to extraction:`, target.url);
-    }
+    const safeHostname = getSafeHostname(target.url);
 
     const metaDataPayload = isLocalCapture ? {
         title: document.title || target.localMeta.title || target.url.split('/').pop() || "Captured Media",
