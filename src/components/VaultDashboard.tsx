@@ -261,6 +261,8 @@ function getDomainFromUrl(url: string, removeWww = false): string {
 const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
   const [blob, setBlob] = useState<Blob | null>(null);
   const [previewBlob, setPreviewBlob] = useState<string | null>(null);
+  const [frameSequence, setFrameSequence] = useState<string[] | null>(null);
+  const [currentFrame, setCurrentFrame] = useState(0);
   const [isHovering, setIsHovering] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -322,16 +324,45 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
       console.warn('[PreviewThumb] Loaded blob is abnormally small:', blob.size, 'bytes');
       return;
     }
-    const url = URL.createObjectURL(blob);
-    setPreviewBlob(url);
-    return () => { URL.revokeObjectURL(url); };
+    if (blob.type === 'application/json') {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const text = reader.result as string;
+          const data = JSON.parse(text);
+          if (data.isFrames && Array.isArray(data.frames)) {
+             setFrameSequence(data.frames);
+          }
+        } catch(e) {
+          console.error("Failed to parse frame JSON:", e);
+        }
+      };
+      reader.readAsText(blob);
+    } else {
+      const url = URL.createObjectURL(blob);
+      setPreviewBlob(url);
+      return () => { URL.revokeObjectURL(url); };
+    }
   }, [blob]);
+
+  useEffect(() => {
+    if (!frameSequence || !isHovering) {
+        if (!isHovering) setCurrentFrame(0);
+        return;
+    }
+    let frameIdx = 0;
+    const interval = setInterval(() => {
+       frameIdx = (frameIdx + 1) % frameSequence.length;
+       setCurrentFrame(frameIdx);
+    }, 150); // ~7 fps
+    return () => clearInterval(interval);
+  }, [frameSequence, isHovering]);
 
   const handleMouseEnter = async () => {
     setIsHovering(true);
     
     // Check if we already have it in state
-    if (previewBlob) {
+    if (previewBlob || frameSequence) {
       return;
     }
 
@@ -391,7 +422,14 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
       onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setIsHovering(false)}
     >
-      {previewBlob ? (
+      {frameSequence ? (
+        <img 
+          src={frameSequence[isHovering ? currentFrame : 0]} 
+          alt={video.title}
+          className="w-full h-full object-cover" 
+          loading="eager" 
+        />
+      ) : previewBlob ? (
         // Show as a static first-frame when not hovering; play on hover.
         // The play/pause is driven by the isHovering useEffect above.
         <video
@@ -424,7 +462,7 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
           <Icons.LoaderIcon className="text-vault-accent animate-spin" size={20} />
         </div>
       ) : (
-        !previewBlob && isHovering && (
+        !previewBlob && !frameSequence && isHovering && (
           <div className="absolute bottom-2 left-2 bg-black/60 text-[8px] text-white px-1 rounded uppercase tracking-tighter z-10">
             Generating preview…
           </div>

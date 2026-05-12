@@ -177,6 +177,8 @@ function getDomainFromUrl(url, removeWww = false) {
 const PreviewThumb = React.memo(({ video }) => {
     const [blob, setBlob] = useState(null);
     const [previewBlob, setPreviewBlob] = useState(null);
+    const [frameSequence, setFrameSequence] = useState(null);
+    const [currentFrame, setCurrentFrame] = useState(0);
     const [isHovering, setIsHovering] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
     const videoRef = useRef(null);
@@ -240,14 +242,45 @@ const PreviewThumb = React.memo(({ video }) => {
             console.warn('[PreviewThumb] Loaded blob is abnormally small:', blob.size, 'bytes');
             return;
         }
-        const url = URL.createObjectURL(blob);
-        setPreviewBlob(url);
-        return () => { URL.revokeObjectURL(url); };
+        if (blob.type === 'application/json') {
+            const reader = new FileReader();
+            reader.onload = () => {
+                try {
+                    const text = reader.result;
+                    const data = JSON.parse(text);
+                    if (data.isFrames && Array.isArray(data.frames)) {
+                        setFrameSequence(data.frames);
+                    }
+                }
+                catch (e) {
+                    console.error("Failed to parse frame JSON:", e);
+                }
+            };
+            reader.readAsText(blob);
+        }
+        else {
+            const url = URL.createObjectURL(blob);
+            setPreviewBlob(url);
+            return () => { URL.revokeObjectURL(url); };
+        }
     }, [blob]);
+    useEffect(() => {
+        if (!frameSequence || !isHovering) {
+            if (!isHovering)
+                setCurrentFrame(0);
+            return;
+        }
+        let frameIdx = 0;
+        const interval = setInterval(() => {
+            frameIdx = (frameIdx + 1) % frameSequence.length;
+            setCurrentFrame(frameIdx);
+        }, 150); // ~7 fps
+        return () => clearInterval(interval);
+    }, [frameSequence, isHovering]);
     const handleMouseEnter = async () => {
         setIsHovering(true);
         // Check if we already have it in state
-        if (previewBlob) {
+        if (previewBlob || frameSequence) {
             return;
         }
         // Check if it exists in the database (may have been written since mount)
@@ -299,14 +332,14 @@ const PreviewThumb = React.memo(({ video }) => {
             }
         }
     };
-    return (_jsxs("div", { className: "absolute inset-0 z-20 overflow-hidden bg-black", onMouseEnter: handleMouseEnter, onMouseLeave: () => setIsHovering(false), children: [previewBlob ? (
+    return (_jsxs("div", { className: "absolute inset-0 z-20 overflow-hidden bg-black", onMouseEnter: handleMouseEnter, onMouseLeave: () => setIsHovering(false), children: [frameSequence ? (_jsx("img", { src: frameSequence[isHovering ? currentFrame : 0], alt: video.title, className: "w-full h-full object-cover", loading: "eager" })) : previewBlob ? (
             // Show as a static first-frame when not hovering; play on hover.
             // The play/pause is driven by the isHovering useEffect above.
             _jsx("video", { ref: videoRef, src: previewBlob, className: "w-full h-full object-cover", preload: "none", muted: true, loop: true, playsInline: true })) : (isDisplayableImageThumbnail(video.thumbnail) ? (
             // ⚡ BOLT OPTIMIZATION:
             // Adding `loading="lazy"` defers the loading of off-screen thumbnails,
             // significantly reducing initial network payload and memory footprint for large lists.
-            _jsx("img", { src: video.thumbnail, alt: video.title, loading: "lazy", className: "w-full h-full object-cover" })) : (_jsx("div", { className: "w-full h-full bg-black", "aria-label": video.title }))), isProcessing ? (_jsx("div", { className: "absolute inset-0 z-10 flex items-center justify-center bg-black/40 backdrop-blur-sm", children: _jsx(Icons.LoaderIcon, { className: "text-vault-accent animate-spin", size: 20 }) })) : (!previewBlob && isHovering && (_jsx("div", { className: "absolute bottom-2 left-2 bg-black/60 text-[8px] text-white px-1 rounded uppercase tracking-tighter z-10", children: "Generating preview\u2026" })))] }));
+            _jsx("img", { src: video.thumbnail, alt: video.title, loading: "lazy", className: "w-full h-full object-cover" })) : (_jsx("div", { className: "w-full h-full bg-black", "aria-label": video.title }))), isProcessing ? (_jsx("div", { className: "absolute inset-0 z-10 flex items-center justify-center bg-black/40 backdrop-blur-sm", children: _jsx(Icons.LoaderIcon, { className: "text-vault-accent animate-spin", size: 20 }) })) : (!previewBlob && !frameSequence && isHovering && (_jsx("div", { className: "absolute bottom-2 left-2 bg-black/60 text-[8px] text-white px-1 rounded uppercase tracking-tighter z-10", children: "Generating preview\u2026" })))] }));
 });
 export const VaultDashboard = () => {
     const [items, setItems] = useState([]);

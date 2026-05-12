@@ -116,28 +116,39 @@ async function ensureSandbox(): Promise<HTMLIFrameElement> {
 // ────────────────────────────────────────────────────────────
 
 async function processVideoPreview(mediaUrl: string, duration: number): Promise<Blob | null> {
-    console.log("[VaultProcessor] Fetching video bypassing CORS via host_permissions:", mediaUrl);
+    console.log("[VaultProcessor] Starting preview generation for:", mediaUrl);
     
-    // For M3U8, native video element won't play it directly (unless Safari). 
-    // Fall back or return null to not hang.
     if (mediaUrl.includes('.m3u8') || mediaUrl.includes('manifest')) {
-        console.warn("[VaultProcessor] HLS/M3U8 is not supported for MediaRecorder offscreen generation.");
+        console.warn("[VaultProcessor] HLS/M3U8 is not supported natively.");
         return null;
     }
 
     try {
-        const response = await fetch(mediaUrl);
+        console.log("[VaultProcessor] Fetching video...");
+        const response = await fetch(mediaUrl, { 
+            headers: { "User-Agent": navigator.userAgent } 
+        });
+        
+        if (!response.ok) {
+            console.error("[VaultProcessor] Fetch failed:", response.status);
+            return null;
+        }
+
         const videoBlob = await response.blob();
-        if (videoBlob.size === 0) return null;
+        console.log("[VaultProcessor] Fetched bytes:", videoBlob.size, "type:", videoBlob.type);
+        if (videoBlob.size < 1000) {
+            console.error("[VaultProcessor] Fetched blob is too small (403 block?).");
+            return null;
+        }
         
         const objectUrl = URL.createObjectURL(videoBlob);
-        console.log("[VaultProcessor] Generating preview natively offscreen...", videoBlob.size, "bytes");
-
+        
         return new Promise<Blob | null>((resolve, reject) => {
             const timeoutId = setTimeout(() => {
                 URL.revokeObjectURL(objectUrl);
+                console.error("[VaultProcessor] Native preview generation timed out");
                 reject(new Error('[VaultProcessor] Native preview generation timed out'));
-            }, 120_000); // 2 mins max
+            }, 120_000);
 
             const video = document.createElement('video');
             video.muted = true;
@@ -145,6 +156,7 @@ async function processVideoPreview(mediaUrl: string, duration: number): Promise<
             video.src = objectUrl;
 
             video.addEventListener('loadedmetadata', async () => {
+                console.log("[VaultProcessor] loadedmetadata fired, duration:", video.duration);
                 const canvas = document.createElement('canvas');
                 canvas.width = 426;  // 240p
                 canvas.height = 240;
@@ -161,48 +173,51 @@ async function processVideoPreview(mediaUrl: string, duration: number): Promise<
                     if (start > 120) start = Math.min(start, 30);
                     video.currentTime = start;
                     
-                    // Actually play the video off-screen
-                    await video.play();
-
-                    const stream = canvas.captureStream(24);
+                    const stream = canvas.captureStream(10);
                     let recorder: MediaRecorder;
-                    try {
-                        recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
-                    } catch (e) {
-                        recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
-                    }
+                    try { recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' }); }
+                    catch (e) { recorder = new MediaRecorder(stream, { mimeType: 'video/webm' }); }
 
                     const chunks: Blob[] = [];
                     recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
                     
-                    let drawInterval: any;
                     recorder.onstop = () => {
                         clearTimeout(timeoutId);
-                        clearInterval(drawInterval);
                         stream.getTracks().forEach(t => t.stop());
-                        video.pause();
                         if (video.parentNode) video.parentNode.removeChild(video);
                         URL.revokeObjectURL(objectUrl);
                         if (chunks.length > 0) {
+                            console.log("[VaultProcessor] Output generated:", chunks.reduce((acc, c) => acc + c.size, 0), "bytes");
                             resolve(new Blob(chunks, { type: 'video/webm' }));
                         } else {
+                            console.error("[VaultProcessor] No chunks from MediaRecorder");
                             resolve(null);
                         }
                     };
 
-                    drawInterval = setInterval(() => {
+                    recorder.start(1000);
+
+                    // Step through frames manually to avoid autoplay blocks completely
+                    const frameCount = 30; // 3 seconds at 10 fps
+                    const step = 0.1; // 100ms
+                    
+                    for (let i = 0; i < frameCount; i++) {
+                        await new Promise(r => {
+                            video.addEventListener('seeked', r, { once: true });
+                            setTimeout(r, 1000);
+                        });
+                        
                         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    }, 1000 / 24);
+                        
+                        if (i < frameCount - 1) {
+                            video.currentTime += step;
+                            await new Promise(r => setTimeout(r, 100)); // allow interval encoding
+                        }
+                    }
 
-                    recorder.start();
-
-                    // Record 3 real-time seconds of the video
-                    setTimeout(() => {
-                        if (recorder.state === 'recording') recorder.stop();
-                    }, 3000);
-
+                    recorder.stop();
                 } catch (e) {
-                    console.error("[VaultProcessor] MediaRecorder or playback failed:", e);
+                    console.error("[VaultProcessor] Processing loop failed:", e);
                     clearTimeout(timeoutId);
                     URL.revokeObjectURL(objectUrl);
                     if (video.parentNode) video.parentNode.removeChild(video);
@@ -210,17 +225,15 @@ async function processVideoPreview(mediaUrl: string, duration: number): Promise<
                 }
             });
 
-            video.addEventListener('error', () => {
-                console.error("[VaultProcessor] Video load error for native processing");
+            video.addEventListener('error', (e) => {
+                console.error("[VaultProcessor] Video load error for native processing", video.error);
                 clearTimeout(timeoutId);
                 URL.revokeObjectURL(objectUrl);
                 if (video.parentNode) video.parentNode.removeChild(video);
                 resolve(null);
             });
             
-            // Append securely and hidden to trigger real playback in Firefox
-            video.style.cssText = 'position:fixed;top:-9999px;opacity:0';
-            document.body.appendChild(video);
+            // Do not append to body. video.load() without appending causes no autoplay constraints
             video.load();
         });
     } catch (e) {
