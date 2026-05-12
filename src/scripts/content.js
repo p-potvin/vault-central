@@ -72,6 +72,22 @@ function addHeartIndicator(el) {
 // ⚡ BOLT OPTIMIZATION: Cache saved URLs to prevent redundant extension storage reads
 // and array iterations on every DOM mutation.
 let cachedSavedUrls = null;
+
+// ⚡ BOLT OPTIMIZATION: Cache parsed URLs to prevent redundant new URL() instantiation
+// which creates an O(N) synchronous bottleneck during repeated extraction attempts.
+const domainCache = new Map();
+
+function getSafeHostname(url) {
+    if (domainCache.has(url)) return domainCache.get(url);
+    try {
+        const hostname = new URL(url).hostname;
+        domainCache.set(url, hostname);
+        return hostname;
+    } catch {
+        domainCache.set(url, window.location.hostname);
+        return window.location.hostname;
+    }
+}
 // Listen for storage changes to keep cache fresh
 if (browser.storage && browser.storage.onChanged) {
     browser.storage.onChanged.addListener((changes, areaName) => {
@@ -419,13 +435,7 @@ function attemptExtraction(target) {
     console.log(`${LOG_PREFIX} attemptExtraction: url=${target.url} | isDirectVideo=${target.isDirectVideo} | thumbnail present=${!!target.fallbackThumbnail} (len=${target.fallbackThumbnail?.length ?? 0})`);
     const isLocalCapture = target.url === window.location.href || target.isDirectVideo;
     console.log(`${LOG_PREFIX} attemptExtraction: isLocalCapture=${isLocalCapture} (target.url === window.location.href: ${target.url === window.location.href})`);
-    let safeHostname = window.location.hostname;
-    try {
-        safeHostname = new URL(target.url).hostname;
-    }
-    catch (e) {
-        console.warn(`${LOG_PREFIX} attemptExtraction: Invalid URL passed to extraction:`, target.url);
-    }
+    const safeHostname = getSafeHostname(target.url);
     const metaDataPayload = isLocalCapture ? {
         title: document.title || target.localMeta.title || target.url.split('/').pop() || "Captured Media",
         author: document.querySelector('meta[name="author"]')?.getAttribute("content") || target.localMeta.author || window.location.hostname,
