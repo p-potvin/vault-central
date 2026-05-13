@@ -589,10 +589,8 @@ export const VaultDashboard = () => {
         if (savedSortOrder)
             setSortOrder(savedSortOrder);
         const load = async () => {
-            console.log("[VaultDashboard] Loading vault data...");
             const settings = await getPinSettings();
             setPinSettings(settings);
-            console.log("[VaultDashboard] PIN settings loaded. enabled:", settings.enabled);
             let syncEnabled = await getSyncEnabled();
             const legacySyncEnabled = localStorage.getItem('vault-sync-enabled') === 'true';
             if (!syncEnabled && legacySyncEnabled) {
@@ -628,18 +626,15 @@ export const VaultDashboard = () => {
                     setToastMessage({ msg: "Browser Sync metadata could not be loaded.", type: "error" });
                 }
             }
-            console.log("[VaultDashboard] Vault loaded.", all?.length ?? 0, "items.");
             setItems(all || []);
         };
         load();
         // Listen for browser sync updates
         const handleStorageChange = (changes, areaName) => {
-            console.log("[VaultDashboard] storage.onChanged fired. areaName:", areaName, "| changed keys:", Object.keys(changes).join(', '));
             // BUG FIX: was checking changes.vault_videos but the actual key is STORAGE_KEYS.SAVED_VIDEOS ('savedVideos').
             // This listener was never firing when vault items were saved.
             if (areaName === 'local' && changes[STORAGE_KEYS.SAVED_VIDEOS]) {
                 const newValue = changes[STORAGE_KEYS.SAVED_VIDEOS].newValue || [];
-                console.log("[VaultDashboard] savedVideos storage change detected. New count:", newValue.length);
                 setItems(newValue);
             }
             if (areaName === 'sync' && syncEnabledRef.current) {
