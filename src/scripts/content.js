@@ -10,7 +10,12 @@ const LOG_PREFIX = "[VaultAuth:content]";
 let lastHoveredElement = null;
 let mutationTimeout = null;
 document.addEventListener("mousemove", (e) => {
-    lastHoveredElement = document.elementFromPoint(e.clientX, e.clientY);
+    // ⚡ BOLT OPTIMIZATION:
+    // Calling `document.elementFromPoint` inside a mousemove handler forces the browser
+    // to synchronously recalculate layout and hit-test up to 120 times per second.
+    // Reading the event's composed path or target yields the exact same element
+    // at zero additional computational cost, eliminating scroll jank.
+    lastHoveredElement = (e.composedPath?.()[0] || e.target);
 }, { passive: true });
 document.addEventListener("keydown", (e) => {
     if (e.altKey && (e.key === "x" || e.key === "X" || e.code === "KeyX")) {

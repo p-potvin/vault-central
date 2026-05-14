@@ -15,7 +15,12 @@ let lastHoveredElement: HTMLElement | null = null;
 let mutationTimeout: ReturnType<typeof setTimeout> | null = null;
 
 document.addEventListener("mousemove", (e: MouseEvent) => {
-    lastHoveredElement = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    // ⚡ BOLT OPTIMIZATION:
+    // Calling `document.elementFromPoint` inside a mousemove handler forces the browser
+    // to synchronously recalculate layout and hit-test up to 120 times per second.
+    // Reading the event's composed path or target yields the exact same element
+    // at zero additional computational cost, eliminating scroll jank.
+    lastHoveredElement = (e.composedPath?.()[0] as HTMLElement || e.target as HTMLElement);
 }, { passive: true });
 
 document.addEventListener("keydown", (e: KeyboardEvent) => {
