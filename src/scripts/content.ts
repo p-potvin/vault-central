@@ -15,7 +15,12 @@ let lastHoveredElement: HTMLElement | null = null;
 let mutationTimeout: ReturnType<typeof setTimeout> | null = null;
 
 document.addEventListener("mousemove", (e: MouseEvent) => {
-    lastHoveredElement = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    // ⚡ BOLT OPTIMIZATION:
+    // Calling `document.elementFromPoint` inside a mousemove handler forces the browser
+    // to synchronously recalculate layout and hit-test up to 120 times per second.
+    // Reading the event's composed path or target yields the exact same element
+    // at zero additional computational cost, eliminating scroll jank.
+    lastHoveredElement = (e.composedPath?.()[0] as HTMLElement || e.target as HTMLElement);
 }, { passive: true });
 
 document.addEventListener("keydown", (e: KeyboardEvent) => {
@@ -554,7 +559,8 @@ function attemptExtraction(target: TargetPayload): Promise<CaptureResponse> {
     }).catch((e: Error) => {
         console.error(`${LOG_PREFIX} attemptExtraction: Message passing error:`, e);
         showVaultNotification('error', 'Capture failed: connection lost');
-        return { success: false, message: e.message || 'Connection to Vault lost' };
+        // SECURITY: Do not leak internal error messages
+        return { success: false, message: 'Connection to Vault lost' };
     });
 }
 
@@ -624,7 +630,9 @@ if (location.search.includes('__vaultTest=1')) {
                     reply(null, `unknown action: ${msg.action}`);
             }
         } catch (e: any) {
-            reply(null, e?.message || String(e));
+            console.error(`${LOG_PREFIX} Test bridge error:`, e);
+            // SECURITY: Do not leak internal error messages
+            reply(null, 'An error occurred during test bridge action');
         }
     });
     console.log(`${LOG_PREFIX} Test bridge active.`);

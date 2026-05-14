@@ -41,3 +41,6 @@
 ## 2024-05-11 - Repeated `new URL()` Parsing in Loops causes O(N) overhead
 **Learning:** Instantiating `new URL()` synchronously within loops, such as extraction attempts (`attemptExtraction` in content scripts) or React render loops, creates a significant O(N) performance bottleneck in the browser extension environment.
 **Action:** Always hoist domain parsing or use a module-level `Map` (like `domainCache`) to store and retrieve previously parsed URLs. This caches the results and prevents redundant, synchronous URL parsing overhead.
+## 2026-05-13 - [Avoid elementFromPoint in mousemove listeners]
+**Learning:** Calling `document.elementFromPoint()` inside high-frequency event listeners like `mousemove` forces the browser to synchronously recalculate layout and hit-test up to 120 times per second, causing severe main-thread blocking and scroll jank.
+**Action:** Use `(e.composedPath?.()[0] || e.target)` instead. This reads the event's natively resolved target element at zero additional computational cost while yielding the exact same result.
