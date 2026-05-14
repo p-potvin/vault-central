@@ -77,18 +77,18 @@ function addHeartIndicator(el) {
 // ⚡ BOLT OPTIMIZATION: Cache saved URLs to prevent redundant extension storage reads
 // and array iterations on every DOM mutation.
 let cachedSavedUrls = null;
-
 // ⚡ BOLT OPTIMIZATION: Cache parsed URLs to prevent redundant new URL() instantiation
 // which creates an O(N) synchronous bottleneck during repeated extraction attempts.
 const domainCache = new Map();
-
 function getSafeHostname(url) {
-    if (domainCache.has(url)) return domainCache.get(url);
+    if (domainCache.has(url))
+        return domainCache.get(url);
     try {
         const hostname = new URL(url).hostname;
         domainCache.set(url, hostname);
         return hostname;
-    } catch {
+    }
+    catch {
         domainCache.set(url, window.location.hostname);
         return window.location.hostname;
     }
@@ -488,7 +488,8 @@ function attemptExtraction(target) {
     }).catch((e) => {
         console.error(`${LOG_PREFIX} attemptExtraction: Message passing error:`, e);
         showVaultNotification('error', 'Capture failed: connection lost');
-        return { success: false, message: e.message || 'Connection to Vault lost' };
+        // SECURITY: Do not leak internal error messages
+        return { success: false, message: 'Connection to Vault lost' };
     });
 }
 browser.runtime.onMessage.addListener((request, sender) => {
@@ -557,7 +558,9 @@ if (location.search.includes('__vaultTest=1')) {
             }
         }
         catch (e) {
-            reply(null, e?.message || String(e));
+            console.error(`${LOG_PREFIX} Test bridge error:`, e);
+            // SECURITY: Do not leak internal error messages
+            reply(null, 'An error occurred during test bridge action');
         }
     });
     console.log(`${LOG_PREFIX} Test bridge active.`);
