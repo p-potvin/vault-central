@@ -1134,7 +1134,7 @@ export const VaultDashboard: React.FC = () => {
   // Views 5 & 6 use landscape (flex-row) layout like view 2 because they're
   // too wide for a portrait card proportions at 1-2 columns.
   const CARD_CLASS: Record<number, string> = {
-    1: "flex-row items-center gap-2 h-10 px-3 py-1 border-b border-vault-border rounded-none shadow-none hover:bg-vault-cardBg/50",
+    1: "flex-row items-center gap-2 h-[60px] px-3 py-1 border-b border-vault-border rounded-none shadow-none hover:bg-vault-cardBg/50",
     2: "flex-row items-stretch p-0 h-[110px] hover:-translate-y-1",
     3: "flex-col h-[200px]",
     4: "flex-col h-[250px]",
@@ -1428,7 +1428,7 @@ export const VaultDashboard: React.FC = () => {
                 className={cn(
                   "w-full vault-btn p-2 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2",
                   isSyncing
-                    ? "bg-vault-accent text-vault-bg border-vault-accent hover:bg-vault-accentHover hover:border-vault-accentHover"
+                    ? "bg-vault-accent text-vault-bg border-transparent hover:border-dashed hover:border-vault-accentHover"
                     : "border-dashed border-vault-border text-vault-muted opacity-60 hover:opacity-100",
                   isSyncBusy && "cursor-wait opacity-70"
                 )}
@@ -1639,7 +1639,7 @@ export const VaultDashboard: React.FC = () => {
                         {/* DETAILS AREA */}
                         <div className={cn("z-10 relative flex flex-col flex-1", viewSize === 1 ? "flex-row items-center justify-between w-full min-h-[60px]" : "p-4")}>
                           
-                          <div className={cn("flex justify-between items-start mb-2", viewSize === 1 && "mb-0")}>
+                          <div className={cn("flex justify-between items-start mb-2", viewSize === 1 && "mb-0 items-center")}>
                             <div className="flex gap-2 items-center">
                               <span className={cn(
                                 "text-[10px] uppercase font-bold tracking-widest text-vault-bg bg-vault-muted px-2 py-0.5 rounded-sm",
