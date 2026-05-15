@@ -44,3 +44,6 @@
 ## 2026-05-13 - [Avoid elementFromPoint in mousemove listeners]
 **Learning:** Calling `document.elementFromPoint()` inside high-frequency event listeners like `mousemove` forces the browser to synchronously recalculate layout and hit-test up to 120 times per second, causing severe main-thread blocking and scroll jank.
 **Action:** Use `(e.composedPath?.()[0] || e.target)` instead. This reads the event's natively resolved target element at zero additional computational cost while yielding the exact same result.
+## 2026-05-15 - [DOM Query Optimization in MutationObserver]
+**Learning:** Re-querying all `<a>` tags on every DOM mutation inside a content script creates a significant O(N) performance bottleneck, especially on pages with infinite scrolling where the number of links grows substantially. While the cache checked whether a URL was processed, looping over the entire NodeList remained slow.
+**Action:** Apply a custom attribute (e.g., `data-vault-scanned`) to processed elements and restrict the `querySelectorAll` selector to `a:not([data-vault-scanned])`. This reduces the work from O(N) to O(new_items). Be sure to clear this attribute via `document.querySelectorAll` inside `storage.onChanged` to correctly trigger rescans when cache state updates.

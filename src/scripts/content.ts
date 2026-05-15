@@ -113,6 +113,10 @@ if (browser.storage && browser.storage.onChanged) {
             const newValue = (changes[STORAGE_KEYS.SAVED_VIDEOS].newValue as VideoData[] | undefined) || [];
             cachedSavedUrls = new Set(newValue.map((v: VideoData) => v.url));
             console.log(`${LOG_PREFIX} Storage changed. Updated cachedSavedUrls count: ${cachedSavedUrls.size}`);
+            // Reset scanned status on all links so the updated cache is applied correctly
+            document.querySelectorAll("a[data-vault-scanned]").forEach(link => {
+                link.removeAttribute('data-vault-scanned');
+            });
             highlightVaultItems();
         }
     });
@@ -133,16 +137,20 @@ async function highlightVaultItems() {
         
         if (cachedSavedUrls.size === 0) return;
 
-        const links = document.querySelectorAll("a");
+        // ⚡ BOLT OPTIMIZATION: Only select anchor tags that haven't been scanned yet.
+        // This reduces O(N) checking (where N is all links on the page) to O(new_links)
+        // when the MutationObserver fires on infinitely scrolling pages.
+        const links = document.querySelectorAll<HTMLAnchorElement>("a:not([data-vault-scanned])");
         let marked = 0;
 
         links.forEach(link => {
+            link.setAttribute('data-vault-scanned', 'true');
             if (cachedSavedUrls && cachedSavedUrls.has(link.href)) {
                 addHeartIndicator(link as HTMLElement);
                 marked++;
             }
         });
-        console.log(`${LOG_PREFIX} highlightVaultItems: marked ${marked} links out of ${links.length} found on page.`);
+        console.log(`${LOG_PREFIX} highlightVaultItems: marked ${marked} links out of ${links.length} newly found on page.`);
     } catch (e) {
         console.error(`${LOG_PREFIX} Highlight failure:`, e);
     }
