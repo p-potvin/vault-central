@@ -21,6 +21,8 @@ Vault Central is a privacy-first browser extension that lets you instantly save 
 | 🔔 **Live Site Indicators** | Injects a subtle heart icon on already-saved thumbnails; toast notifications confirm saves in real time |
 | 📊 **Smart Dashboard** | Group by hostname, multi-field filter/sort, five view modes (Biggest → Details), infinite scroll, and per-section pagination |
 | 🚫 **Zero External Tracking** | Everything lives in browser-local storage — no telemetry, no sync server, no analytics |
+| ⚡ **Performance Optimized** | MutationObserver DOM scanning and URL domain parsing have been optimized to eliminate scroll jank |
+
 
 ---
 
