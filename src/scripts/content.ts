@@ -162,7 +162,7 @@ async function highlightVaultItems() {
 const activeNotifications = new Map<string, HTMLElement>();
 const MAX_CONCURRENT_NOTIFICATIONS = 5;
 
-function showVaultNotification(type: 'success' | 'removed' | 'error' | 'processing', message: string, id?: string) {
+function showVaultNotification(type: 'success' | 'removed' | 'error' | 'processing', message: string, id?: string, targetElement?: HTMLElement | null) {
     const portalId = id || `vault-notification-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
     // If we have an existing notification with this ID (e.g. updating processing -> success), reuse it
@@ -287,10 +287,10 @@ function showVaultNotification(type: 'success' | 'removed' | 'error' | 'processi
     }
 
     // Contextual indicator updates
-    const target = portalId?.startsWith('capture-') ? null : (lastHoveredElement?.closest("a") as HTMLElement || lastHoveredElement);
-    if (type === 'success' && target) addHeartIndicator(target);
-    if (type === 'removed' && target) {
-        const heart = target.querySelector(".vault-heart-indicator");
+    const resolvedTarget = targetElement ?? (portalId?.startsWith('capture-') ? null : (lastHoveredElement?.closest("a") as HTMLElement || lastHoveredElement));
+    if (type === 'success' && resolvedTarget) addHeartIndicator(resolvedTarget);
+    if (type === 'removed' && resolvedTarget) {
+        const heart = resolvedTarget.querySelector(".vault-heart-indicator");
         if (heart) heart.remove();
     }
 }
@@ -403,11 +403,12 @@ function extractSurroundingMetadata(element: HTMLElement | null) {
     return { title, author, duration };
 }
 
-function getBestTarget(element: HTMLElement | null): { url: string, isDirectVideo: boolean, fallbackThumbnail: string | null, localMeta: {title: string, author: string} } {
+function getBestTarget(element: HTMLElement | null): { url: string, isDirectVideo: boolean, fallbackThumbnail: string | null, element: HTMLElement | null, localMeta: {title: string, author: string} } {
     let result = { 
         url: window.location.href, 
         isDirectVideo: false, 
         fallbackThumbnail: null as string | null,
+        element: element,
         localMeta: extractSurroundingMetadata(element)
     };
 
@@ -492,7 +493,10 @@ function startCaptureFlow() {
     const titleHint = (target.localMeta.title?.substring(0, 28))
         || target.url.split('/').pop()?.substring(0, 28)
         || 'Item';
-    showVaultNotification('success', `Added to Vault: ${titleHint}`);
+
+    // Pass the explicitly resolved element to avoid asynchronous displacement
+    const targetElement = target.element?.closest("a") as HTMLElement || target.element;
+    showVaultNotification('success', `Added to Vault: ${titleHint}`, undefined, targetElement as HTMLElement);
 
     void attemptExtraction(target);
 }
@@ -501,6 +505,7 @@ export interface TargetPayload {
     url: string;
     isDirectVideo: boolean;
     fallbackThumbnail: string | null;
+    element?: HTMLElement | null;
     localMeta: {
         title: string;
         author: string;
