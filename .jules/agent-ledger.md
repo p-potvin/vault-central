@@ -17,3 +17,4 @@ Created ledger
 - Updated `browser.storage.onChanged` listener to clear the `data-vault-scanned` attribute from all links when the cached URLs change, ensuring correct rescans.
 
 **Reasoning:** On infinitely scrolling pages, the number of links grows significantly. Querying all links and iterating over them on every DOM mutation becomes a major O(N) bottleneck. By targeting only unprocessed links and caching the processing state in the DOM, we reduce the complexity to O(new_links), drastically improving performance and preventing scroll jank.
+- **2026-05-15**: VaultDashboard - Implemented new theme-manager integration from vault-themes.
