@@ -100,7 +100,8 @@ export function bytesToBase64(bytes) {
     for (let i = 0; i < bytes.length; i += chunk) {
         // ⚡ BOLT OPTIMIZATION: Using array push and join('') prevents O(N^2) memory reallocation overhead
         // from repetitive string concatenation (binary += chunk), significantly improving speed for large blobs.
-        chunks.push(String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk))));
+        // Additionally, String.fromCharCode.apply works natively with Uint8Array, avoiding Array.from overhead.
+        chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, i + chunk)));
     }
     return btoa(chunks.join(''));
 }

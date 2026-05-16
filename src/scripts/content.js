@@ -200,7 +200,7 @@ function showVaultNotification(type, message, id) {
     };
     const theme = themeMap[type] || themeMap.error;
     // Calculate vertical offset based on position in map
-    const entries = Array.from(activeNotifications.entries());
+    const entries = [...activeNotifications.entries()];
     const index = entries.findIndex(([id]) => id === portalId);
     // Fallback if not found yet (newly created)
     const renderIndex = index === -1 ? activeNotifications.size - 1 : index;
@@ -265,7 +265,7 @@ function showVaultNotification(type, message, id) {
     }
 }
 function updateNotificationOffsets() {
-    Array.from(activeNotifications.entries()).forEach(([id, el], index) => {
+    [...activeNotifications.entries()].forEach(([id, el], index) => {
         const bottomOffset = 24 + (index * NOTIFICATION_CONFIG.STACK_OFFSET);
         el.style.bottom = `${bottomOffset}px`;
     });
@@ -453,7 +453,7 @@ function attemptExtraction(target) {
         title: document.title || target.localMeta.title || target.url.split('/').pop() || "Captured Media",
         author: document.querySelector('meta[name="author"]')?.getAttribute("content") || target.localMeta.author || window.location.hostname,
         duration: target.localMeta.duration || 0,
-        tags: Array.from(document.querySelectorAll('meta[property="video:tag"]')).map((m) => m.getAttribute("content") || ""),
+        tags: Array.from(document.querySelectorAll('meta[property="video:tag"]'), (m) => m.getAttribute("content") || ""),
         date: new Date().toISOString()
     } : {
         title: target.localMeta.title || target.url.split('/').pop() || "Captured Link",
