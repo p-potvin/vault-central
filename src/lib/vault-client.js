@@ -29,10 +29,12 @@ export async function vaultStatus() {
 }
 export async function savePreview(videoUrl, blob) {
     const bytes = new Uint8Array(await blob.arrayBuffer());
+    const arr = new Array(bytes.length);
+    for(let i=0; i<bytes.length; i++) arr[i] = bytes[i];
     const res = await send({
         action: 'preview.save',
         videoUrl,
-        blobBytes: Array.from(bytes),
+        blobBytes: arr,
         mimeType: blob.type,
     });
     if (!res.success)

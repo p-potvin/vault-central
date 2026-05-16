@@ -478,7 +478,7 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                                     for (const selector of tier) {
                                         try {
                                             const elements = document.querySelectorAll(selector);
-                                            for (const el of Array.from(elements)) {
+                                            for (const el of [...elements]) {
                                                 if (el instanceof HTMLVideoElement) {
                                                     el.muted = true;
                                                     el.play().catch(() => {});
@@ -497,7 +497,7 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                                     if (triggeredAny) {
                                         // Give the tier a chance to spin up a real <video> with a non-blob src
                                         await delay(800);
-                                        const playing = Array.from(document.querySelectorAll('video'))
+                                        const playing = [...document.querySelectorAll('video')]
                                             .some(v => (v.src && !v.src.startsWith('blob:')) || v.currentSrc && !v.currentSrc.startsWith('blob:'));
                                         if (playing) return;
                                     }
@@ -535,7 +535,7 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                                 metadata.author = getMeta('og:site_name', 'author');
                                 metadata.tags = (getMeta('og:video:tag', 'keywords') || '').split(',').map(s => s.trim()).filter(Boolean);
 
-                                const videos = Array.from(document.querySelectorAll('video'));
+                                const videos = [...document.querySelectorAll('video')];
                                 interface Candidate { el: HTMLVideoElement; src: string | null; area: number; centerDistance: number; urlScore: number; idClassBoost: number; }
                                 const candidates: Candidate[] = [];
                                 for (const v of videos) {
@@ -546,7 +546,7 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                                     let src: string | null = null;
                                     if (v.src && !v.src.startsWith('blob:')) src = v.src;
                                     else {
-                                        const source = Array.from(v.querySelectorAll('source')).find(s => s.src && !s.src.startsWith('blob:'));
+                                        const source = [...v.querySelectorAll('source')].find(s => s.src && !s.src.startsWith('blob:'));
                                         if (source) src = source.src;
                                     }
                                     candidates.push({
@@ -908,8 +908,10 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
         return getPreviewBlob(request.videoUrl).then(async (blob) => {
             if (!blob) return { success: true, found: false };
             const bytes = new Uint8Array(await blob.arrayBuffer());
+            const arr = new Array(bytes.length);
+            for(let i=0; i<bytes.length; i++) arr[i] = bytes[i];
             // Convert to a transferable plain array for runtime messaging.
-            return { success: true, found: true, bytes: Array.from(bytes), mimeType: blob.type };
+            return { success: true, found: true, bytes: arr, mimeType: blob.type };
         }).catch((e: any) => {
             logger.error('[preview.get] failed:', e);
             return { success: false, error: 'Preview retrieval failed' };
