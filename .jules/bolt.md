@@ -22,3 +22,11 @@
 **Learning:** Repetitive string concatenation (`binary += chunk`) inside a loop for large data payloads (like Blob to Base64 conversion) causes an O(N^2) memory reallocation overhead in V8.
 **Action:** Use an array to collect chunks (`chunks.push(chunk)`) and call `.join('')` at the end to assemble the final string, significantly reducing memory footprint and improving execution time.
 ## 2026-05-03 - [Avoid lockfile side-effects on npm install]\n**Learning:** Running `npm install <package>` to resolve missing testing dependencies or binaries implicitly causes NPM to update and write to `package-lock.json`.\n**Action:** ALWAYS run `git checkout -- package.json package-lock.json` after installing temporary dependencies for testing purposes to avoid uninstructed lockfile commits.
+
+## 2026-05-05 - [Optimization] React.memo for Large Lists
+**Learning:** Extracting an inline `map` loop item renderer into its own component and wrapping it in `React.memo` provides a huge performance boost by skipping re-renders of list items when parent component state (e.g. search string, sidebar toggle) updates.
+**Action:** Always extract list items into a `React.memo` wrapped component when dealing with large lists or grids.
+
+## 2026-05-16 - [Optimization] useCallback with React.memo
+**Learning:** Wrapping a component in `React.memo` will not prevent re-renders if the props passed to it are inline functions or unmemoized callback functions from the parent. Since functions are re-created on each render, they will fail shallow comparison.
+**Action:** When extracting child components to optimize performance with `React.memo`, always verify that any passed function props (like `onClick` handlers) are wrapped in `useCallback` in the parent component.

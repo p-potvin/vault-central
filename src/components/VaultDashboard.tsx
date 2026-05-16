@@ -19,7 +19,7 @@ import { type VideoData, VideoDataSchema } from '../types/schemas';
 import { STORAGE_KEYS } from '../lib/constants';
 import * as Icons from '../lib/icons';
 import { cn } from '../lib/utils';
-import React, { useEffect, useState, useMemo, useRef, useDeferredValue } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useDeferredValue, useCallback } from 'react';
 
 // ⚡ BOLT OPTIMIZATION:
 // Instantiating `new URL()` synchronously within loops (like render loops or useMemo mapping)
@@ -249,6 +249,228 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
   );
 });
 
+
+// ⚡ BOLT OPTIMIZATION:
+// Extracting VaultCardItem and wrapping it in React.memo prevents the entire
+// video grid from re-rendering when the parent component's state changes
+// (like when a search query updates or the sidebar opens), offering a massive
+// rendering performance boost for large lists.
+const VaultCardItem = React.memo(({
+  fav,
+  idx,
+  viewSize,
+  currentPage,
+  itemsPerPage,
+  handleEdit,
+  handleDelete,
+  setPlayingVideo,
+  setVideoError,
+  setIsRefreshing
+}: {
+  fav: VideoData;
+  idx: number;
+  viewSize: number;
+  currentPage: number;
+  itemsPerPage: number;
+  handleEdit: (video: VideoData) => void;
+  handleDelete: (url: string) => Promise<void>;
+  setPlayingVideo: (video: VideoData | null) => void;
+  setVideoError: (val: boolean) => void;
+  setIsRefreshing: (val: boolean) => void;
+}) => {
+  return (
+    <div className={cn(
+      "vault-card group relative flex transform transition-all hover:shadow-lg overflow-hidden",
+      viewSize === 1
+        ? "flex-row items-center gap-2 h-10 px-3 py-1 border-b border-vault-border rounded-none shadow-none hover:bg-vault-cardBg/50"
+        : viewSize === 2
+          ? "flex-row items-stretch gap-4 h-[110px] p-0 hover:-translate-y-1"
+          : "flex-col h-[280px]"
+    )}>
+
+      {/* THUMBNAIL AREA */}
+      {viewSize >= 2 && (
+        <div
+          onClick={(e) => {
+            // If clicking an action button inside the thumb, don't trigger play
+            if ((e.target as HTMLElement).closest('.thumb-action')) return;
+
+            if (fav.type === 'video' && fav.rawVideoSrc) {
+              setPlayingVideo(fav);
+              setVideoError(false);
+              setIsRefreshing(false);
+            } else {
+              // Test-mode override: suppress popups during automated tests
+              if (typeof window !== 'undefined' && (window as any).__TEST_MODE__) {
+                if ((window as any).__MOCK_WINDOW_OPEN__) {
+                  (window as any).__MOCK_WINDOW_OPEN__(fav.url);
+                }
+                // No-op in test mode
+              } else {
+                window.open(fav.url, '_blank');
+              }
+            }
+          }}
+          className={viewSize === 2 ? "relative w-2/5 flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border" : "relative w-full h-[180px] flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb border-b border-vault-border rounded-t-lg"}
+        >
+          {fav.type === 'video' ? (
+            <PreviewThumb video={fav} />
+          ) : (
+            isDisplayableImageThumbnail(fav.thumbnail) ? (
+              // ⚡ BOLT OPTIMIZATION: `loading="lazy"` prevents fetching all images simultaneously.
+              <img src={fav.thumbnail} alt={fav.title} loading="lazy" className="w-full h-full object-cover transition-transform duration-500 group-hover/thumb:scale-105" />
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-vault-cardBg to-vault-bg/50">
+                  <Icons.DebugIcon size={32} className="opacity-10 mb-1" />
+                  <span className="text-[10px] font-mono opacity-30">NO PREVIEW</span>
+              </div>
+            )
+          )}
+
+          {/* Corner Accents */}
+          <div className="absolute top-0 left-0 w-2 h-2 border-t-2 border-l-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" />
+          <div className="absolute top-0 right-0 w-2 h-2 border-t-2 border-r-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" />
+          <div className="absolute bottom-0 left-0 w-2 h-2 border-b-2 border-l-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" />
+          <div className="absolute bottom-0 right-0 w-2 h-2 border-b-2 border-r-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" />
+
+          {/* Internal Thumbnail Actions */}
+          {viewSize > 2 && (
+            <>
+              <div className="absolute top-2 left-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2">
+                <button onClick={(e) => { e.stopPropagation(); handleEdit(fav); }} className="thumb-action p-1.5 bg-black/60 hover:bg-vault-accent text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" title="Edit Metadata">
+                  <Icons.EditIcon size={12} />
+                </button>
+              </div>
+              <div className="absolute top-2 right-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2">
+                <button onClick={(e) => { e.stopPropagation(); handleDelete(fav.url); }} className="thumb-action p-1.5 bg-black/60 hover:bg-red-500 text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" title="Delete Item">
+                  <Icons.DeleteIcon size={12} />
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Duration Badge */}
+          {fav.duration && (
+            <div className="absolute bottom-2 right-2 bg-black/80 text-white text-[10px] font-mono font-bold px-1.5 py-0.5 rounded shadow z-20">
+              {typeof fav.duration === 'number'
+                ? `${Math.floor(fav.duration / 60)}:${(fav.duration % 60).toString().padStart(2, '0')}`
+                : fav.duration}
+            </div>
+          )}
+
+          {/* Hover Overlay / Play Preview */}
+          <div className="absolute inset-0 bg-vault-cardBg/10 group-hover/thumb:bg-vault-cardBg/30 transition-colors flex items-center justify-center z-10">
+            {fav.type === 'video' ? (
+              <div className="w-12 h-12 rounded-full bg-vault-accent/90 opacity-0 group-hover/thumb:opacity-100 transition-all flex items-center justify-center shadow-2xl transform scale-75 group-hover/thumb:scale-100 duration-300">
+                <Icons.PlayIcon fill="currentColor" className="text-vault-bg ml-1" size={20} />
+              </div>
+            ) : (
+              <div className="w-12 h-12 rounded-full bg-vault-cardBg opacity-0 group-hover/thumb:opacity-100 transition-all flex items-center justify-center shadow-xl transform scale-75 group-hover/thumb:scale-100 duration-300 border border-vault-border">
+                <Icons.ChevronRightIcon className="text-vault-text" size={20} />
+              </div>
+            )}
+          </div>
+
+          {/* Hover Status Info (Internal to Thumb) */}
+          <div className="absolute bottom-2 left-2 z-20 opacity-0 group-hover/thumb:opacity-100 transition-opacity pointer-events-none">
+            <div className="flex items-center gap-1.5 bg-black/80 px-2 py-1 rounded text-[10px] font-mono font-bold text-vault-accent border border-vault-accent/30 backdrop-blur-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-vault-accent animate-pulse" />
+              {fav.type === 'video' ? 'SCANNING' : 'LINK'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DETAILS AREA */}
+      <div className={cn("z-10 relative flex flex-col flex-1", viewSize === 1 ? "flex-row items-center justify-between w-full min-h-[60px]" : "p-4")}>
+
+        <div className={cn("flex justify-between items-start mb-2", viewSize === 1 && "mb-0")}>
+          <div className="flex gap-2 items-center">
+            <span className={cn(
+              "text-[10px] uppercase font-bold tracking-widest text-vault-bg bg-vault-muted px-2 py-0.5 rounded-sm",
+              viewSize === 1 && "flex items-center justify-center h-5"
+            )}>
+              {viewSize > 1 ? `#${idx + 1 + (currentPage * itemsPerPage)}` : 'V-ID'}
+            </span>
+          </div>
+          {viewSize <= 2 && (
+              <div className="flex gap-1 ml-auto">
+                <button onClick={(e) => { e.stopPropagation(); handleEdit(fav); }} className="vault-btn p-1 flex items-center justify-center border-none hover:bg-vault-cardBg" title="Edit">
+                  <Icons.EditIcon size={14} className="text-vault-muted hover:text-vault-accent" />
+                </button>
+                <button onClick={(e) => { e.stopPropagation(); handleDelete(fav.url); }} className="vault-btn p-1 flex items-center justify-center border-none hover:bg-vault-cardBg" title="Delete">
+                  <Icons.DeleteIcon size={14} className="text-vault-muted hover:text-red-500" />
+                </button>
+              </div>
+          )}
+        </div>
+
+        <div className={cn("flex-1", viewSize === 1 ? "flex items-center justify-between w-full ml-4" : "flex flex-col")}>
+          <div className={viewSize === 1 ? "flex-1 mr-4" : ""}>
+            <h3 className={cn(
+              "font-bold mb-1 leading-snug cursor-pointer hover:text-vault-accent transition-colors",
+              viewSize === 1 ? "text-base line-clamp-1" : "text-[15px] line-clamp-2"
+            )}>
+              {fav.title || 'Untitled Reference'}
+            </h3>
+            <p className="text-xs text-vault-muted truncate max-w-[250px] font-mono opacity-80" title={fav.url}>
+              {(fav.domain && fav.domain !== 'Unknown') ? fav.domain : getDomainFromUrl(fav.url, true)}
+            </p>
+          </div>
+
+          {viewSize > 1 && (
+            <div className="mt-3 space-y-1 mb-2 flex-1">
+              {fav.author && (
+                <p className="text-[11px] text-vault-text line-clamp-1"><span className="text-vault-muted">By:</span> {fav.author}</p>
+              )}
+              {fav.actors && fav.actors.length > 0 && (
+                <p className="text-[11px] text-vault-accent line-clamp-1 opacity-90"><span className="text-vault-muted">With:</span> {fav.actors.join(', ')}</p>
+              )}
+              {(fav.views || fav.likes) && (
+                <p className="text-[11px] text-vault-muted flex gap-3 mt-1">
+                  {fav.views && <span><strong>{fav.views}</strong> views</span>}
+                  {fav.likes && <span><strong>{fav.likes}</strong> likes</span>}
+                </p>
+              )}
+              {fav.tags && fav.tags.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {fav.tags.slice(0, 3).map(tag => (
+                    <span key={tag} className="text-[9px] bg-vault-cardBg border border-vault-border px-1.5 py-0.5 rounded text-vault-muted inline-block">
+                      {tag}
+                    </span>
+                  ))}
+                  {fav.tags.length > 3 && (
+                    <span className="text-[9px] bg-vault-cardBg/50 border border-vault-border border-dashed px-1.5 py-0.5 rounded text-vault-muted inline-block">
+                      +{fav.tags.length - 3}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className={cn(
+          "flex items-center justify-between border-vault-border pt-3 mt-auto",
+          viewSize === 1 ? "border-none ml-4 gap-4 mt-0 pt-0" : "border-t"
+        )}>
+          <span className="text-[11px] font-semibold text-vault-muted tracking-wider">
+            {dateFormatter.format(new Date(fav.timestamp))}
+          </span>
+          <a
+            href={fav.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[10px] font-bold text-vault-bg bg-vault-accent hover:bg-vault-accentHover transition-colors flex items-center gap-1 px-3 py-1.5 rounded-sm"
+          >
+            OPEN <Icons.ChevronRightIcon size={12} strokeWidth={3} className="group-hover:translate-x-0.5 transition-transform" />
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+});
+
 export const VaultDashboard: React.FC = () => {
   const [items, setItems] = useState<VideoData[]>([]);
   const [search, setSearch] = useState('');
@@ -334,7 +556,7 @@ export const VaultDashboard: React.FC = () => {
     reader.readAsText(file);
   };
 
-  const handleDelete = async (url: string) => {
+  const handleDelete = useCallback(async (url: string) => {
     setConfirmDialog({
       message: "Are you sure you want to delete this item?",
       onConfirm: async () => {
@@ -346,11 +568,11 @@ export const VaultDashboard: React.FC = () => {
         setConfirmDialog(null);
       }
     });
-  };
+  }, []);
 
-  const handleEdit = (video: VideoData) => {
+  const handleEdit = useCallback((video: VideoData) => {
     setEditingItem({current: JSON.parse(JSON.stringify(video)), original: video});
-  };
+  }, []);
 
   const saveEditedItem = async (updatedVideo: VideoData, originalVideo: VideoData) => {
     const all = await getSavedVideos();
@@ -1239,195 +1461,19 @@ export const VaultDashboard: React.FC = () => {
                     viewClasses[viewSize as keyof typeof viewClasses]
                   )}>
                     {displayItems.map((fav, idx) => (
-                      <div key={`${fav.url}-${idx}`} className={cn(
-                        "vault-card group relative flex transform transition-all hover:shadow-lg overflow-hidden",
-                        viewSize === 1 
-                          ? "flex-row items-center gap-2 h-10 px-3 py-1 border-b border-vault-border rounded-none shadow-none hover:bg-vault-cardBg/50" 
-                          : viewSize === 2 
-                            ? "flex-row items-stretch gap-4 h-[110px] p-0 hover:-translate-y-1" 
-                            : "flex-col h-[280px]"
-                      )}>
-                        
-                        {/* THUMBNAIL AREA */}
-                        {viewSize >= 2 && (
-                          <div 
-                            onClick={(e) => {
-                              // If clicking an action button inside the thumb, don't trigger play
-                              if ((e.target as HTMLElement).closest('.thumb-action')) return;
-
-                              if (fav.type === 'video' && fav.rawVideoSrc) {
-                                setPlayingVideo(fav);
-                                setVideoError(false);
-                                setIsRefreshing(false);
-                              } else {
-                                // Test-mode override: suppress popups during automated tests
-                                if (typeof window !== 'undefined' && (window as any).__TEST_MODE__) {
-                                  if ((window as any).__MOCK_WINDOW_OPEN__) {
-                                    (window as any).__MOCK_WINDOW_OPEN__(fav.url);
-                                  }
-                                  // No-op in test mode
-                                } else {
-                                  window.open(fav.url, '_blank');
-                                }
-                              }
-                            }}
-                            className={viewSize === 2 ? "relative w-2/5 flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border" : "relative w-full h-[180px] flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb border-b border-vault-border rounded-t-lg"}
-                          >
-                            {fav.type === 'video' ? (
-                              <PreviewThumb video={fav} />
-                            ) : (
-                              isDisplayableImageThumbnail(fav.thumbnail) ? (
-                                // ⚡ BOLT OPTIMIZATION: `loading="lazy"` prevents fetching all images simultaneously.
-                                <img src={fav.thumbnail} alt={fav.title} loading="lazy" className="w-full h-full object-cover transition-transform duration-500 group-hover/thumb:scale-105" />
-                              ) : (
-                                <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-vault-cardBg to-vault-bg/50">
-                                    <Icons.DebugIcon size={32} className="opacity-10 mb-1" />
-                                    <span className="text-[10px] font-mono opacity-30">NO PREVIEW</span>
-                                </div>
-                              )
-                            )}
-
-                            {/* Corner Accents */}
-                            <div className="absolute top-0 left-0 w-2 h-2 border-t-2 border-l-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" />
-                            <div className="absolute top-0 right-0 w-2 h-2 border-t-2 border-r-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" />
-                            <div className="absolute bottom-0 left-0 w-2 h-2 border-b-2 border-l-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" />
-                            <div className="absolute bottom-0 right-0 w-2 h-2 border-b-2 border-r-2 border-vault-accent/40 z-20 transition-all group-hover/thumb:w-4 group-hover/thumb:h-4 group-hover/thumb:border-vault-accent" />
-
-                            {/* Internal Thumbnail Actions */}
-                            {viewSize > 2 && (
-                              <>
-                                <div className="absolute top-2 left-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2">
-                                  <button onClick={(e) => { e.stopPropagation(); handleEdit(fav); }} className="thumb-action p-1.5 bg-black/60 hover:bg-vault-accent text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" title="Edit Metadata">
-                                    <Icons.EditIcon size={12} />
-                                  </button>
-                                </div>
-                                <div className="absolute top-2 right-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2">
-                                  <button onClick={(e) => { e.stopPropagation(); handleDelete(fav.url); }} className="thumb-action p-1.5 bg-black/60 hover:bg-red-500 text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" title="Delete Item">
-                                    <Icons.DeleteIcon size={12} />
-                                  </button>
-                                </div>
-                              </>
-                            )}
-
-                            {/* Duration Badge */}
-                            {fav.duration && (
-                              <div className="absolute bottom-2 right-2 bg-black/80 text-white text-[10px] font-mono font-bold px-1.5 py-0.5 rounded shadow z-20">
-                                {typeof fav.duration === 'number' 
-                                  ? `${Math.floor(fav.duration / 60)}:${(fav.duration % 60).toString().padStart(2, '0')}` 
-                                  : fav.duration}
-                              </div>
-                            )}
-
-                            {/* Hover Overlay / Play Preview */}
-                            <div className="absolute inset-0 bg-vault-cardBg/10 group-hover/thumb:bg-vault-cardBg/30 transition-colors flex items-center justify-center z-10">
-                              {fav.type === 'video' ? (
-                                <div className="w-12 h-12 rounded-full bg-vault-accent/90 opacity-0 group-hover/thumb:opacity-100 transition-all flex items-center justify-center shadow-2xl transform scale-75 group-hover/thumb:scale-100 duration-300">
-                                  <Icons.PlayIcon fill="currentColor" className="text-vault-bg ml-1" size={20} />
-                                </div>
-                              ) : (
-                                <div className="w-12 h-12 rounded-full bg-vault-cardBg opacity-0 group-hover/thumb:opacity-100 transition-all flex items-center justify-center shadow-xl transform scale-75 group-hover/thumb:scale-100 duration-300 border border-vault-border">
-                                  <Icons.ChevronRightIcon className="text-vault-text" size={20} />
-                                </div>
-                              )}
-                            </div>
-                            
-                            {/* Hover Status Info (Internal to Thumb) */}
-                            <div className="absolute bottom-2 left-2 z-20 opacity-0 group-hover/thumb:opacity-100 transition-opacity pointer-events-none">
-                              <div className="flex items-center gap-1.5 bg-black/80 px-2 py-1 rounded text-[10px] font-mono font-bold text-vault-accent border border-vault-accent/30 backdrop-blur-sm">
-                                <span className="w-1.5 h-1.5 rounded-full bg-vault-accent animate-pulse" />
-                                {fav.type === 'video' ? 'SCANNING' : 'LINK'}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* DETAILS AREA */}
-                        <div className={cn("z-10 relative flex flex-col flex-1", viewSize === 1 ? "flex-row items-center justify-between w-full min-h-[60px]" : "p-4")}>
-                          
-                          <div className={cn("flex justify-between items-start mb-2", viewSize === 1 && "mb-0")}>
-                            <div className="flex gap-2 items-center">
-                              <span className={cn(
-                                "text-[10px] uppercase font-bold tracking-widest text-vault-bg bg-vault-muted px-2 py-0.5 rounded-sm",
-                                viewSize === 1 && "flex items-center justify-center h-5"
-                              )}>
-                                {viewSize > 1 ? `#${idx + 1 + (currentPage * itemsPerPage)}` : 'V-ID'}
-                              </span>
-                            </div>
-                            {viewSize <= 2 && (
-                                <div className="flex gap-1 ml-auto">
-                                  <button onClick={(e) => { e.stopPropagation(); handleEdit(fav); }} className="vault-btn p-1 flex items-center justify-center border-none hover:bg-vault-cardBg" title="Edit">
-                                    <Icons.EditIcon size={14} className="text-vault-muted hover:text-vault-accent" />
-                                  </button>
-                                  <button onClick={(e) => { e.stopPropagation(); handleDelete(fav.url); }} className="vault-btn p-1 flex items-center justify-center border-none hover:bg-vault-cardBg" title="Delete">
-                                    <Icons.DeleteIcon size={14} className="text-vault-muted hover:text-red-500" />
-                                  </button>
-                                </div>
-                            )}
-                          </div>
-                          
-                          <div className={cn("flex-1", viewSize === 1 ? "flex items-center justify-between w-full ml-4" : "flex flex-col")}>
-                            <div className={viewSize === 1 ? "flex-1 mr-4" : ""}>
-                              <h3 className={cn(
-                                "font-bold mb-1 leading-snug cursor-pointer hover:text-vault-accent transition-colors",
-                                viewSize === 1 ? "text-base line-clamp-1" : "text-[15px] line-clamp-2"
-                              )}>
-                                {fav.title || 'Untitled Reference'}
-                              </h3>
-                              <p className="text-xs text-vault-muted truncate max-w-[250px] font-mono opacity-80" title={fav.url}>
-                                {(fav.domain && fav.domain !== 'Unknown') ? fav.domain : getDomainFromUrl(fav.url, true)}
-                              </p>
-                            </div>
-                            
-                            {viewSize > 1 && (
-                              <div className="mt-3 space-y-1 mb-2 flex-1">
-                                {fav.author && (
-                                  <p className="text-[11px] text-vault-text line-clamp-1"><span className="text-vault-muted">By:</span> {fav.author}</p>
-                                )}
-                                {fav.actors && fav.actors.length > 0 && (
-                                  <p className="text-[11px] text-vault-accent line-clamp-1 opacity-90"><span className="text-vault-muted">With:</span> {fav.actors.join(', ')}</p>
-                                )}
-                                {(fav.views || fav.likes) && (
-                                  <p className="text-[11px] text-vault-muted flex gap-3 mt-1">
-                                    {fav.views && <span><strong>{fav.views}</strong> views</span>}
-                                    {fav.likes && <span><strong>{fav.likes}</strong> likes</span>}
-                                  </p>
-                                )}
-                                {fav.tags && fav.tags.length > 0 && (
-                                  <div className="flex flex-wrap gap-1 mt-2">
-                                    {fav.tags.slice(0, 3).map(tag => (
-                                      <span key={tag} className="text-[9px] bg-vault-cardBg border border-vault-border px-1.5 py-0.5 rounded text-vault-muted inline-block">
-                                        {tag}
-                                      </span>
-                                    ))}
-                                    {fav.tags.length > 3 && (
-                                      <span className="text-[9px] bg-vault-cardBg/50 border border-vault-border border-dashed px-1.5 py-0.5 rounded text-vault-muted inline-block">
-                                        +{fav.tags.length - 3}
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-
-                          <div className={cn(
-                            "flex items-center justify-between border-vault-border pt-3 mt-auto",
-                            viewSize === 1 ? "border-none ml-4 gap-4 mt-0 pt-0" : "border-t"
-                          )}>
-                            <span className="text-[11px] font-semibold text-vault-muted tracking-wider">
-                              {dateFormatter.format(new Date(fav.timestamp))}
-                            </span>
-                            <a 
-                              href={fav.url} 
-                              target="_blank" 
-                              rel="noreferrer"
-                              className="text-[10px] font-bold text-vault-bg bg-vault-accent hover:bg-vault-accentHover transition-colors flex items-center gap-1 px-3 py-1.5 rounded-sm"
-                            >
-                              OPEN <Icons.ChevronRightIcon size={12} strokeWidth={3} className="group-hover:translate-x-0.5 transition-transform" />
-                            </a>
-                          </div>
-                        </div>
-                      </div>
+                      <VaultCardItem
+                        key={`${fav.url}-${idx}`}
+                        fav={fav}
+                        idx={idx}
+                        viewSize={viewSize}
+                        currentPage={currentPage}
+                        itemsPerPage={itemsPerPage}
+                        handleEdit={handleEdit}
+                        handleDelete={handleDelete}
+                        setPlayingVideo={setPlayingVideo}
+                        setVideoError={setVideoError}
+                        setIsRefreshing={setIsRefreshing}
+                      />
                     ))}
                   </div>
                 </section>
