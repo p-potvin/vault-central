@@ -34,3 +34,7 @@
 ## 2026-05-14 - [Content Script Mutation Observer Performance]
 **Learning:** During mutation observer callbacks (like link highlight scans), repeatedly awaiting `browser.storage.local.get` to fetch large datasets like the entire vault creates enormous overhead, especially since DOM mutations can fire rapidly. Serializing/deserializing thousands of objects just to check if a URL exists causes significant IPC strain and main thread blocking.
 **Action:** Always maintain a module-level cache (e.g. `Set<string>`) of the data required by the content script, populate it once, and keep it fresh by listening to `browser.storage.onChanged`.
+
+## 2025-02-18 - [Reduce Date Object Allocation in Render Loops]
+**Learning:** When formatting timestamps inside large render loops using `Intl.DateTimeFormat`, passing the raw numeric timestamp directly to `.format()` avoids instantiating new `Date` objects on every iteration. This significantly reduces garbage collection overhead and memory churn when rendering large lists like the Vault Dashboard.
+**Action:** Always pass raw numeric timestamps directly to `Intl.DateTimeFormat.prototype.format()` instead of wrapping them in `new Date()`.
