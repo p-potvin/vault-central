@@ -72,18 +72,18 @@ function addHeartIndicator(el) {
 // ⚡ BOLT OPTIMIZATION: Cache saved URLs to prevent redundant extension storage reads
 // and array iterations on every DOM mutation.
 let cachedSavedUrls = null;
-
 // ⚡ BOLT OPTIMIZATION: Cache parsed URLs to prevent redundant new URL() instantiation
 // which creates an O(N) synchronous bottleneck during repeated extraction attempts.
 const domainCache = new Map();
-
 function getSafeHostname(url) {
-    if (domainCache.has(url)) return domainCache.get(url);
+    if (domainCache.has(url))
+        return domainCache.get(url);
     try {
         const hostname = new URL(url).hostname;
         domainCache.set(url, hostname);
         return hostname;
-    } catch {
+    }
+    catch {
         domainCache.set(url, window.location.hostname);
         return window.location.hostname;
     }

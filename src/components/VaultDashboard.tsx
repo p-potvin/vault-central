@@ -428,6 +428,13 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
           alt={video.title}
           className="w-full h-full object-cover" 
           loading="eager" 
+          onError={(e) => {
+            const target = e.currentTarget;
+            const fallbackSrc = 'data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="%23333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Crect x="3" y="3" width="18" height="18" rx="2" ry="2"%3E%3C/rect%3E%3Ccircle cx="8.5" cy="8.5" r="1.5"%3E%3C/circle%3E%3Cpolyline points="21 15 16 10 5 21"%3E%3C/polyline%3E%3C/svg%3E';
+            if (target.src !== fallbackSrc) {
+              target.src = fallbackSrc;
+            }
+          }}
         />
       ) : previewBlob ? (
         // Show as a static first-frame when not hovering; play on hover.
@@ -451,6 +458,13 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
             alt={video.title} 
             loading="lazy"
             className="w-full h-full object-cover"
+            onError={(e) => {
+              const target = e.currentTarget;
+              const fallbackSrc = 'data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="%23333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Crect x="3" y="3" width="18" height="18" rx="2" ry="2"%3E%3C/rect%3E%3Ccircle cx="8.5" cy="8.5" r="1.5"%3E%3C/circle%3E%3Cpolyline points="21 15 16 10 5 21"%3E%3C/polyline%3E%3C/svg%3E';
+              if (target.src !== fallbackSrc) {
+                target.src = fallbackSrc;
+              }
+            }}
           />
         ) : (
           <div className="w-full h-full bg-black" aria-label={video.title} />
@@ -1586,7 +1600,19 @@ export const VaultDashboard: React.FC = () => {
                             ) : (
                               isDisplayableImageThumbnail(fav.thumbnail) ? (
                                 // ⚡ BOLT OPTIMIZATION: `loading="lazy"` prevents fetching all images simultaneously.
-                                <img src={fav.thumbnail} alt={fav.title} loading="lazy" className="w-full h-full object-cover transition-transform duration-500 group-hover/thumb:scale-105" />
+                                <img
+                                  src={fav.thumbnail}
+                                  alt={fav.title}
+                                  loading="lazy"
+                                  className="w-full h-full object-cover transition-transform duration-500 group-hover/thumb:scale-105"
+                                  onError={(e) => {
+                                    const target = e.currentTarget;
+                                    const fallbackSrc = 'data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="%23333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Crect x="3" y="3" width="18" height="18" rx="2" ry="2"%3E%3C/rect%3E%3Ccircle cx="8.5" cy="8.5" r="1.5"%3E%3C/circle%3E%3Cpolyline points="21 15 16 10 5 21"%3E%3C/polyline%3E%3C/svg%3E';
+                                    if (target.src !== fallbackSrc) {
+                                      target.src = fallbackSrc;
+                                    }
+                                  }}
+                                />
                               ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-vault-cardBg to-vault-bg/50">
                                     <Icons.DebugIcon size={32} className="opacity-10 mb-1" />
