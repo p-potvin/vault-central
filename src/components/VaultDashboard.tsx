@@ -1437,7 +1437,7 @@ export const VaultDashboard: React.FC = () => {
                             viewSize === 1 ? "border-none ml-4 gap-4 mt-0 pt-0" : "border-t"
                           )}>
                             <span className="text-[11px] font-semibold text-vault-muted tracking-wider">
-                              {dateFormatter.format(fav.timestamp)}
+                              {dateFormatter.format(new Date(fav.timestamp))}
                             </span>
                             <a 
                               href={fav.url} 
@@ -1646,7 +1646,7 @@ export const VaultDashboard: React.FC = () => {
                              "text-xs mt-2",
                              backupSettings.lastBackupStatus === 'error' ? "text-red-400" : "text-vault-accent"
                            )}>
-                             Last backup: {dateTimeFormatter.format(backupSettings.lastBackupAt)}
+                             Last backup: {dateTimeFormatter.format(new Date(backupSettings.lastBackupAt))}
                              {backupSettings.lastBackupStatus === 'error' ? ` - ${backupSettings.lastBackupError || 'failed'}` : ''}
                            </p>
                          )}
@@ -1867,7 +1867,7 @@ export const VaultDashboard: React.FC = () => {
                 {playingVideo.author && <span className="ml-2 px-2 border-l border-vault-border">By: {playingVideo.author}</span>}
               </div>
               <div className="font-mono text-xs">
-                {dateTimeFormatter.format(playingVideo.timestamp)}
+                {dateTimeFormatter.format(new Date(playingVideo.timestamp))}
               </div>
             </div>
           </div>
