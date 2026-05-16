@@ -41,3 +41,7 @@
 ## 2024-05-11 - Repeated `new URL()` Parsing in Loops causes O(N) overhead
 **Learning:** Instantiating `new URL()` synchronously within loops, such as extraction attempts (`attemptExtraction` in content scripts) or React render loops, creates a significant O(N) performance bottleneck in the browser extension environment.
 **Action:** Always hoist domain parsing or use a module-level `Map` (like `domainCache`) to store and retrieve previously parsed URLs. This caches the results and prevents redundant, synchronous URL parsing overhead.
+
+## 2024-05-16 - [Optimize URL caching for domain grouping]
+**Learning:** String interpolation (e.g. `${url}-${removeWww}`) inside frequently called caching functions creates O(N) garbage collection bottlenecks when sorting or filtering large sets of data in a React useMemo hook.
+**Action:** Using multiple discrete Map caches keyed by flags prevents rapid string allocation and drastically improves performance during rendering or filtering loops.

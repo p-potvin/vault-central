@@ -26,6 +26,7 @@ import React, { useEffect, useState, useMemo, useRef, useDeferredValue } from 'r
 // creates O(N) performance bottlenecks. This cache prevents redundant URL parsing
 // and gracefully handles invalid URLs without crashing the React tree.
 const domainCache = new Map<string, string>();
+const domainCacheNoWww = new Map<string, string>();
 
 // ⚡ BOLT OPTIMIZATION:
 // `new Date().toLocaleDateString()` and `.toLocaleString()` inside render loops
@@ -235,18 +236,22 @@ function mergeSyncedMetadata(localItems: VideoData[], syncedItems: VideoData[]) 
 
 function getDomainFromUrl(url: string, removeWww = false): string {
   if (!url) return 'Unknown';
-  const cacheKey = `${url}-${removeWww}`;
-  if (domainCache.has(cacheKey)) {
-    return domainCache.get(cacheKey)!;
+
+  // ⚡ BOLT OPTIMIZATION:
+  // Using two separate caches avoids O(N) string concatenation (`${url}-${removeWww}`)
+  // on every lookup during sorting and grouping.
+  const cache = removeWww ? domainCacheNoWww : domainCache;
+  if (cache.has(url)) {
+    return cache.get(url)!;
   }
   try {
     const urlObj = new URL(url);
     const hostname = removeWww ? urlObj.hostname.replace(/^www\./, '') : urlObj.hostname;
     const domain = hostname || 'Unknown';
-    domainCache.set(cacheKey, domain);
+    cache.set(url, domain);
     return domain;
   } catch (e) {
-    domainCache.set(cacheKey, 'Unknown');
+    cache.set(url, 'Unknown');
     return 'Unknown';
   }
 }
