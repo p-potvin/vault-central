@@ -121,6 +121,8 @@ export interface ExtractionResult {
 interface ExtractionContext {
     originUrl?: string;
     originTitle?: string;
+    originTabId?: number;
+    originWindowId?: number;
 }
 
 async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): Promise<ExtractionResult | null> {
@@ -163,7 +165,13 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                 }
             }
 
-            if (scraperTabId !== undefined) {
+            if (scraperWindowId !== undefined) {
+                try {
+                    await browser.windows.remove(scraperWindowId);
+                } catch (e) {
+                    logger.warn("[doTabExtraction] Error closing scraper window:", e);
+                }
+            } else if (scraperTabId !== undefined) {
                 try {
                     await browser.tabs.remove(scraperTabId);
                 } catch (e) {
@@ -175,11 +183,44 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
         };
 
         try {
-            const scraperTab = await browser.tabs.create({ url: targetUrl, active: false });
-            logger.log("[doTabExtraction] Scraper tab created. tabId:", scraperTab.id, "windowId:", scraperTab.windowId, "| active: false (hidden tab)");
-            
-            scraperTabId = scraperTab.id;
-            scraperWindowId = scraperTab.windowId;
+            try {
+                // Use a popup window so Firefox actually loads the page. 
+                // We create it focused to bypass anti-popup block, then quickly restore focus.
+                const scraperWindow = await (browser.windows as any).create({
+                    url: targetUrl,
+                    type: 'popup',
+                    state: 'normal',
+                    focused: true,
+                    width: 1280,
+                    height: 720,
+                });
+                const scraperTabFromWindow = (scraperWindow as any).tabs?.[0];
+                logger.log("[doTabExtraction] Scraper window created (normal popup). windowId:", scraperWindow.id, "tabId:", scraperTabFromWindow?.id);
+                
+                scraperTabId = scraperTabFromWindow?.id;
+                scraperWindowId = scraperWindow.id;
+
+                // Immediately switch focus back to original tab/window to minimize disruption
+                if (ctx.originWindowId !== undefined) {
+                    try { await browser.windows.update(ctx.originWindowId, { focused: true }); } catch (e) {}
+                }
+                if (ctx.originTabId !== undefined) {
+                    try { await browser.tabs.update(ctx.originTabId, { active: true }); } catch (e) {}
+                }
+            } catch (popupErr) {
+                logger.warn("[doTabExtraction] windows.create failed (popup blocker?). Falling back to tabs.create with active:true:", popupErr);
+                const scraperTab = await browser.tabs.create({ url: targetUrl, active: true });
+                scraperTabId = scraperTab.id;
+                logger.log("[doTabExtraction] Scraper tab fallback (active:true) created. tabId:", scraperTabId);
+                
+                // Immediately switch focus back to original tab/window
+                if (ctx.originWindowId !== undefined) {
+                    try { await browser.windows.update(ctx.originWindowId, { focused: true }); } catch (e) {}
+                }
+                if (ctx.originTabId !== undefined) {
+                    try { await browser.tabs.update(ctx.originTabId, { active: true }); } catch (e) {}
+                }
+            }
 
             globalTimeoutId = setTimeout(() => {
                 logger.warn("[doTabExtraction] Global timeout reached after 18s. latestM3u8:", latestM3u8);
@@ -216,7 +257,7 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
             };
             browser.tabs.onUpdated.addListener(tabUpdateListener);
 
-            browser.tabs.get(scraperTab.id!).then(tab => {
+            browser.tabs.get(scraperTabId!).then(tab => {
                 if (tab.status === 'complete') {
                     logger.log("[doTabExtraction] Tab was already 'complete' before listener attached (cache hit). Injecting immediately.");
                     if (tabUpdateListener) {
@@ -357,8 +398,38 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                                             await new Promise(r => setTimeout(r, 100));
                                         }
 
+                                        // Sanity check: if the source video is cross-origin without
+                                        // CORS headers, drawImage paints onto a "tainted" canvas
+                                        // and getImageData throws. captureStream/MediaRecorder
+                                        // produce a valid-looking but visually-empty webm in that
+                                        // case. Detect it here and bail so the FFmpeg fallback
+                                        // (which fetches the source bytes directly via the
+                                        // extension's host_permissions) runs instead.
+                                        let hadVisibleContent = false;
+                                        try {
+                                            // Sample center pixel + two off-center points.
+                                            const samples = [
+                                                ctx.getImageData(canvas.width >> 1, canvas.height >> 1, 1, 1).data,
+                                                ctx.getImageData(canvas.width >> 2, canvas.height >> 2, 1, 1).data,
+                                                ctx.getImageData((canvas.width * 3) >> 2, (canvas.height * 3) >> 2, 1, 1).data,
+                                            ];
+                                            for (const s of samples) {
+                                                if (s[0] > 8 || s[1] > 8 || s[2] > 8) { hadVisibleContent = true; break; }
+                                            }
+                                        } catch (e) {
+                                            // SecurityError -> tainted canvas. Treat as no content.
+                                            console.warn("[VaultCentral] Canvas tainted by cross-origin video; yielding to FFmpeg fallback.");
+                                            hadVisibleContent = false;
+                                        }
+
                                         if (recorder.state !== 'inactive') {
                                             recorder.stop();
+                                        }
+
+                                        if (!hadVisibleContent) {
+                                            // The webm we'd produce would be black. Discard so the
+                                            // pipeline's FFmpeg fallback path triggers.
+                                            return finish(null);
                                         }
                                     } catch (e) {
                                         console.error("[VaultCentral] captureWebmPreview failed:", e);
@@ -407,7 +478,7 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                                     for (const selector of tier) {
                                         try {
                                             const elements = document.querySelectorAll(selector);
-                                            for (const el of Array.from(elements)) {
+                                            for (const el of [...elements]) {
                                                 if (el instanceof HTMLVideoElement) {
                                                     el.muted = true;
                                                     el.play().catch(() => {});
@@ -426,7 +497,7 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                                     if (triggeredAny) {
                                         // Give the tier a chance to spin up a real <video> with a non-blob src
                                         await delay(800);
-                                        const playing = Array.from(document.querySelectorAll('video'))
+                                        const playing = [...document.querySelectorAll('video')]
                                             .some(v => (v.src && !v.src.startsWith('blob:')) || v.currentSrc && !v.currentSrc.startsWith('blob:'));
                                         if (playing) return;
                                     }
@@ -464,7 +535,7 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                                 metadata.author = getMeta('og:site_name', 'author');
                                 metadata.tags = (getMeta('og:video:tag', 'keywords') || '').split(',').map(s => s.trim()).filter(Boolean);
 
-                                const videos = Array.from(document.querySelectorAll('video'));
+                                const videos = [...document.querySelectorAll('video')];
                                 interface Candidate { el: HTMLVideoElement; src: string | null; area: number; centerDistance: number; urlScore: number; idClassBoost: number; }
                                 const candidates: Candidate[] = [];
                                 for (const v of videos) {
@@ -475,7 +546,7 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                                     let src: string | null = null;
                                     if (v.src && !v.src.startsWith('blob:')) src = v.src;
                                     else {
-                                        const source = Array.from(v.querySelectorAll('source')).find(s => s.src && !s.src.startsWith('blob:'));
+                                        const source = [...v.querySelectorAll('source')].find(s => s.src && !s.src.startsWith('blob:'));
                                         if (source) src = source.src;
                                     }
                                     candidates.push({
@@ -614,6 +685,8 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
         const extracted = await doTabExtraction(targetUrl, {
             originUrl: data.originUrl,
             originTitle: data.originTitle,
+            originTabId: tabId,
+            originWindowId: windowId
         });
         logger.log("[runCapturePipeline] doTabExtraction returned. src:", extracted?.src ?? 'null', "| scraped thumbnail length:", extracted?.metadata?.thumbnail?.length ?? 0);
 
@@ -835,8 +908,10 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
         return getPreviewBlob(request.videoUrl).then(async (blob) => {
             if (!blob) return { success: true, found: false };
             const bytes = new Uint8Array(await blob.arrayBuffer());
+            const arr = new Array(bytes.length);
+            for(let i=0; i<bytes.length; i++) arr[i] = bytes[i];
             // Convert to a transferable plain array for runtime messaging.
-            return { success: true, found: true, bytes: Array.from(bytes), mimeType: blob.type };
+            return { success: true, found: true, bytes: arr, mimeType: blob.type };
         }).catch((e: any) => {
             logger.error('[preview.get] failed:', e);
             return { success: false, error: 'Preview retrieval failed' };

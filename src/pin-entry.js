@@ -2,7 +2,8 @@ import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useState, useRef, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import browser from 'webextension-polyfill';
-import { getPinSettings, savePinSettings, isVaultLocked } from './lib/storage-vault';
+import { getPinSettings, isVaultLocked } from './lib/storage-vault';
+import { vaultUnlock } from './lib/vault-client';
 import { VAULT_THEMES, getThemeClass } from './lib/themes';
 import * as Icons from './lib/icons';
 import './styles/globals.css';
@@ -54,20 +55,19 @@ const PinPopup = () => {
         }
     };
     const handleVerify = async (enteredPin) => {
-        if (enteredPin === pinSettings.pin) {
-            const updated = { ...pinSettings, lastUnlocked: Date.now() };
-            await savePinSettings(updated);
+        // Background derives the KEK via Argon2id and verifies against the
+        // stored pinVerifier. On the legacy migration path it also re-encrypts
+        // existing previews. Returns success: true on match.
+        const res = await vaultUnlock(enteredPin);
+        if (res.success) {
             setIsLocked(false);
-            // Notify background and open dashboard directly
-            browser.runtime.sendMessage({ action: "open_dashboard" });
-            // Success animation then close/redirect?
+            browser.runtime.sendMessage({ action: 'open_dashboard' });
             setTimeout(() => window.close(), 200);
         }
         else {
             setError(true);
             setPin(new Array(pinSettings.length).fill(''));
             inputsRef.current[0]?.focus();
-            // Vibrate/Shake effect here if possible
         }
     };
     if (!pinSettings)

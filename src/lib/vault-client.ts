@@ -42,22 +42,26 @@ export async function vaultStatus() {
 
 export async function savePreview(videoUrl: string, blob: Blob): Promise<void> {
   const bytes = new Uint8Array(await blob.arrayBuffer());
+  const arr = new Array(bytes.length);
+  for(let i=0; i<bytes.length; i++) arr[i] = bytes[i];
   const res = await send({
     action: 'preview.save',
     videoUrl,
-    blobBytes: Array.from(bytes),
+    blobBytes: arr,
     mimeType: blob.type,
   });
   if (!res.success) throw new Error(res.error || 'preview save failed');
 }
 
 export async function getPreview(videoUrl: string): Promise<Blob | null> {
-  const res = await send<{ found: boolean; bytes?: number[]; mimeType?: string }>({
-    action: 'preview.get',
-    videoUrl,
-  });
-  if (!res.success || !res.found || !res.bytes) return null;
-  return new Blob([new Uint8Array(res.bytes)], { type: res.mimeType || 'application/octet-stream' });
+    console.debug('[vault-client] getPreview requested for:', videoUrl);
+    const res = await send<{ found: boolean; bytes?: number[]; mimeType?: string }>({
+      action: 'preview.get',
+      videoUrl,
+    });
+    console.debug('[vault-client] getPreview response for:', videoUrl, 'success:', res.success, 'found:', res.found);
+    if (!res.success || !res.found || !res.bytes) return null;
+    return new Blob([new Uint8Array(res.bytes!)], { type: res.mimeType || 'application/octet-stream' });
 }
 
 export async function deletePreview(videoUrl: string) {

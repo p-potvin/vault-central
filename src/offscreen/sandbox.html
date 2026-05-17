@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Vault Sandbox Processor</title>
+</head>
+<body>
+    <!--
+        This page is declared under "sandbox.pages" in manifest.json.
+        Sandboxed pages have no extension CSP restrictions — they can freely
+        use new Function() / eval(), which is required by the Emscripten glue
+        code that ships with @ffmpeg/core.
+
+        This page CANNOT use browser.* / chrome.* extension APIs.
+        All communication goes through window.postMessage.
+    -->
+    <script src="./sandbox.js"></script>
+</body>
+</html>

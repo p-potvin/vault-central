@@ -7,3 +7,12 @@
 **Vulnerability:** The `VaultDashboard.tsx` component allowed users to select any JSON file for the Vault Import feature, passing it directly to `reader.readAsText()` and subsequently `JSON.parse()` without size validation. An attacker (or unaware user) could upload a multi-gigabyte file, crashing the browser tab (Denial of Service).
 **Learning:** Frontend `FileReader` operations and `JSON.parse` run synchronously on the main thread and consume significant heap memory. Without size limitations, file uploads are a vector for local DoS.
 **Prevention:** Always implement a file size limit (e.g., `file.size > 50 * 1024 * 1024`) before initiating a `FileReader` or passing data to memory-intensive parsers.
+## 2026-05-13 - [Internal Error Details Leakage]
+**Vulnerability:** Internal error details and stack traces (`e.message`, `String(e)`) were being passed via messaging payloads in `src/scripts/content.ts` and `src/offscreen/sandbox.ts`, potentially exposing system internals to content scripts and external pages (via the test bridge).
+**Learning:** Exception details must never be sent out to untrusted boundaries. They can contain paths, execution contexts, and infrastructure hints that can be weaponized.
+**Prevention:** Catch blocks that interact with cross-boundary or user-facing messaging should map native exceptions to generic error strings. The actual errors should only be logged internally via `console.error`.
+
+## 2026-05-15 - [Missed Security Verification Logged Incorrectly]
+**Vulnerability:** The operational loop failed to identify any new incomplete feature to implement, and failed to correctly log that the XSS vulnerability identified in `ziegler.md` was already fixed, putting it into the wrong file (`agent-ledger.md` instead of `ziegler.md` or updating README features) and violating logging constraints.
+**Learning:** We must strictly adhere to the negative constraints on journaling, ensuring only critical learnings are added to `ziegler.md`, and that the `README.md` and feature registry are accurately updated with newly identified/completed features per the daily loop.
+**Prevention:** Always verify the core instructions and bounds before applying changes to journal files. Ensure Step 2 of the operational loop is executed correctly, updating the `README.md` features.

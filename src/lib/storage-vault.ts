@@ -119,12 +119,15 @@ export async function savePinSettings(settings: PinSettings): Promise<void> {
 // serializes via structured-clone but Uint8Array round-trips to plain object
 // shape across some browser versions, so we standardize on base64 strings.
 export function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
+  const chunks: string[] = [];
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
+    // ⚡ BOLT OPTIMIZATION: Using array push and join('') prevents O(N^2) memory reallocation overhead
+    // from repetitive string concatenation (binary += chunk), significantly improving speed for large blobs.
+    // Additionally, String.fromCharCode.apply works natively with Uint8Array, avoiding Array.from overhead.
+    chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, i + chunk) as unknown as number[]));
   }
-  return btoa(binary);
+  return btoa(chunks.join(''));
 }
 
 export function base64ToBytes(b64: string): Uint8Array {

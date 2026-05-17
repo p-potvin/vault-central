@@ -1,6 +1,7 @@
 import browser from 'webextension-polyfill';
 import { getBackupSettings, getSavedVideos, recordBackupResult, saveBackupSettings, saveVideos } from '../../src/lib/storage-vault';
-import { savePreview } from '../../src/lib/dexie-store';
+import { deletePreview, clearPreviews as dbClearPreviews } from '../../src/lib/dexie-store';
+import { savePreviewBlob, getPreviewBlob, setupVault as runtimeSetupVault, unlockVault as runtimeUnlockVault, lockVault as runtimeLockVault, vaultStatus, destroyVault, } from '../../src/lib/vault-runtime';
 import { DAILY_BACKUP_ALARM, downloadFullVaultBackup } from '../../src/lib/backup-vault';
 import { STORAGE_KEYS } from '../../src/lib/constants';
 class DebugLogger {
@@ -79,11 +80,13 @@ async function runAutomaticBackup() {
     }
     catch (err) {
         logger.error("[backup] Automatic backup failed:", err);
-        await recordBackupResult('error', err instanceof Error ? err.message : String(err));
+        // Avoid leaking internal error details to persisted state. Real error
+        // already in the debug log above.
+        await recordBackupResult('error', 'Backup operation failed');
     }
 }
-async function doTabExtraction(targetUrl) {
-    logger.log("[doTabExtraction] Starting extraction for:", targetUrl);
+async function doTabExtraction(targetUrl, ctx = {}) {
+    logger.log("[doTabExtraction] Starting extraction for:", targetUrl, "| origin:", ctx.originUrl, "| originTitle:", ctx.originTitle);
     let scraperTabId = undefined;
     let webRequestListener = null;
     let tabUpdateListener = null;
@@ -118,7 +121,15 @@ async function doTabExtraction(targetUrl) {
                     logger.warn("[doTabExtraction] Error removing tabUpdateListener:", e);
                 }
             }
-            if (scraperTabId !== undefined) {
+            if (scraperWindowId !== undefined) {
+                try {
+                    await browser.windows.remove(scraperWindowId);
+                }
+                catch (e) {
+                    logger.warn("[doTabExtraction] Error closing scraper window:", e);
+                }
+            }
+            else if (scraperTabId !== undefined) {
                 try {
                     await browser.tabs.remove(scraperTabId);
                 }
@@ -129,25 +140,60 @@ async function doTabExtraction(targetUrl) {
             resolve(result);
         };
         try {
-            const queryTabs = await browser.tabs.query({ active: true, currentWindow: true });
-            const prevActiveTabId = queryTabs.length > 0 ? queryTabs[0].id : undefined;
-            const scraperTab = await browser.tabs.create({ url: targetUrl, active: true });
-            logger.log("[doTabExtraction] Scraper tab created. tabId:", scraperTab.id, "windowId:", scraperTab.windowId, "| active: true (to bypass media throttle)");
-            scraperTabId = scraperTab.id;
-            scraperWindowId = scraperTab.windowId;
-            if (prevActiveTabId && scraperTabId !== prevActiveTabId) {
-                setTimeout(async () => {
+            try {
+                // Use a popup window so Firefox actually loads the page. 
+                // We create it focused to bypass anti-popup block, then quickly restore focus.
+                const scraperWindow = await browser.windows.create({
+                    url: targetUrl,
+                    type: 'popup',
+                    state: 'normal',
+                    focused: true,
+                    width: 1280,
+                    height: 720,
+                });
+                const scraperTabFromWindow = scraperWindow.tabs?.[0];
+                logger.log("[doTabExtraction] Scraper window created (normal popup). windowId:", scraperWindow.id, "tabId:", scraperTabFromWindow?.id);
+                scraperTabId = scraperTabFromWindow?.id;
+                scraperWindowId = scraperWindow.id;
+                // Immediately switch focus back to original tab/window to minimize disruption
+                if (ctx.originWindowId !== undefined) {
                     try {
-                        logger.log("[doTabExtraction] Flipping focus back to original tab:", prevActiveTabId);
-                        await browser.tabs.update(prevActiveTabId, { active: true });
+                        await browser.windows.update(ctx.originWindowId, { focused: true });
                     }
                     catch (e) { }
-                }, 50);
+                }
+                if (ctx.originTabId !== undefined) {
+                    try {
+                        await browser.tabs.update(ctx.originTabId, { active: true });
+                    }
+                    catch (e) { }
+                }
+            }
+            catch (popupErr) {
+                logger.warn("[doTabExtraction] windows.create failed (popup blocker?). Falling back to tabs.create with active:true:", popupErr);
+                const scraperTab = await browser.tabs.create({ url: targetUrl, active: true });
+                scraperTabId = scraperTab.id;
+                logger.log("[doTabExtraction] Scraper tab fallback (active:true) created. tabId:", scraperTabId);
+                // Immediately switch focus back to original tab/window
+                if (ctx.originWindowId !== undefined) {
+                    try {
+                        await browser.windows.update(ctx.originWindowId, { focused: true });
+                    }
+                    catch (e) { }
+                }
+                if (ctx.originTabId !== undefined) {
+                    try {
+                        await browser.tabs.update(ctx.originTabId, { active: true });
+                    }
+                    catch (e) { }
+                }
             }
             globalTimeoutId = setTimeout(() => {
-                logger.warn("[doTabExtraction] Global timeout reached after 35s. latestM3u8:", latestM3u8);
+                logger.warn("[doTabExtraction] Global timeout reached after 18s. latestM3u8:", latestM3u8);
+                // Even on hard timeout, return what we got — the pipeline always
+                // saves SOMETHING, never errors out (per decision-tree spec #2b3/#2c).
                 cleanup(latestM3u8 ? { src: latestM3u8, metadata: defaultMetadata } : null, "Timeout reached");
-            }, 35000);
+            }, 18000);
             if (browser.webRequest) {
                 webRequestListener = (details) => {
                     const lowercaseUrl = details.url.toLowerCase();
@@ -176,7 +222,7 @@ async function doTabExtraction(targetUrl) {
                 }
             };
             browser.tabs.onUpdated.addListener(tabUpdateListener);
-            browser.tabs.get(scraperTab.id).then(tab => {
+            browser.tabs.get(scraperTabId).then(tab => {
                 if (tab.status === 'complete') {
                     logger.log("[doTabExtraction] Tab was already 'complete' before listener attached (cache hit). Injecting immediately.");
                     if (tabUpdateListener) {
@@ -201,117 +247,314 @@ async function doTabExtraction(targetUrl) {
                 try {
                     const results = await browser.scripting.executeScript({
                         target: { tabId: scraperTabId },
-                        func: async () => {
+                        args: [{ originUrl: ctx.originUrl ?? '', originTitle: ctx.originTitle ?? '' }],
+                        func: async (injectedCtx) => {
                             const delay = (ms) => new Promise(r => setTimeout(r, ms));
-                            const captureJpegFrame = async (video) => {
+                            // Decision-tree #1b detection: did the scraper tab land on the
+                            // same page the user fired Alt+X from? When yes, the metadata
+                            // we already gathered in the origin tab is canonical and we
+                            // just need a video src + preview from this same DOM.
+                            const isDuplicateOfOrigin = (() => {
+                                if (!injectedCtx.originUrl)
+                                    return false;
                                 try {
-                                    if (video.currentTime === 0) {
-                                        video.currentTime = 5;
-                                        await new Promise((r) => {
-                                            const seeked = () => { video.removeEventListener('seeked', seeked); r(null); };
-                                            video.addEventListener('seeked', seeked);
-                                            setTimeout(r, 1000);
-                                        });
-                                    }
-                                    const canvas = document.createElement('canvas');
-                                    canvas.width = video.videoWidth || 640;
-                                    canvas.height = video.videoHeight || 360;
-                                    const ctx = canvas.getContext('2d');
-                                    if (ctx) {
-                                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                                        return canvas.toDataURL('image/jpeg', 0.5);
-                                    }
+                                    const origin = new URL(injectedCtx.originUrl);
+                                    const here = new URL(window.location.href);
+                                    if (origin.hostname === here.hostname && origin.pathname === here.pathname)
+                                        return true;
                                 }
-                                catch (e) {
-                                    return null;
-                                }
-                                return null;
-                            };
-                            const clickAllPlayers = async () => {
-                                const selectors = [
-                                    'video', 'iframe', 'button[aria-label*="Play"]',
-                                    '.vjs-big-play-button', '.ytp-large-play-button',
-                                    '[class^="media-player"]', '[role="button"]'
-                                ];
-                                for (const selector of selectors) {
+                                catch { /* fall through */ }
+                                if (injectedCtx.originTitle && injectedCtx.originTitle === document.title)
+                                    return true;
+                                return false;
+                            })();
+                            const captureWebmPreview = async (video) => {
+                                return new Promise(async (resolve) => {
+                                    let cleanup = null;
+                                    let resolved = false;
+                                    const finish = (value) => {
+                                        if (resolved)
+                                            return;
+                                        resolved = true;
+                                        cleanup?.();
+                                        resolve(value);
+                                    };
                                     try {
-                                        const elements = document.querySelectorAll(selector);
-                                        for (const el of Array.from(elements)) {
-                                            if (el instanceof HTMLVideoElement) {
-                                                el.muted = true;
-                                                el.play().catch(() => { });
-                                            }
-                                            else {
-                                                el.focus();
-                                                el.click();
-                                            }
-                                            await delay(200);
+                                        const canvas = document.createElement('canvas');
+                                        canvas.width = 426;
+                                        canvas.height = 240;
+                                        const ctx = canvas.getContext('2d');
+                                        if (!ctx)
+                                            return resolve(null);
+                                        const stream = canvas.captureStream(10); // 10 fps
+                                        cleanup = () => {
+                                            stream.getTracks().forEach((track) => track.stop());
+                                        };
+                                        let recorder;
+                                        try {
+                                            recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
                                         }
-                                    }
-                                    catch (e) {
-                                        console.debug("[VaultCentral] Soft-gate interaction attempt failed:", e);
-                                    }
-                                }
-                            };
-                            const findBestVideoAndMeta = async () => {
-                                const metadata = { title: document.title, thumbnail: "", duration: 0, author: "", views: "", tags: [], likes: "", date: "" };
-                                const getMeta = (prop, name) => {
-                                    const el = document.querySelector(`meta[property="${prop}"], meta[name="${name}"]`);
-                                    return el ? el.content : "";
-                                };
-                                metadata.title = getMeta("og:title", "title") || metadata.title;
-                                metadata.thumbnail = getMeta("og:image", "image") || "";
-                                metadata.author = getMeta("og:site_name", "author");
-                                metadata.tags = (getMeta("og:video:tag", "keywords") || '').split(',').map(s => s.trim());
-                                const videos = Array.from(document.querySelectorAll('video'));
-                                let bestSrc = null;
-                                let maxScore = -1;
-                                let bestVideoEl = null;
-                                for (const v of videos) {
-                                    const rect = v.getBoundingClientRect();
-                                    let score = rect.width * rect.height;
-                                    const idClass = (v.id + " " + v.className).toLowerCase();
-                                    if (idClass.match(/player|main|primary|hero|video-js|vjs|jwplayer/))
-                                        score += 1000000;
-                                    if (v.src && !v.src.startsWith('blob:')) {
-                                        if (score > maxScore) {
-                                            maxScore = score;
-                                            bestSrc = v.src;
-                                            bestVideoEl = v;
-                                            if (!isNaN(v.duration))
-                                                metadata.duration = v.duration;
+                                        catch (e) {
+                                            try {
+                                                recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+                                            }
+                                            catch (e2) {
+                                                console.error("[VaultCentral] MediaRecorder setup failed:", e2);
+                                                return finish(null);
+                                            }
                                         }
-                                    }
-                                    else {
-                                        const sources = Array.from(v.querySelectorAll('source'));
-                                        for (const s of sources) {
-                                            if (s.src && !s.src.startsWith('blob:')) {
-                                                if (score > maxScore) {
-                                                    maxScore = score;
-                                                    bestSrc = s.src;
-                                                    bestVideoEl = v;
-                                                    if (!isNaN(v.duration))
-                                                        metadata.duration = v.duration;
+                                        const chunks = [];
+                                        recorder.ondataavailable = e => { if (e.data.size > 0)
+                                            chunks.push(e.data); };
+                                        recorder.onstop = () => {
+                                            const blob = new Blob(chunks, { type: 'video/webm' });
+                                            const reader = new FileReader();
+                                            reader.onload = () => finish(reader.result);
+                                            reader.onerror = () => {
+                                                console.error("[VaultCentral] Failed to read WebM blob from FileReader.");
+                                                finish(null);
+                                            };
+                                            reader.readAsDataURL(blob);
+                                        };
+                                        recorder.onerror = () => {
+                                            console.error("[VaultCentral] MediaRecorder encountered an error while recording.");
+                                            finish(null);
+                                        };
+                                        recorder.start();
+                                        const duration = (video.duration && !isNaN(video.duration) && video.duration > 0) ? video.duration : 60;
+                                        // Take 10 snapshots spaced evenly across 10% to 90% of the video
+                                        const startOffset = duration * 0.1;
+                                        const endOffset = duration * 0.9;
+                                        const segmentLength = (endOffset - startOffset) / 9;
+                                        // Play to make sure readyState is sufficiently advanced
+                                        video.muted = true;
+                                        await video.play().catch(() => { });
+                                        video.pause();
+                                        for (let i = 0; i < 10; i++) {
+                                            video.currentTime = startOffset + (i * segmentLength);
+                                            // Wait for seeked event or timeout
+                                            await new Promise(r => {
+                                                let finished = false;
+                                                let timeoutId = null;
+                                                const done = () => {
+                                                    if (finished)
+                                                        return;
+                                                    finished = true;
+                                                    video.removeEventListener('seeked', seeked);
+                                                    if (timeoutId !== null) {
+                                                        clearTimeout(timeoutId);
+                                                    }
+                                                    r(null);
+                                                };
+                                                const seeked = () => {
+                                                    done();
+                                                };
+                                                video.addEventListener('seeked', seeked);
+                                                timeoutId = setTimeout(() => {
+                                                    done();
+                                                }, 400);
+                                            });
+                                            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                            // Give stream a moment to encode frame
+                                            await new Promise(r => setTimeout(r, 100));
+                                        }
+                                        // Sanity check: if the source video is cross-origin without
+                                        // CORS headers, drawImage paints onto a "tainted" canvas
+                                        // and getImageData throws. captureStream/MediaRecorder
+                                        // produce a valid-looking but visually-empty webm in that
+                                        // case. Detect it here and bail so the FFmpeg fallback
+                                        // (which fetches the source bytes directly via the
+                                        // extension's host_permissions) runs instead.
+                                        let hadVisibleContent = false;
+                                        try {
+                                            // Sample center pixel + two off-center points.
+                                            const samples = [
+                                                ctx.getImageData(canvas.width >> 1, canvas.height >> 1, 1, 1).data,
+                                                ctx.getImageData(canvas.width >> 2, canvas.height >> 2, 1, 1).data,
+                                                ctx.getImageData((canvas.width * 3) >> 2, (canvas.height * 3) >> 2, 1, 1).data,
+                                            ];
+                                            for (const s of samples) {
+                                                if (s[0] > 8 || s[1] > 8 || s[2] > 8) {
+                                                    hadVisibleContent = true;
+                                                    break;
                                                 }
                                             }
                                         }
+                                        catch (e) {
+                                            // SecurityError -> tainted canvas. Treat as no content.
+                                            console.warn("[VaultCentral] Canvas tainted by cross-origin video; yielding to FFmpeg fallback.");
+                                            hadVisibleContent = false;
+                                        }
+                                        if (recorder.state !== 'inactive') {
+                                            recorder.stop();
+                                        }
+                                        if (!hadVisibleContent) {
+                                            // The webm we'd produce would be black. Discard so the
+                                            // pipeline's FFmpeg fallback path triggers.
+                                            return finish(null);
+                                        }
+                                    }
+                                    catch (e) {
+                                        console.error("[VaultCentral] captureWebmPreview failed:", e);
+                                        finish(null);
+                                    }
+                                });
+                            };
+                            // Decision-tree #2b: aggressive ladder for messy pages with no
+                            // clear video player. Tiers run in order, stopping early if a
+                            // <video> starts producing a non-blob src.
+                            const aggressiveTrigger = async () => {
+                                const tiers = [
+                                    // Tier 1: known player libraries' big-play affordances
+                                    [
+                                        '.jwplayer .jw-icon-display',
+                                        '.jwplayer .jw-button-display',
+                                        '.video-js .vjs-big-play-button',
+                                        '.ytp-large-play-button',
+                                        '.plyr__control--overlaid',
+                                        '.shaka-play-button',
+                                        '.flowplayer .play',
+                                    ],
+                                    // Tier 2: generic accessible-name play buttons + ARIA roles
+                                    [
+                                        'button[aria-label*="Play" i]',
+                                        'button[title*="Play" i]',
+                                        '[role="button"][aria-label*="Play" i]',
+                                        '[class*="play-button" i]',
+                                        '[class*="play_button" i]',
+                                        '[class*="playButton"]',
+                                    ],
+                                    // Tier 3: hidden-ish embeds that need to materialise
+                                    [
+                                        'iframe[src*="player" i]',
+                                        'iframe[src*="embed" i]',
+                                        '[data-video]',
+                                        '[data-src*=".m3u8"]',
+                                    ],
+                                    // Tier 4: blunt force — any <video> regardless
+                                    ['video'],
+                                ];
+                                for (const tier of tiers) {
+                                    let triggeredAny = false;
+                                    for (const selector of tier) {
+                                        try {
+                                            const elements = document.querySelectorAll(selector);
+                                            for (const el of [...elements]) {
+                                                if (el instanceof HTMLVideoElement) {
+                                                    el.muted = true;
+                                                    el.play().catch(() => { });
+                                                    triggeredAny = true;
+                                                }
+                                                else {
+                                                    el.focus?.();
+                                                    el.click?.();
+                                                    triggeredAny = true;
+                                                }
+                                                await delay(150);
+                                            }
+                                        }
+                                        catch (e) {
+                                            console.debug("[VaultCentral] aggressiveTrigger tier failed:", e);
+                                        }
+                                    }
+                                    if (triggeredAny) {
+                                        // Give the tier a chance to spin up a real <video> with a non-blob src
+                                        await delay(800);
+                                        const playing = [...document.querySelectorAll('video')]
+                                            .some(v => (v.src && !v.src.startsWith('blob:')) || v.currentSrc && !v.currentSrc.startsWith('blob:'));
+                                        if (playing)
+                                            return;
                                     }
                                 }
-                                if (bestVideoEl) {
-                                    const jpeg = await captureJpegFrame(bestVideoEl);
-                                    if (jpeg)
-                                        metadata.thumbnail = jpeg;
-                                }
-                                return { src: bestSrc, metadata };
                             };
+                            // Decision-tree #2b2: candidate ladder when several <video>
+                            // elements are visible and none is the obvious primary.
+                            //   1. Player-library boost (id/class match)
+                            //   2. Largest visible by area
+                            //   3. Closest to viewport center
+                            //   4. Highest URL score (mp4/webm/m3u8 > generic)
+                            const scoreMediaUrl = (url) => {
+                                if (!url || url.startsWith('javascript:') || url.startsWith('blob:'))
+                                    return -1;
+                                const u = url.toLowerCase();
+                                let s = 0;
+                                if (/\.(mp4|webm|mkv|flv|mov|m3u8|ts)(\?|$)/.test(u))
+                                    s += 1000;
+                                if (/(video|player|embed|watch|clip|media|vod)/.test(u))
+                                    s += 200;
+                                return s;
+                            };
+                            const distanceToCenter = (rect) => {
+                                const cx = window.innerWidth / 2;
+                                const cy = window.innerHeight / 2;
+                                return Math.hypot((rect.left + rect.width / 2) - cx, (rect.top + rect.height / 2) - cy);
+                            };
+                            const findBestVideoAndMeta = async () => {
+                                const metadata = { title: document.title, thumbnail: '', duration: 0, author: '', views: '', tags: [], likes: '', date: '' };
+                                const getMeta = (prop, name) => {
+                                    const el = document.querySelector(`meta[property="${prop}"], meta[name="${name}"]`);
+                                    return el ? el.content : '';
+                                };
+                                metadata.title = getMeta('og:title', 'title') || metadata.title;
+                                metadata.thumbnail = getMeta('og:image', 'image') || '';
+                                metadata.author = getMeta('og:site_name', 'author');
+                                metadata.tags = (getMeta('og:video:tag', 'keywords') || '').split(',').map(s => s.trim()).filter(Boolean);
+                                const videos = [...document.querySelectorAll('video')];
+                                const candidates = [];
+                                for (const v of videos) {
+                                    const rect = v.getBoundingClientRect();
+                                    if (rect.width <= 0 || rect.height <= 0)
+                                        continue;
+                                    const idClass = (v.id + ' ' + v.className).toLowerCase();
+                                    const idClassBoost = /player|main|primary|hero|video-js|vjs|jwplayer/.test(idClass) ? 1_000_000 : 0;
+                                    let src = null;
+                                    if (v.src && !v.src.startsWith('blob:'))
+                                        src = v.src;
+                                    else {
+                                        const source = [...v.querySelectorAll('source')].find(s => s.src && !s.src.startsWith('blob:'));
+                                        if (source)
+                                            src = source.src;
+                                    }
+                                    candidates.push({
+                                        el: v,
+                                        src,
+                                        area: rect.width * rect.height,
+                                        centerDistance: distanceToCenter(rect),
+                                        urlScore: scoreMediaUrl(src),
+                                        idClassBoost,
+                                    });
+                                }
+                                if (candidates.length === 0)
+                                    return { src: null, metadata };
+                                const sorted = [...candidates].sort((a, b) => {
+                                    if (b.idClassBoost !== a.idClassBoost)
+                                        return b.idClassBoost - a.idClassBoost;
+                                    if (b.area !== a.area)
+                                        return b.area - a.area;
+                                    if (a.centerDistance !== b.centerDistance)
+                                        return a.centerDistance - b.centerDistance;
+                                    return b.urlScore - a.urlScore;
+                                });
+                                const best = sorted[0];
+                                if (best.el.duration && !isNaN(best.el.duration))
+                                    metadata.duration = best.el.duration;
+                                const webm = await captureWebmPreview(best.el);
+                                if (webm)
+                                    metadata.thumbnail = webm;
+                                return { src: best.src, metadata };
+                            };
+                            // First pass: maybe the page already has the player ready
                             let result = await findBestVideoAndMeta();
                             if (!result.src && !result.metadata.thumbnail.startsWith('data:video')) {
-                                await delay(2500);
-                                await clickAllPlayers();
-                                await delay(3000);
+                                // Decision-tree #2b: messy page — escalate
+                                await delay(1500);
+                                await aggressiveTrigger();
+                                await delay(1500);
                                 result = await findBestVideoAndMeta();
                             }
-                            return result;
+                            // Always-save guarantee (#2b3 / #2c): never throw. Caller handles
+                            // null src by saving with originUrl as link.
+                            return { ...result, isDuplicateOfOrigin };
                         }
                     });
                     const foundResult = results[0]?.result;
@@ -410,8 +653,23 @@ async function runCapturePipeline(data, tabId, windowId) {
             logger.log("[runCapturePipeline] Thumbnail already present from content.ts (len:", data.thumbnail?.length ?? 0, "). Skipping captureVisibleTab.");
         }
         logger.log("[runCapturePipeline] Starting doTabExtraction for:", targetUrl);
-        const extracted = await doTabExtraction(targetUrl);
+        const extracted = await doTabExtraction(targetUrl, {
+            originUrl: data.originUrl,
+            originTitle: data.originTitle,
+            originTabId: tabId,
+            originWindowId: windowId
+        });
         logger.log("[runCapturePipeline] doTabExtraction returned. src:", extracted?.src ?? 'null', "| scraped thumbnail length:", extracted?.metadata?.thumbnail?.length ?? 0);
+        // Decision-tree type assignment:
+        //   - extraction returned a media src → type='video'
+        //   - no media src found (#2b3, #2c, #3 fall-through) → type='link'
+        // The current page URL is still saved either way (always-save guarantee).
+        if (extracted && extracted.src) {
+            data.type = 'video';
+        }
+        else if (!data.type) {
+            data.type = 'link';
+        }
         if (extracted && extracted.src) {
             finalSrc = extracted.src;
             if (extracted.metadata) {
@@ -479,8 +737,14 @@ async function runCapturePipeline(data, tabId, windowId) {
             try {
                 const response = await fetch(capturedWebmPreviewDataUrl);
                 const blob = await response.blob();
-                await savePreview(data.url, blob);
-                logger.log("[runCapturePipeline] Successfully saved injected WebM preview to Dexie.");
+                try {
+                    await savePreviewBlob(data.url, blob);
+                    logger.log("[runCapturePipeline] Successfully saved injected WebM preview to Dexie.");
+                }
+                catch (e) {
+                    // Vault may be locked — preview will be regenerated on next view
+                    logger.warn("[runCapturePipeline] Could not save preview now (vault state):", e);
+                }
             }
             catch (err) {
                 logger.warn("[runCapturePipeline] Failed to save injected WebM to Dexie:", err);
@@ -509,7 +773,7 @@ async function runCapturePipeline(data, tabId, windowId) {
     }
     catch (err) {
         logger.error("[runCapturePipeline] Unhandled error:", err);
-        return { success: false, message: err.message };
+        return { success: false, message: 'Capture pipeline failed' };
     }
 }
 async function setupOffscreenDocument() {
@@ -568,6 +832,14 @@ browser.runtime.onMessage.addListener((request, sender) => {
     }
     if (request.action === "process_capture")
         return runCapturePipeline(request.data, sender?.tab?.id, sender?.tab?.windowId);
+    if (request.action === "capture-video" || request.type === "capture-video") {
+        // Mirror the keyboard-shortcut command path: forward to the sending
+        // tab's content script (which holds the user's hover state).
+        if (sender?.tab?.id) {
+            void browser.tabs.sendMessage(sender.tab.id, { type: "capture-video" }).catch(() => { });
+        }
+        return Promise.resolve(true);
+    }
     if (request.action === "generate_preview") {
         return setupOffscreenDocument().then(async (ready) => {
             if (!ready) {
@@ -581,6 +853,67 @@ browser.runtime.onMessage.addListener((request, sender) => {
     }
     if (request.action === "generate_preview_process")
         return undefined;
+    // === Vault runtime handlers ===
+    // The unlocked vault state lives in this background context only.
+    // Other contexts (dashboard, content, offscreen) talk to it via these
+    // runtime messages. See src/lib/vault-runtime.ts.
+    if (request.action === "vault.setup") {
+        return runtimeSetupVault(request.pin, request.algorithm)
+            .then(() => ({ success: true }))
+            .catch((e) => {
+            logger.error('[vault.setup] failed:', e);
+            return { success: false, error: 'Vault setup failed' };
+        });
+    }
+    if (request.action === "vault.unlock") {
+        return runtimeUnlockVault(request.pin)
+            .then(ok => ({ success: ok }))
+            .catch((e) => {
+            logger.error('[vault.unlock] failed:', e);
+            return { success: false, error: 'Vault unlock failed' };
+        });
+    }
+    if (request.action === "vault.lock") {
+        runtimeLockVault();
+        return Promise.resolve({ success: true });
+    }
+    if (request.action === "vault.status") {
+        return vaultStatus().then(s => ({ success: true, ...s }));
+    }
+    if (request.action === "vault.destroy") {
+        return destroyVault().then(() => ({ success: true }));
+    }
+    if (request.action === "preview.save") {
+        // request: { videoUrl, blobBytes (number[]), mimeType }
+        const blob = new Blob([new Uint8Array(request.blobBytes)], { type: request.mimeType || 'application/octet-stream' });
+        return savePreviewBlob(request.videoUrl, blob)
+            .then(() => ({ success: true }))
+            .catch((e) => {
+            logger.error('[preview.save] failed:', e);
+            return { success: false, error: 'Preview save failed' };
+        });
+    }
+    if (request.action === "preview.get") {
+        return getPreviewBlob(request.videoUrl).then(async (blob) => {
+            if (!blob)
+                return { success: true, found: false };
+            const bytes = new Uint8Array(await blob.arrayBuffer());
+            const arr = new Array(bytes.length);
+            for(let i=0; i<bytes.length; i++) arr[i] = bytes[i];
+            // Convert to a transferable plain array for runtime messaging.
+            return { success: true, found: true, bytes: arr, mimeType: blob.type };
+        }).catch((e) => {
+            logger.error('[preview.get] failed:', e);
+            return { success: false, error: 'Preview retrieval failed' };
+        });
+    }
+    if (request.action === "preview.delete") {
+        return deletePreview(request.videoUrl).then(() => ({ success: true }));
+    }
+    if (request.action === "preview.clear_all") {
+        return dbClearPreviews().then(() => ({ success: true }));
+    }
+    // === end vault runtime handlers ===
     if (request.action === "download_debug_logs") {
         logger.downloadLogFile();
         return Promise.resolve(true);
@@ -588,18 +921,27 @@ browser.runtime.onMessage.addListener((request, sender) => {
     if (request.action === "run_full_backup") {
         return downloadFullVaultBackup('manual')
             .then(result => result)
-            .catch(err => ({ success: false, error: err instanceof Error ? err.message : String(err) }));
+            .catch(err => {
+            logger.error('[run_full_backup] failed:', err);
+            return { success: false, error: 'Backup operation failed' };
+        });
     }
     if (request.action === "get_backup_settings") {
         return getBackupSettings()
             .then(settings => ({ success: true, settings }))
-            .catch(err => ({ success: false, error: err instanceof Error ? err.message : String(err) }));
+            .catch(err => {
+            logger.error('[get_backup_settings] failed:', err);
+            return { success: false, error: 'Failed to retrieve backup settings' };
+        });
     }
     if (request.action === "save_backup_settings") {
         return saveBackupSettings(request.settings)
             .then(scheduleDailyBackupAlarm)
             .then(() => ({ success: true }))
-            .catch(err => ({ success: false, error: err instanceof Error ? err.message : String(err) }));
+            .catch(err => {
+            logger.error('[save_backup_settings] failed:', err);
+            return { success: false, error: 'Failed to save backup settings' };
+        });
     }
     logger.warn("[onMessage] Unknown action received:", request.action);
     return undefined;

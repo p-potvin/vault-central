@@ -206,10 +206,13 @@ const LockedBanner: React.FC<{
 };
 
 async function getPreviewForVideo(video: VideoData): Promise<Blob | null> {
+  console.debug('[getPreviewForVideo] Fetching primary for:', video.url);
   const primary = await getPreview(video.url);
   if (primary || !video.rawVideoSrc || video.rawVideoSrc === video.url) {
+    console.debug('[getPreviewForVideo] Returning primary / no fallback needed. Found primary?', !!primary);
     return primary;
   }
+  console.debug('[getPreviewForVideo] Primary not found, fetching fallback for:', video.rawVideoSrc);
   return getPreview(video.rawVideoSrc);
 }
 
@@ -258,9 +261,12 @@ function getDomainFromUrl(url: string, removeWww = false): string {
 const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
   const [blob, setBlob] = useState<Blob | null>(null);
   const [previewBlob, setPreviewBlob] = useState<string | null>(null);
+  const [frameSequence, setFrameSequence] = useState<string[] | null>(null);
+  const [currentFrame, setCurrentFrame] = useState(0);
   const [isHovering, setIsHovering] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const wasHovering = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -268,17 +274,23 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
     const retryDelays = [2000, 5000, 15000, 30000];
 
     const attempt = () => {
+      console.debug(`[PreviewThumb] attempt ${retryIndex + 1} for: ${video.url}`);
       getPreviewForVideo(video)
         .then(blob => {
           if (!active) return;
           if (blob) {
+            console.debug(`[PreviewThumb] blob found on attempt ${retryIndex + 1} for: ${video.url}`);
             setBlob(blob);
           } else if (retryIndex < retryDelays.length) {
+            console.debug(`[PreviewThumb] no blob, scheduling retry ${retryIndex + 1} for: ${video.url}`);
             const delay = retryDelays[retryIndex++];
             setTimeout(attempt, delay);
+          } else {
+            console.debug(`[PreviewThumb] all polling attempts exhausted for: ${video.url}`);
           }
         })
-        .catch(() => {
+        .catch((err) => {
+          console.error(`[PreviewThumb] error during attempt for: ${video.url}`, err);
           if (!active || retryIndex >= retryDelays.length) return;
           const delay = retryDelays[retryIndex++];
           setTimeout(attempt, delay);
@@ -293,25 +305,64 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
   useEffect(() => {
     if (!videoRef.current || !previewBlob) return;
     if (isHovering) {
+      wasHovering.current = true;
       videoRef.current.play().catch(() => {});
     } else {
-      videoRef.current.pause();
-      videoRef.current.currentTime = 0;
+      if (wasHovering.current) {
+        videoRef.current.pause();
+        // Firefox cannot seek WebM created by MediaRecorder (missing Cues). 
+        // Using .load() resets the stream without throwing NS_ERROR_DOM_MEDIA_METADATA_ERR.
+        videoRef.current.load();
+      }
+      wasHovering.current = false;
     }
   }, [isHovering, previewBlob]);
 
   useEffect(() => {
     if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    setPreviewBlob(url);
-    return () => { URL.revokeObjectURL(url); };
+    if (blob.size < 100) {
+      console.warn('[PreviewThumb] Loaded blob is abnormally small:', blob.size, 'bytes');
+      return;
+    }
+    if (blob.type === 'application/json') {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const text = reader.result as string;
+          const data = JSON.parse(text);
+          if (data.isFrames && Array.isArray(data.frames)) {
+             setFrameSequence(data.frames);
+          }
+        } catch(e) {
+          console.error("Failed to parse frame JSON:", e);
+        }
+      };
+      reader.readAsText(blob);
+    } else {
+      const url = URL.createObjectURL(blob);
+      setPreviewBlob(url);
+      return () => { URL.revokeObjectURL(url); };
+    }
   }, [blob]);
+
+  useEffect(() => {
+    if (!frameSequence || !isHovering) {
+        if (!isHovering) setCurrentFrame(0);
+        return;
+    }
+    let frameIdx = 0;
+    const interval = setInterval(() => {
+       frameIdx = (frameIdx + 1) % frameSequence.length;
+       setCurrentFrame(frameIdx);
+    }, 150); // ~7 fps
+    return () => clearInterval(interval);
+  }, [frameSequence, isHovering]);
 
   const handleMouseEnter = async () => {
     setIsHovering(true);
     
     // Check if we already have it in state
-    if (previewBlob) {
+    if (previewBlob || frameSequence) {
       return;
     }
 
@@ -371,13 +422,28 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
       onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setIsHovering(false)}
     >
-      {previewBlob ? (
+      {frameSequence ? (
+        <img 
+          src={frameSequence[isHovering ? currentFrame : 0]} 
+          alt={video.title}
+          className="w-full h-full object-cover" 
+          loading="eager" 
+          onError={(e) => {
+            const target = e.currentTarget;
+            const fallbackSrc = 'data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="%23333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Crect x="3" y="3" width="18" height="18" rx="2" ry="2"%3E%3C/rect%3E%3Ccircle cx="8.5" cy="8.5" r="1.5"%3E%3C/circle%3E%3Cpolyline points="21 15 16 10 5 21"%3E%3C/polyline%3E%3C/svg%3E';
+            if (target.src !== fallbackSrc) {
+              target.src = fallbackSrc;
+            }
+          }}
+        />
+      ) : previewBlob ? (
         // Show as a static first-frame when not hovering; play on hover.
         // The play/pause is driven by the isHovering useEffect above.
         <video
           ref={videoRef}
           src={previewBlob}
           className="w-full h-full object-cover"
+          preload="none"
           muted
           loop
           playsInline
@@ -392,6 +458,13 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
             alt={video.title} 
             loading="lazy"
             className="w-full h-full object-cover"
+            onError={(e) => {
+              const target = e.currentTarget;
+              const fallbackSrc = 'data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="%23333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Crect x="3" y="3" width="18" height="18" rx="2" ry="2"%3E%3C/rect%3E%3Ccircle cx="8.5" cy="8.5" r="1.5"%3E%3C/circle%3E%3Cpolyline points="21 15 16 10 5 21"%3E%3C/polyline%3E%3C/svg%3E';
+              if (target.src !== fallbackSrc) {
+                target.src = fallbackSrc;
+              }
+            }}
           />
         ) : (
           <div className="w-full h-full bg-black" aria-label={video.title} />
@@ -399,13 +472,13 @@ const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
       )}
       
       {isProcessing ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <Icons.LoaderIcon className="text-vault-accent animate-spin" size={20} />
         </div>
       ) : (
-        !previewBlob && isHovering && (
-          <div className="absolute bottom-2 left-2 bg-black/60 text-[8px] text-white px-1 rounded uppercase tracking-tighter">
-            Processing...
+        !previewBlob && !frameSequence && isHovering && (
+          <div className="absolute bottom-2 left-2 bg-black/60 text-[8px] text-white px-1 rounded uppercase tracking-tighter z-10">
+            Generating preview…
           </div>
         )
       )}
@@ -681,10 +754,8 @@ export const VaultDashboard: React.FC = () => {
     if (savedSortOrder) setSortOrder(savedSortOrder as 'asc' | 'desc');
 
     const load = async () => {
-      console.log("[VaultDashboard] Loading vault data...");
       const settings = await getPinSettings();
       setPinSettings(settings);
-      console.log("[VaultDashboard] PIN settings loaded. enabled:", settings.enabled);
 
       let syncEnabled = await getSyncEnabled();
       const legacySyncEnabled = localStorage.getItem('vault-sync-enabled') === 'true';
@@ -720,19 +791,16 @@ export const VaultDashboard: React.FC = () => {
           setToastMessage({ msg: "Browser Sync metadata could not be loaded.", type: "error" });
         }
       }
-      console.log("[VaultDashboard] Vault loaded.", all?.length ?? 0, "items.");
       setItems(all || []);
     };
     load();
     
     // Listen for browser sync updates
     const handleStorageChange = (changes: any, areaName: string) => {
-      console.log("[VaultDashboard] storage.onChanged fired. areaName:", areaName, "| changed keys:", Object.keys(changes).join(', '));
       // BUG FIX: was checking changes.vault_videos but the actual key is STORAGE_KEYS.SAVED_VIDEOS ('savedVideos').
       // This listener was never firing when vault items were saved.
       if (areaName === 'local' && changes[STORAGE_KEYS.SAVED_VIDEOS]) {
         const newValue = changes[STORAGE_KEYS.SAVED_VIDEOS].newValue || [];
-        console.log("[VaultDashboard] savedVideos storage change detected. New count:", newValue.length);
         setItems(newValue);
       }
       if (areaName === 'sync' && syncEnabledRef.current) {
@@ -1082,10 +1150,38 @@ export const VaultDashboard: React.FC = () => {
     6: 'grid-cols-1 xl:grid-cols-2', // Biggest
   };
 
+  // Card shell classes per view size.
+  // Views 5 & 6 use landscape (flex-row) layout like view 2 because they're
+  // too wide for a portrait card proportions at 1-2 columns.
+  const CARD_CLASS: Record<number, string> = {
+    1: "flex-row items-center gap-2 h-[60px] px-3 py-1 border-b border-vault-border rounded-none shadow-none hover:bg-vault-cardBg/50",
+    2: "flex-row items-stretch p-0 h-[110px] hover:-translate-y-1",
+    3: "flex-col h-[200px]",
+    4: "flex-col h-[250px]",
+    5: "flex-row items-stretch p-0 h-[200px]",
+    6: "flex-row items-stretch p-0 h-[260px]",
+  };
+
+  // Thumbnail wrapper classes per view size.
+  const THUMB_CLASS: Record<number, string> = {
+    2: "relative w-2/5 flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border",
+    3: "relative w-full h-[130px] flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb border-b border-vault-border rounded-t-lg",
+    4: "relative w-full h-[163px] flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb border-b border-vault-border rounded-t-lg",
+    5: "relative w-[38%] flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border",
+    6: "relative w-2/5 flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border",
+  };
+
   // If isolated, display that group. Else display UP TO `sectionLimit` groups.
-  const groupsToRender = isolatedGroup 
+  const groupsToRender = isolatedGroup
     ? [ [isolatedGroup, grouped[isolatedGroup] || []] as const ]
     : Object.entries(grouped).slice(0, sectionLimit);
+
+  // When filter / sort options change while the user is in the isolated-group
+  // drill-down, automatically return to the main dashboard view so the
+  // filter applies across all groups (going back "with filter" as UX).
+  useEffect(() => {
+    setIsolatedGroup(null);
+  }, [effectiveSearch, sortBy, sortOrder, groupBy]);
 
   // Helper to change page for a group
   const setGroupPage = (groupName: string, delta: number) => {
@@ -1124,37 +1220,41 @@ export const VaultDashboard: React.FC = () => {
 
         <div className="flex items-center gap-3">
           <div className="relative group flex items-center">
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value as keyof VideoData)}
-              className="bg-vault-cardBg border border-vault-border border-r-0 rounded-l-full px-4 py-2 text-sm text-vault-text focus:border-vault-accent focus:z-10 outline-none appearance-none cursor-pointer"
-            >
-              <option value="title">Title</option>
-              <option value="author">Author</option>
-              <option value="domain">Domain</option>
-              <option value="url">URL</option>
-              <option value="quality">Quality</option>
-              <option value="resolution">Res</option>
-              <option value="description">Desc</option>
-              <option value="tags">Tags</option>
-            </select>
+            {/* Field selector — icon overlay on native select */}
+            <div className="relative flex-none">
+              <Icons.SortIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 text-vault-muted/70 pointer-events-none" size={13} />
+              <select
+                value={searchField}
+                onChange={(e) => setSearchField(e.target.value as keyof VideoData)}
+                className="bg-vault-cardBg border border-vault-border border-r-0 rounded-l-full pl-8 pr-4 py-2 text-sm text-vault-text focus:border-vault-accent focus:z-10 outline-none appearance-none cursor-pointer"
+              >
+                <option value="title">Title</option>
+                <option value="author">Author</option>
+                <option value="domain">Domain</option>
+                <option value="url">URL</option>
+                <option value="quality">Quality</option>
+                <option value="resolution">Res</option>
+                <option value="description">Desc</option>
+                <option value="tags">Tags</option>
+              </select>
+            </div>
             <div className="relative flex-1">
               <Icons.SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-vault-muted group-focus-within:text-vault-accent transition-colors" size={16} />
-              <input 
+              <input
                 type="text"
                 placeholder={`Search in ${searchField}...`}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 pr-4 py-2 w-64 bg-vault-cardBg border border-vault-border rounded-r-full outline-none focus:border-vault-accent focus:z-10 text-sm transition-all"
+                className="pl-12 pr-4 py-2 w-64 bg-vault-cardBg border border-vault-border rounded-r-full outline-none focus:border-vault-accent focus:z-10 text-sm transition-all"
               />
             </div>
           </div>
 
-          <button onClick={() => setIsSettingsOpen(true)} className="vault-btn flex items-center justify-center p-1.5 rounded-full h-8 w-8 group" title="Vault Settings">
-            <Icons.SettingsIcon size={16} className="w-4 h-4 text-vault-accent group-hover:text-vault-bg group-hover:rotate-90 transition-all duration-300" />
+          <button onClick={() => setIsSettingsOpen(true)} className="vault-btn flex items-center justify-center p-1.5 rounded-full h-7 w-7 group" title="Vault Settings">
+            <Icons.SettingsIcon size={14} className="text-vault-accent group-hover:text-vault-bg transition-colors duration-200" />
           </button>
-          <button onClick={cycleTheme} className="vault-btn flex items-center justify-center p-1.5 rounded-full h-8 w-8 group" title="Cycle Theme">
-            <Icons.ThemeIcon size={16} className="w-4 h-4 text-vault-accent group-hover:text-vault-bg group-hover:rotate-90 transition-all duration-300" />
+          <button onClick={cycleTheme} className="vault-btn flex items-center justify-center p-1.5 rounded-full h-7 w-7 group" title="Cycle Theme">
+            <Icons.ThemeIcon size={14} className="text-vault-accent group-hover:text-vault-bg transition-colors duration-200" />
           </button>
         </div>
       </header>
@@ -1273,7 +1373,7 @@ export const VaultDashboard: React.FC = () => {
                       checked={pinSettings?.enabled || false} 
                       onChange={togglePin}
                     />
-                    <div className="w-9 h-5 bg-vault-cardBg peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-vault-muted after:border-vault-border after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-vault-accent peer-checked:after:bg-vault-bg" />
+                    <div className="w-9 h-5 bg-vault-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-transparent after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-vault-bg after:border-vault-border after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-vault-accent peer-checked:after:bg-white" />
                   </label>
                 </div>
 
@@ -1347,8 +1447,8 @@ export const VaultDashboard: React.FC = () => {
                 disabled={isSyncBusy}
                 className={cn(
                   "w-full vault-btn p-2 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2",
-                  isSyncing 
-                    ? "bg-vault-accentHover text-vault-bg border-vault-accentHover hover:bg-vault-accent hover:border-vault-accent" 
+                  isSyncing
+                    ? "bg-vault-accent text-vault-bg border-transparent hover:border-dashed hover:border-vault-accentHover"
                     : "border-dashed border-vault-border text-vault-muted opacity-60 hover:opacity-100",
                   isSyncBusy && "cursor-wait opacity-70"
                 )}
@@ -1468,11 +1568,7 @@ export const VaultDashboard: React.FC = () => {
                     {displayItems.map((fav, idx) => (
                       <div key={`${fav.url}-${idx}`} className={cn(
                         "vault-card group relative flex transform transition-all hover:shadow-lg overflow-hidden",
-                        viewSize === 1 
-                          ? "flex-row items-center gap-2 h-10 px-3 py-1 border-b border-vault-border rounded-none shadow-none hover:bg-vault-cardBg/50" 
-                          : viewSize === 2 
-                            ? "flex-row items-stretch gap-4 h-[110px] p-0 hover:-translate-y-1" 
-                            : "flex-col h-[280px]"
+                        CARD_CLASS[viewSize]
                       )}>
                         
                         {/* THUMBNAIL AREA */}
@@ -1498,14 +1594,26 @@ export const VaultDashboard: React.FC = () => {
                                 }
                               }
                             }}
-                            className={viewSize === 2 ? "relative w-2/5 flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border" : "relative w-full h-[180px] flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb border-b border-vault-border rounded-t-lg"}
+                            className={THUMB_CLASS[viewSize]}
                           >
                             {fav.type === 'video' ? (
                               <PreviewThumb video={fav} />
                             ) : (
                               isDisplayableImageThumbnail(fav.thumbnail) ? (
                                 // ⚡ BOLT OPTIMIZATION: `loading="lazy"` prevents fetching all images simultaneously.
-                                <img src={fav.thumbnail} alt={fav.title} loading="lazy" className="w-full h-full object-cover transition-transform duration-500 group-hover/thumb:scale-105" />
+                                <img
+                                  src={fav.thumbnail}
+                                  alt={fav.title}
+                                  loading="lazy"
+                                  className="w-full h-full object-cover transition-transform duration-500 group-hover/thumb:scale-105"
+                                  onError={(e) => {
+                                    const target = e.currentTarget;
+                                    const fallbackSrc = 'data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="%23333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Crect x="3" y="3" width="18" height="18" rx="2" ry="2"%3E%3C/rect%3E%3Ccircle cx="8.5" cy="8.5" r="1.5"%3E%3C/circle%3E%3Cpolyline points="21 15 16 10 5 21"%3E%3C/polyline%3E%3C/svg%3E';
+                                    if (target.src !== fallbackSrc) {
+                                      target.src = fallbackSrc;
+                                    }
+                                  }}
+                                />
                               ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-vault-cardBg to-vault-bg/50">
                                     <Icons.DebugIcon size={32} className="opacity-10 mb-1" />
@@ -1563,7 +1671,7 @@ export const VaultDashboard: React.FC = () => {
                         {/* DETAILS AREA */}
                         <div className={cn("z-10 relative flex flex-col flex-1", viewSize === 1 ? "flex-row items-center justify-between w-full min-h-[60px]" : "p-4")}>
                           
-                          <div className={cn("flex justify-between items-start mb-2", viewSize === 1 && "mb-0")}>
+                          <div className={cn("flex justify-between items-start mb-2", viewSize === 1 && "mb-0 items-center")}>
                             <div className="flex gap-2 items-center">
                               <span className={cn(
                                 "text-[10px] uppercase font-bold tracking-widest text-vault-bg bg-vault-muted px-2 py-0.5 rounded-sm",
@@ -1711,7 +1819,7 @@ export const VaultDashboard: React.FC = () => {
       {/* EDIT MODAL */}
       {editingItem && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setEditingItem(null)}>
-          <div className="bg-vault-cardBg border border-vault-border rounded-lg shadow-2xl max-w-2xl w-full flex flex-col max-h-[90vh] animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
+          <div className="bg-vault-bg border border-vault-border rounded-lg shadow-2xl max-w-2xl w-full flex flex-col max-h-[90vh] animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between p-4 border-b border-vault-border">
               <h2 className="text-lg font-bold text-vault-text flex items-center gap-2">
                 <Icons.EditIcon size={20} className="text-vault-accent" /> Edit Metadata
@@ -1829,7 +1937,7 @@ export const VaultDashboard: React.FC = () => {
                            <Icons.ExportIcon size={16} className="text-vault-accent"/> Full Local Backup
                          </h4>
                          <p className="text-xs text-vault-muted mt-1 leading-relaxed">
-                           Includes metadata, thumbnails, and IndexedDB WebM previews. Folder is relative to the browser Downloads folder; leave it blank for the Downloads root.
+                           Includes metadata, thumbnails, and WebM previews. Folder is relative to the browser Downloads folder; leave it blank for the Downloads root.
                          </p>
                          {backupSettings.lastBackupAt && (
                            <p className={cn(
@@ -1901,9 +2009,9 @@ export const VaultDashboard: React.FC = () => {
                  <div className="bg-red-900/10 border border-red-900/30 rounded p-4 flex flex-col md:flex-row items-center justify-between gap-4">
                    <div>
                      <h4 className="text-red-400 font-bold flex items-center gap-2"><Icons.AlertIcon size={16}/> Wipe Vault Data</h4>
-                     <p className="text-xs text-red-400/70 mt-1">Permanently obliterate all bookmarks, metadata, and blob previews from IndexedDB.</p>
+                     <p className="text-xs text-red-400/70 mt-1">Permanently obliterate all bookmarks, metadata, and locally stored previews.</p>
                    </div>
-                   <button onClick={handleWipeVault} className="vault-btn py-2 px-4 shadow-[0_0_15px_-3px_var(--color-red-500)] text-xs font-black uppercase tracking-widest bg-red-600 hover:bg-red-500 text-white border-none whitespace-nowrap">
+                   <button onClick={handleWipeVault} className="vault-btn py-2 px-4 shadow-[0_0_15px_-3px_var(--color-red-500)] text-xs font-black uppercase tracking-widest bg-red-600 hover:bg-red-500 text-white border border-red-400/60 whitespace-nowrap">
                      Wipe Database
                    </button>
                  </div>

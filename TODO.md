@@ -81,10 +81,10 @@
 - [x] Fix database wipe issue: The database gets wiped when saving an item while the dashboard is locked. It should allow adding items even if locked.
 - [x] Fix heart indicator position: The heart indicator (from Phase 7) is currently positioned under the cursor when receiving a callback, but the user might have moved. It needs to be tied to the original item.
 - [x] Notification stacking: Implement a system to stack notifications for multiple requests, with a limit of 10 concurrent requests. Notifications should disappear when resolved.
-- [ ] Button styling (Sync enabled): When sync is enabled, the button should be fully colored (like on hover but without dashed border). On hover, add the dashed border.
-- [ ] Details view UI (view mode == 1): 
-    - [ ] Make main item taller (60px).
-    - [ ] Fix "V-ID" badge centering.
+- [x] Button styling (Sync enabled): When sync is enabled, the button should be fully colored (like on hover but without dashed border). On hover, add the dashed border.
+- [x] Details view UI (view mode == 1):
+    - [x] Make main item taller (60px).
+    - [x] Fix "V-ID" badge centering.
 
 ## 🧹 Phase 8: Optimization & Refactoring [COMPLETED]
 - [x] **Constant Extraction**: Centralized hardcoded strings and config in `src/lib/constants.ts`.
