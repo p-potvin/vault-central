@@ -541,6 +541,12 @@ export const VaultDashboard: React.FC = () => {
   const handleImportVault = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // 50MB file size limit to prevent memory exhaustion / DoS during JSON parsing
+    if (file.size > 50 * 1024 * 1024) {
+      setToastMessage({ msg: "Failed to import. File exceeds 50MB limit.", type: "error" });
+      return;
+    }
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {

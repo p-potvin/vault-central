@@ -94,7 +94,7 @@
 - [x] **Dashboard Singleton**: Hardened singleton logic using both URL and stored Tab ID.
 
 ## 🔮 Phase 9: Future Vault Features
-- [ ] **Vault Portability**: Export/Import JSON logic.
+- [x] **Vault Portability**: Export/Import JSON logic.
 - [ ] **Multi-Type Support**: Music, Torrents, and Bookmarks.
 
 ## Background Tab Extraction Logic (ALT+X)
