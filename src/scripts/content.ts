@@ -15,7 +15,12 @@ let lastHoveredElement: HTMLElement | null = null;
 let mutationTimeout: ReturnType<typeof setTimeout> | null = null;
 
 document.addEventListener("mousemove", (e: MouseEvent) => {
-    lastHoveredElement = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    // ⚡ BOLT OPTIMIZATION:
+    // Calling `document.elementFromPoint` inside a mousemove handler forces the browser
+    // to synchronously recalculate layout and hit-test up to 120 times per second.
+    // Reading the event's composed path or target yields the exact same element
+    // at zero additional computational cost, eliminating scroll jank.
+    lastHoveredElement = (e.composedPath?.()[0] as HTMLElement || e.target as HTMLElement);
 }, { passive: true });
 
 document.addEventListener("keydown", (e: KeyboardEvent) => {
@@ -108,6 +113,10 @@ if (browser.storage && browser.storage.onChanged) {
             const newValue = (changes[STORAGE_KEYS.SAVED_VIDEOS].newValue as VideoData[] | undefined) || [];
             cachedSavedUrls = new Set(newValue.map((v: VideoData) => v.url));
             console.log(`${LOG_PREFIX} Storage changed. Updated cachedSavedUrls count: ${cachedSavedUrls.size}`);
+            // Reset scanned status on all links so the updated cache is applied correctly
+            document.querySelectorAll("a[data-vault-scanned]").forEach(link => {
+                link.removeAttribute('data-vault-scanned');
+            });
             highlightVaultItems();
         }
     });
@@ -128,16 +137,20 @@ async function highlightVaultItems() {
         
         if (cachedSavedUrls.size === 0) return;
 
-        const links = document.querySelectorAll("a");
+        // ⚡ BOLT OPTIMIZATION: Only select anchor tags that haven't been scanned yet.
+        // This reduces O(N) checking (where N is all links on the page) to O(new_links)
+        // when the MutationObserver fires on infinitely scrolling pages.
+        const links = document.querySelectorAll<HTMLAnchorElement>("a:not([data-vault-scanned])");
         let marked = 0;
 
         links.forEach(link => {
+            link.setAttribute('data-vault-scanned', 'true');
             if (cachedSavedUrls && cachedSavedUrls.has(link.href)) {
                 addHeartIndicator(link as HTMLElement);
                 marked++;
             }
         });
-        console.log(`${LOG_PREFIX} highlightVaultItems: marked ${marked} links out of ${links.length} found on page.`);
+        console.log(`${LOG_PREFIX} highlightVaultItems: marked ${marked} links out of ${links.length} newly found on page.`);
     } catch (e) {
         console.error(`${LOG_PREFIX} Highlight failure:`, e);
     }
@@ -149,7 +162,7 @@ async function highlightVaultItems() {
 const activeNotifications = new Map<string, HTMLElement>();
 const MAX_CONCURRENT_NOTIFICATIONS = 5;
 
-function showVaultNotification(type: 'success' | 'removed' | 'error' | 'processing', message: string, id?: string) {
+function showVaultNotification(type: 'success' | 'removed' | 'error' | 'processing', message: string, id?: string, targetElement?: HTMLElement | null) {
     const portalId = id || `vault-notification-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
     // If we have an existing notification with this ID (e.g. updating processing -> success), reuse it
@@ -214,7 +227,7 @@ function showVaultNotification(type: 'success' | 'removed' | 'error' | 'processi
     const theme = themeMap[type] || themeMap.error;
 
     // Calculate vertical offset based on position in map
-    const entries = Array.from(activeNotifications.entries());
+    const entries = [...activeNotifications.entries()];
     const index = entries.findIndex(([id]) => id === portalId);
     
     // Fallback if not found yet (newly created)
@@ -274,16 +287,16 @@ function showVaultNotification(type: 'success' | 'removed' | 'error' | 'processi
     }
 
     // Contextual indicator updates
-    const target = portalId?.startsWith('capture-') ? null : (lastHoveredElement?.closest("a") as HTMLElement || lastHoveredElement);
-    if (type === 'success' && target) addHeartIndicator(target);
-    if (type === 'removed' && target) {
-        const heart = target.querySelector(".vault-heart-indicator");
+    const resolvedTarget = targetElement ?? (portalId?.startsWith('capture-') ? null : (lastHoveredElement?.closest("a") as HTMLElement || lastHoveredElement));
+    if (type === 'success' && resolvedTarget) addHeartIndicator(resolvedTarget);
+    if (type === 'removed' && resolvedTarget) {
+        const heart = resolvedTarget.querySelector(".vault-heart-indicator");
         if (heart) heart.remove();
     }
 }
 
 function updateNotificationOffsets() {
-    Array.from(activeNotifications.entries()).forEach(([id, el], index) => {
+    [...activeNotifications.entries()].forEach(([id, el], index) => {
         const bottomOffset = 24 + (index * NOTIFICATION_CONFIG.STACK_OFFSET);
         el.style.bottom = `${bottomOffset}px`;
     });
@@ -390,11 +403,12 @@ function extractSurroundingMetadata(element: HTMLElement | null) {
     return { title, author, duration };
 }
 
-function getBestTarget(element: HTMLElement | null): { url: string, isDirectVideo: boolean, fallbackThumbnail: string | null, localMeta: {title: string, author: string} } {
+function getBestTarget(element: HTMLElement | null): { url: string, isDirectVideo: boolean, fallbackThumbnail: string | null, element: HTMLElement | null, localMeta: {title: string, author: string} } {
     let result = { 
         url: window.location.href, 
         isDirectVideo: false, 
         fallbackThumbnail: null as string | null,
+        element: element,
         localMeta: extractSurroundingMetadata(element)
     };
 
@@ -479,7 +493,10 @@ function startCaptureFlow() {
     const titleHint = (target.localMeta.title?.substring(0, 28))
         || target.url.split('/').pop()?.substring(0, 28)
         || 'Item';
-    showVaultNotification('success', `Added to Vault: ${titleHint}`);
+
+    // Pass the explicitly resolved element to avoid asynchronous displacement
+    const targetElement = target.element?.closest("a") as HTMLElement || target.element;
+    showVaultNotification('success', `Added to Vault: ${titleHint}`, undefined, targetElement as HTMLElement);
 
     void attemptExtraction(target);
 }
@@ -488,6 +505,7 @@ export interface TargetPayload {
     url: string;
     isDirectVideo: boolean;
     fallbackThumbnail: string | null;
+    element?: HTMLElement | null;
     localMeta: {
         title: string;
         author: string;
@@ -509,7 +527,7 @@ function attemptExtraction(target: TargetPayload): Promise<CaptureResponse> {
         title: document.title || target.localMeta.title || target.url.split('/').pop() || "Captured Media",
         author: document.querySelector('meta[name="author"]')?.getAttribute("content") || target.localMeta.author || window.location.hostname,
         duration: target.localMeta.duration || 0,
-        tags: Array.from(document.querySelectorAll('meta[property="video:tag"]')).map((m: Element) => m.getAttribute("content") || ""),
+        tags: Array.from(document.querySelectorAll('meta[property="video:tag"]'), (m: Element) => m.getAttribute("content") || ""),
         date: new Date().toISOString()
     } : {
         title: target.localMeta.title || target.url.split('/').pop() || "Captured Link",
@@ -554,7 +572,8 @@ function attemptExtraction(target: TargetPayload): Promise<CaptureResponse> {
     }).catch((e: Error) => {
         console.error(`${LOG_PREFIX} attemptExtraction: Message passing error:`, e);
         showVaultNotification('error', 'Capture failed: connection lost');
-        return { success: false, message: e.message || 'Connection to Vault lost' };
+        // SECURITY: Do not leak internal error messages
+        return { success: false, message: 'Connection to Vault lost' };
     });
 }
 
@@ -624,7 +643,9 @@ if (location.search.includes('__vaultTest=1')) {
                     reply(null, `unknown action: ${msg.action}`);
             }
         } catch (e: any) {
-            reply(null, e?.message || String(e));
+            console.error(`${LOG_PREFIX} Test bridge error:`, e);
+            // SECURITY: Do not leak internal error messages
+            reply(null, 'An error occurred during test bridge action');
         }
     });
     console.log(`${LOG_PREFIX} Test bridge active.`);

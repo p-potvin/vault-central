@@ -41,3 +41,12 @@
 ## 2024-05-11 - Repeated `new URL()` Parsing in Loops causes O(N) overhead
 **Learning:** Instantiating `new URL()` synchronously within loops, such as extraction attempts (`attemptExtraction` in content scripts) or React render loops, creates a significant O(N) performance bottleneck in the browser extension environment.
 **Action:** Always hoist domain parsing or use a module-level `Map` (like `domainCache`) to store and retrieve previously parsed URLs. This caches the results and prevents redundant, synchronous URL parsing overhead.
+## 2026-05-13 - [Avoid elementFromPoint in mousemove listeners]
+**Learning:** Calling `document.elementFromPoint()` inside high-frequency event listeners like `mousemove` forces the browser to synchronously recalculate layout and hit-test up to 120 times per second, causing severe main-thread blocking and scroll jank.
+**Action:** Use `(e.composedPath?.()[0] || e.target)` instead. This reads the event's natively resolved target element at zero additional computational cost while yielding the exact same result.
+## 2026-05-15 - [DOM Query Optimization in MutationObserver]
+**Learning:** Re-querying all `<a>` tags on every DOM mutation inside a content script creates a significant O(N) performance bottleneck, especially on pages with infinite scrolling where the number of links grows substantially. While the cache checked whether a URL was processed, looping over the entire NodeList remained slow.
+**Action:** Apply a custom attribute (e.g., `data-vault-scanned`) to processed elements and restrict the `querySelectorAll` selector to `a:not([data-vault-scanned])`. This reduces the work from O(N) to O(new_items). Be sure to clear this attribute via `document.querySelectorAll` inside `storage.onChanged` to correctly trigger rescans when cache state updates.
+## 2024-05-18 - [Optimization] Avoid Array.from() overhead on large TypedArrays and NodeLists
+**Learning:** V8 struggles to optimize `Array.from()` on large `Uint8Array`s or `NodeList`s, introducing significant performance overhead. Furthermore, `String.fromCharCode.apply()` works natively with `Uint8Array` subarrays, so wrapping them in `Array.from()` causes severe memory and execution time penalties.
+**Action:** Replace `Array.from(NodeList)` with spread syntax `[...NodeList]`. For large TypedArrays, use simple `for` loops with pre-allocated arrays. When mapping over `NodeList`s, use `Array.from(iter, mapFn)` to avoid intermediate array allocations. Remove `Array.from` when passing `Uint8Array` subarrays to `String.fromCharCode.apply()`.

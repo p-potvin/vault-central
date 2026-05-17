@@ -54,7 +54,8 @@ window.addEventListener('message', async (event) => {
         }
         catch (e) {
             console.error('[VaultSandbox] FFmpeg init failed:', e);
-            reply({ type: 'vc_sandbox_result', id, error: e?.message ?? String(e) });
+            // SECURITY: Do not leak internal error messages
+            reply({ type: 'vc_sandbox_result', id, error: 'FFmpeg initialization failed' });
         }
         return;
     }
@@ -75,7 +76,8 @@ window.addEventListener('message', async (event) => {
         }
         catch (e) {
             console.error('[VaultSandbox] processVideo failed:', e);
-            reply({ type: 'vc_sandbox_result', id, error: e?.message ?? String(e) });
+            // SECURITY: Do not leak internal error messages
+            reply({ type: 'vc_sandbox_result', id, error: 'Video processing failed' });
         }
     }
 });
