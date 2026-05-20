@@ -27,7 +27,7 @@ All contributors are expected to act professionally and respectfully. Harassment
 ```bash
 git clone https://github.com/p-potvin/vault-central.git
 cd vault-central
-git submodule update --init   # required for vault-themes
+git submodule update --init   # required for vaultwares-themes
 npm install
 npm run build                 # verify the build passes before making changes
 npm run test                  # verify tests pass before making changes
@@ -50,7 +50,7 @@ npm run test                  # verify tests pass before making changes
 ```
 feat: add multi-field sort to dashboard
 fix: resolve expired m3u8 link on playback
-chore: update vault-themes submodule
+chore: update vaultwares-themes submodule
 ```
 
 ---
@@ -63,10 +63,10 @@ src/
   components/         # React UI components
   lib/                # constants.ts, themes.ts, storage-vault, Zod schemas
   scripts/            # content.ts — injected into every page
-  styles/             # Global CSS, vault-themes integration
+  styles/             # Global CSS, vaultwares-themes integration
   types/              # TypeScript interfaces; css.d.ts (required for TS 5.9+)
 scripts/              # generate-themes.py
-vault-themes/         # Git submodule — shared CSS token library (read-only here)
+vaultwares-themes/         # Git submodule — shared CSS token library (read-only here)
 tests/                # Vitest unit tests
 ```
 
@@ -79,7 +79,7 @@ tests/                # Vitest unit tests
 3. **Zod validation everywhere** — All data entering or leaving storage must pass through a Zod schema. Never trust raw storage reads.
 4. **No hardcoded strings** — Add new constants to `src/lib/constants.ts`.
 5. **Tailwind utility classes** — Follow the existing Tailwind + `clsx`/`tailwind-merge` pattern. Do not add inline `style` props for theming.
-6. **vault-themes CSS tokens** — Use token variables (e.g. `var(--vc-bg)`) defined by the active theme. Do not hardcode colour values.
+6. **vaultwares-themes CSS tokens** — Use token variables (e.g. `var(--vc-bg)`) defined by the active theme. Do not hardcode colour values.
 7. **TanStack Query for async state** — Use `useQuery`/`useMutation` for any async data access in React components.
 8. **Background worker messaging** — Use `chrome.runtime.sendMessage` / `browser.runtime.sendMessage` via the `webextension-polyfill` wrapper. Never import background logic directly into content scripts.
 

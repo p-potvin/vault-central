@@ -16,7 +16,7 @@ Vault Central is a privacy-first browser extension that lets you instantly save 
 | 🔍 **HLS Interception** | Silently opens a minimized background tab, intercepts `.m3u8` / `.mp4` network requests, and resolves the real stream before saving |
 | 🖼️ **Rich Metadata** | Extracts title, description, author, duration, views, tags, and thumbnail via LD+JSON and DOM scraping |
 | 🎬 **FFmpeg Preview Clips** | Automatically generates a 10-frame WebM preview using FFmpeg WASM and stores it in IndexedDB via Dexie.js |
-| 🎨 **12 Built-in Themes** | Solarized Light/Dark plus 10 vault-themes skins; upload your own CSS from the settings panel |
+| 🎨 **12 Built-in Themes** | Solarized Light/Dark plus 10 vaultwares-themes skins; upload your own CSS from the settings panel |
 | 🔒 **Optional PIN Lock** | 4- or 6-digit AES-256 PIN encrypts IndexedDB blobs and locks the dashboard after a configurable idle timeout |
 | 🔔 **Live Site Indicators** | Injects a subtle heart icon on already-saved thumbnails; toast notifications confirm saves in real time |
 | 📊 **Smart Dashboard** | Group by hostname, multi-field filter/sort, five view modes (Biggest → Details), infinite scroll, and per-section pagination |
@@ -39,7 +39,7 @@ Vault Central is a privacy-first browser extension that lets you instantly save 
 ```bash
 git clone https://github.com/p-potvin/vault-central.git
 cd vault-central
-git submodule update --init   # pulls vault-themes
+git submodule update --init   # pulls vaultwares-themes
 npm install
 ```
 
@@ -50,7 +50,7 @@ npm run build
 ```
 
 The build pipeline runs:
-1. `python scripts/generate-themes.py` — compiles vault-themes CSS tokens
+1. `python scripts/generate-themes.py` — compiles vaultwares-themes CSS tokens
 2. `tsc && vite build` — transpiles TypeScript and bundles the React UI
 3. `esbuild` — bundles `content.ts` and `background.ts` as standalone IIFE scripts
 4. `package-extension.cjs` — zips the `dist/` folder into a distributable archive
@@ -106,8 +106,8 @@ vault-central/
 │   ├── scripts/          # content.ts — injected into every page
 │   └── types/            # Global TypeScript interfaces & CSS module declarations
 ├── scripts/              # generate-themes.py
-├── vault-themes/         # Git submodule — shared CSS token library
-├── vaultwares-agentciation/ # Agent integration specs
+├── vaultwares-themes/         # Git submodule — shared CSS token library
+├── vaultwares-adk/ # Agent integration specs
 ├── dist/                 # Build output (gitignored)
 ├── manifest.json
 └── package.json
@@ -116,7 +116,7 @@ vault-central/
 ### Environment Notes
 
 - **TypeScript 5.9+** — `src/types/css.d.ts` declares `module '*.css'` to satisfy the TS2882 side-effect import check required for CSS imports in `dashboard-entry.tsx` and `pin-entry.tsx`.
-- **vault-themes submodule** — must be initialised (`git submodule update --init`) before running the build; `generate-themes.py` fails otherwise.
+- **vaultwares-themes submodule** — must be initialised (`git submodule update --init`) before running the build; `generate-themes.py` fails otherwise.
 - **FFmpeg WASM** — loaded via `chrome.offscreen` in the background worker; no server-side processing.
 
 ---
@@ -146,7 +146,7 @@ vault-central/
 └──────────────────────────────────────────────────────┘
 ```
 
-Agent integration specifications live in `vaultwares-agentciation/` and `.github/AGENT.md`. These documents describe the capture pipeline contracts, metadata schemas, and the VaultWares Privacy-First coding standard that all automated and human contributors must follow.
+Agent integration specifications live in `vaultwares-adk/` and `.github/AGENT.md`. These documents describe the capture pipeline contracts, metadata schemas, and the VaultWares Privacy-First coding standard that all automated and human contributors must follow.
 
 ---
 
