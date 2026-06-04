@@ -19,3 +19,5 @@ dummy/*
 tests/fixtures/*.xpi
 tests/fixtures/ublock-origin/
 node_modules
+*.tgz
+dist/*

@@ -21,7 +21,25 @@ function createExtensionSafeIcon(IconComponent: React.ComponentType<LucideProps>
 // --- Vault Dashboard Icons ---
 
 // Dashboard/Sidebar
-export const VaultWaresIcon = createExtensionSafeIcon(LucideIcons.ShieldCheckIcon); // for view mode
+export const VaultWaresIcon = forwardRef<SVGSVGElement, LucideProps>((props, ref) => {
+  const { size = 26, className, ...rest } = props;
+  return (
+    <svg
+      ref={ref}
+      viewBox="0 0 120 120"
+      width={size}
+      height={size}
+      className={className}
+      {...rest}
+      style={undefined}
+    >
+      <path d="M20 15 L38 15 L60 82 L82 15 L100 15 L67 108 L53 108 Z" fill="var(--vault-accent, #CC9B21)" />
+      <ellipse cx="60" cy="58" rx="12" ry="11" fill="none" stroke="currentColor" strokeWidth="2.5" className="opacity-80" />
+      <circle cx="60" cy="58" r="4" fill="var(--vault-accent, #CC9B21)" />
+    </svg>
+  );
+});
+VaultWaresIcon.displayName = 'VaultWaresIcon';
 export const ViewModeIcon = createExtensionSafeIcon(LucideIcons.SlidersHorizontal); // for view mode
 export const ThemeIcon = createExtensionSafeIcon(LucideIcons.Palette); // for theme
 export const SettingsIcon = createExtensionSafeIcon(LucideIcons.Settings); // for settings/advanced

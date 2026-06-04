@@ -1,0 +1,129 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   VaultWares Video Player Styling — Console theme & aesthetics
+   ────────────────────────────────────────────────────────────────────────── */
+
+.vw-console-shell {
+  --console-bg: var(--vault-console-bg, #161320);
+  --console-surface: var(--vault-console-surface, #1F1A2B);
+  --console-raised: var(--vault-console-raised, #2A2340);
+  --console-elevated: var(--vault-console-elevated, #31274A);
+  --console-active: var(--vault-console-gold, #D6A441);
+  --console-active-secondary: var(--vault-console-violet, #B07CFF);
+  --console-text: var(--vault-console-text-secondary, rgba(237, 230, 255, 0.72));
+  --console-border: var(--vault-console-border-subtle, rgba(255, 255, 255, 0.06));
+  --console-active-bg: rgba(214, 164, 65, 0.15);
+}
+
+/* Control Buttons Styling */
+.vw-console-shell .ctrl-btn {
+  background: var(--console-bg);
+  border: 1px solid var(--console-border);
+  color: var(--console-text);
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  transition: all 0.15s ease-in-out;
+  cursor: pointer;
+  outline: none;
+}
+
+.vw-console-shell .ctrl-btn:hover {
+  background: var(--console-raised);
+  color: #fff;
+  border-color: var(--console-elevated);
+}
+
+.vw-console-shell .ctrl-btn:active {
+  transform: scale(0.95);
+}
+
+.vw-console-shell .ctrl-btn.active {
+  border-color: var(--console-active);
+  color: #fff;
+  background: var(--console-active-bg);
+}
+
+/* Smaller control button */
+.vw-console-shell .ctrl-btn-sm {
+  background: var(--console-bg);
+  border: 1px solid var(--console-border);
+  color: var(--console-text);
+  border-radius: 4px;
+  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  transition: all 0.15s ease-in-out;
+  cursor: pointer;
+  outline: none;
+}
+
+.vw-console-shell .ctrl-btn-sm:hover {
+  background: var(--console-raised);
+  color: #fff;
+  border-color: var(--console-elevated);
+}
+
+.vw-console-shell .ctrl-btn-sm:active {
+  transform: scale(0.95);
+}
+
+.vw-console-shell .ctrl-btn-sm:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Bulletproof active overrides to solve specificity issues */
+.vw-console-shell .ctrl-btn-active,
+.vw-console-shell .ctrl-btn-active:hover {
+  background: var(--console-active) !important;
+  color: #161320 !important;
+  border-color: var(--console-active) !important;
+  opacity: 1 !important;
+  font-weight: 700;
+}
+.vw-console-shell .ctrl-btn-active:hover {
+  opacity: 0.9 !important;
+}
+
+/* Input sliders custom styling */
+.vw-console-shell input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--console-raised);
+  border-radius: 2px;
+  outline: none;
+}
+
+.vw-console-shell input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--console-active);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.vw-console-shell input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.3);
+}
+
+/* Volume Hover Popup CSS Rules */
+.vw-console-shell .volume-container:hover .volume-slider-wrapper,
+.vw-console-shell .volume-container:focus-within .volume-slider-wrapper {
+  display: flex !important;
+}
+
+/* Native Video Element CC Subtitles Style Override */
+.vw-console-shell video::cue {
+  background: rgba(22, 19, 32, 0.85);
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}

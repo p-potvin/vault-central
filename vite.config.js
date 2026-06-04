@@ -9,10 +9,10 @@ export default defineConfig({
         globals: true,
         include: [
             'src/**/*.{test,spec}.{ts,tsx}',
-            // Crypto module lives in the vault-themes submodule but its unit
+            // Crypto module lives in the vaultwares-themes submodule but its unit
             // tests must still run as part of vault-central's vitest suite,
-            // since vault-themes ships source-only (no own test runner).
-            'vault-themes/security/**/*.{test,spec}.{ts,tsx}',
+            // since vaultwares-themes ships source-only (no own test runner).
+            'vaultwares-themes/security/**/*.{test,spec}.{ts,tsx}',
         ],
         exclude: ['tests/**', 'dist/**', 'node_modules/**'],
     },
@@ -20,6 +20,10 @@ export default defineConfig({
         react(),
         viteStaticCopy({
             targets: [
+                {
+                    src: 'scraper-player.html',
+                    dest: '.',
+                },
                 {
                     src: 'manifest.json',
                     dest: '.',
@@ -42,6 +46,11 @@ export default defineConfig({
                     src: 'node_modules/@ffmpeg/core/dist/esm/*',
                     dest: 'ffmpeg-core',
                     rename: { stripBase: true },
+                },
+                {
+                    src: 'node_modules/@ffmpeg/ffmpeg/dist/umd/814.ffmpeg.js',
+                    dest: 'ffmpeg-core',
+                    rename: () => '../../../../../ffmpeg-worker.js',
                 },
             ],
         }),

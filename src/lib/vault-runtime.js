@@ -10,7 +10,7 @@
  * Implementation:
  *   vault-themes/security/crypto-vault.ts
  */
-import { setupVault as cryptoSetupVault, unlockVault as cryptoUnlockVault, encryptBlobWithUnlocked, decryptBlob, envelopeToBytes, envelopeFromBytes, } from '../../vault-themes/security/crypto-vault';
+import { setupVault as cryptoSetupVault, unlockVault as cryptoUnlockVault, encryptBlobWithUnlocked, decryptBlob, envelopeToBytes, envelopeFromBytes, } from '../../vaultwares-themes/security/crypto-vault';
 import { bytesToBase64, base64ToBytes, getPinSettings, savePinSettings, getVaultMaterial, saveVaultMaterial, clearVaultMaterial, } from './storage-vault';
 import { savePreviewPlain, savePreviewEnvelope, getPreviewRecord, getLegacyEncryptedRecords, decryptLegacyRecord, } from './dexie-store';
 let unlocked = null;

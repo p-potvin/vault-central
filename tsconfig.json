@@ -8,8 +8,10 @@
     "esModuleInterop": true,
     "isolatedModules": true,
     "resolveJsonModule": true,
-    "lib": ["ESNext", "DOM", "WebWorker"],
-    "types": ["webextension-polyfill", "chrome", "node", "vitest/globals"],
+    "allowJs": true,
+    "noEmit": true,
+    "lib": ["ESNext", "DOM", "DOM.Iterable", "WebWorker"],
+    "types": ["webextension-polyfill", "chrome", "node", "react", "react-dom"],
     "jsx": "react-jsx"
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "background/**/*.ts", "*.ts", "*.tsx", "vitest.setup.ts"]
