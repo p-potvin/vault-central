@@ -25,6 +25,7 @@ export const VideoDataSchema = z.object({
     quality: z.string().nullable().optional(),
     size: z.string().nullable().optional(),
     length: z.union([z.string(), z.number()]).nullable().optional(),
+    previewStatus: z.enum(['pending', 'processing', 'success', 'failed']).optional(),
 });
 export const StorageSchema = z.object({
     savedVideos: z.array(VideoDataSchema).default([])

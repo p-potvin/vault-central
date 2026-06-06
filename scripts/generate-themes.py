@@ -1,7 +1,7 @@
 import sys
 import os
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'vault-themes'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'vaultwares-themes'))
 from theme_manager import VaultThemeManager
 
 def adjust_color(hex_color, amount):
@@ -49,8 +49,8 @@ for idx, t in enumerate(themes):
 ts_lines.append("};")
 ts_lines.append("export const getThemeClass = (id: number) => `vault-theme-${VAULT_THEMES[id]?.name || 'cyberpunk-cinder'}`;")
 
-with open(os.path.join(os.path.dirname(__file__), '..', 'src', 'lib', 'themes.ts'), 'w') as f:
+with open(os.path.join(os.path.dirname(__file__), '..', 'src', 'lib', 'themes.ts'), 'w', encoding='utf-8') as f:
     f.write('\n'.join(ts_lines))
 
-with open(os.path.join(os.path.dirname(__file__), '..', 'src', 'styles', 'vault-themes.css'), 'w') as f:
+with open(os.path.join(os.path.dirname(__file__), '..', 'src', 'styles', 'vault-themes.css'), 'w', encoding='utf-8') as f:
     f.write('\n'.join(css_lines))

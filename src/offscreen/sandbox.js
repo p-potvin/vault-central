@@ -36,19 +36,13 @@ window.addEventListener('message', async (event) => {
         }
     };
     if (msg.type === 'vc_init') {
-        const { id, jsBytes, wasmBytes } = msg;
+        const { id, coreURL, wasmURL, workerURL } = msg;
         try {
             ffmpeg = new FFmpeg();
-            // Create blob URLs from bytes passed by the parent.
-            // These blobs live in the sandbox's null-origin context, so FFmpeg's
-            // internal new Worker(coreURL) call succeeds without CSP issues.
-            const coreBlob = new Blob([jsBytes], { type: 'text/javascript' });
-            const wasmBlob = new Blob([wasmBytes], { type: 'application/wasm' });
-            const workerBlob = new Blob([`importScripts('${URL.createObjectURL(coreBlob)}');`], { type: 'text/javascript' });
             await ffmpeg.load({
-                coreURL: URL.createObjectURL(coreBlob),
-                wasmURL: URL.createObjectURL(wasmBlob),
-                classWorkerURL: URL.createObjectURL(workerBlob)
+                coreURL,
+                wasmURL,
+                classWorkerURL: workerURL
             });
             reply({ type: 'vc_sandbox_result', id, bytes: null });
         }
@@ -95,6 +89,8 @@ async function processVideo(fm, videoBytes, duration) {
             '-cpu-used', '5',
             '-deadline', 'realtime',
             '-threads', '4',
+            '-g', '10',
+            '-reserve_index_space', '500k',
         ];
         if (duration <= 20) {
             await fm.exec([

@@ -5,7 +5,7 @@
   "main": "content.js",
   "scripts": {
     "dev": "vite",
-    "build": "python scripts/generate-themes.py && tsc && vite build && npx esbuild src/scripts/content.ts --bundle --outfile=dist/content.js --format=iife --target=es2020 --minify && npx esbuild background/scripts/background.ts --bundle --outfile=dist/background-worker.js --format=iife --target=es2020 --minify && npx esbuild src/offscreen/processor.ts --bundle --outfile=dist/src/offscreen/processor.js --format=iife --target=es2020 --minify && npx esbuild src/offscreen/sandbox.ts --bundle --outfile=dist/src/offscreen/sandbox.js --format=iife --target=es2020 --minify && node package-extension.cjs",
+    "build": "python scripts/generate-themes.py && tsc && vite build && npx esbuild src/scripts/content.ts --bundle --outfile=dist/content.js --format=iife --target=es2020 --minify && npx esbuild background/scripts/background.ts --bundle --outfile=dist/background-worker.js --format=iife --target=es2020 --minify && npx esbuild src/offscreen/processor.ts --bundle --outfile=dist/src/offscreen/processor.js --format=iife --target=es2020 --minify && npx esbuild src/offscreen/sandbox.ts --bundle --outfile=dist/src/offscreen/sandbox.js --format=iife --target=es2020 --minify && npx esbuild src/scripts/scraper-player.ts --bundle --outfile=dist/scraper-player.js --format=iife --target=es2020 --minify && node package-extension.cjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview"
@@ -58,10 +58,10 @@
     "sharp": "^0.34.5",
     "tailwindcss": "^3.4.1",
     "ts-loader": "^9.5.4",
-    "typescript": "^5.9.3",
+    "typescript": "^5.7.3",
     "vite": "^8.0.1",
     "vite-plugin-static-copy": "^4.0.0",
-    "vitest": "^4.1.0",
+    "vitest": "^4.1.8",
     "webextension-polyfill": "^0.12.0",
     "zod": "^4.3.6"
   },
@@ -81,7 +81,7 @@
     "mux.js": "^6.3.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "tailwind-merge": "^3.5.0"
+    "tailwind-merge": "^3.6.0"
   },
   "type": "module"
 }
