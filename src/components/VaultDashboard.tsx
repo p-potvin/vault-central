@@ -2,7 +2,6 @@ import browser from 'webextension-polyfill';
 
 import {
   clearSyncedVideos,
-  DEFAULT_BACKUP_SETTINGS,
   getPinSettings,
   getSavedVideos,
   getSyncEnabled,
@@ -10,8 +9,7 @@ import {
   savePinSettings,
   saveSyncedVideos,
   saveVideos,
-  setSyncEnabled,
-  type BackupSettings
+  setSyncEnabled
 } from '../lib/storage-vault';
 import { clearPreviews, deletePreview, getPreview, vaultSetup, vaultStatus, vaultUnlock, vaultLock } from '../lib/vault-client';
 import { VAULT_THEMES, getThemeClass } from '../lib/themes'; // Added for binary previews
@@ -20,471 +18,23 @@ import { STORAGE_KEYS } from '../lib/constants';
 import * as Icons from '../lib/icons';
 import { cn } from '../lib/utils';
 import React, { useEffect, useState, useMemo, useRef, useDeferredValue } from 'react';
+import { VideoPlayer } from './VideoPlayer';
+import { SettingsDialog } from './SettingsDialog';
+import { PinSetupDialog } from './PinSetupDialog';
 
-// ⚡ BOLT OPTIMIZATION:
-// Instantiating `new URL()` synchronously within loops (like render loops or useMemo mapping)
-// creates O(N) performance bottlenecks. This cache prevents redundant URL parsing
-// and gracefully handles invalid URLs without crashing the React tree.
-const domainCache = new Map<string, string>();
-
-// ⚡ BOLT OPTIMIZATION:
-// `new Date().toLocaleDateString()` and `.toLocaleString()` inside render loops
-// create an enormous performance bottleneck because V8 must re-parse and instantiate
-// the locale formatter on every call. Using `Intl.DateTimeFormat` prevents this overhead.
-const dateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-const dateTimeFormatter = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
-
-// ⚡ BOLT OPTIMIZATION:
-// `String.prototype.localeCompare` is notoriously slow when called repeatedly inside `.sort()`.
-// Instantiating `Intl.Collator` once outside the render/sort loops and reusing `.compare` provides
-// massive performance gains when sorting strings, and avoids the heavy V8 instantiation cost
-// on every re-render or search filter update.
-const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-
-// Pagination row count keyed by viewSize. Picked to match the largest
-// Tailwind breakpoint defined in viewClasses for the same viewSize. Slightly
-// undersells small viewports (one fewer row of items per page than visually
-// fits) but never overshoots, and avoids the previous substring-match bug
-// where "grid-cols-4" matched before "grid-cols-5".
-const PER_ROW_BY_VIEW_SIZE: Record<number, number> = {
-  1: 1, // Details (flex column, single line per item; pagination uses items-per-page directly)
-  2: 2, // List
-  3: 5, // Small
-  4: 4, // Medium
-  5: 3, // Large
-  6: 2, // Biggest
-};
-function computePerRow(viewSize: number): number {
-  return PER_ROW_BY_VIEW_SIZE[viewSize] ?? 1;
-}
-
-// Duration display: integer seconds, 2-digit padded; H:MM:SS when ≥1h.
-// Accepts either a number of seconds or a pre-formatted string (passed through).
-function formatDuration(d: number | string): string {
-  if (typeof d !== 'number' || !isFinite(d)) return String(d ?? '');
-  const total = Math.max(0, Math.floor(d));
-  const s = (total % 60).toString().padStart(2, '0');
-  const m = (Math.floor(total / 60) % 60).toString();
-  const h = Math.floor(total / 3600);
-  return h > 0 ? `${h}:${m.padStart(2, '0')}:${s}` : `${m}:${s}`;
-}
-
-// Prompt dialog: keeps the input value in a ref instead of walking the DOM
-// from the Submit button (the previous version did
-// `e.currentTarget.parentElement?.previousElementSibling.value` which breaks
-// the moment any element is added between the input and the button row).
-const PromptDialog: React.FC<{
-  message: string;
-  type?: 'password' | 'text';
-  onCancel: () => void;
-  onConfirm: (value: string) => void;
-}> = ({ message, type, onCancel, onConfirm }) => {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const submit = () => onConfirm(inputRef.current?.value ?? '');
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-      <div className="bg-vault-cardBg border border-vault-border rounded-lg shadow-2xl max-w-sm w-full p-6 animate-in zoom-in-95">
-        <h3 className="text-vault-text font-bold mb-4 flex items-center gap-2"><Icons.DebugIcon size={20} className="text-vault-accent" /> Input Required</h3>
-        <p className="text-vault-muted text-sm mb-3">{message}</p>
-        <input
-          ref={inputRef}
-          autoFocus
-          type={type === 'password' ? 'password' : 'text'}
-          className="w-full bg-vault-bg border border-vault-border rounded p-2 text-sm text-vault-text focus:outline-none focus:border-vault-accent focus:ring-1 focus:ring-vault-accent/30"
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') submit();
-            if (e.key === 'Escape') onCancel();
-          }}
-        />
-        <div className="flex justify-end gap-3 mt-6">
-          <button onClick={onCancel} className="px-4 py-1.5 text-xs font-bold text-vault-muted hover:text-vault-text transition-colors">Cancel</button>
-          <button onClick={submit} className="px-4 py-1.5 text-xs font-black bg-vault-accent text-vault-bg rounded hover:bg-vault-accentHover transition-all shadow-lg">Submit</button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// LockedBanner — surfaces when the auto-lock timer fires while the user is on
-// the dashboard. Inline PIN entry returns the user to a working state without
-// having to navigate to the popup. Renders nothing when the vault is unlocked
-// or PIN is disabled.
-const LockedBanner: React.FC<{
-  visible: boolean;
-  pinLength: number;
-  onUnlocked: () => void;
-}> = ({ visible, pinLength, onUnlocked }) => {
-  const [pin, setPin] = useState<string[]>(() => new Array(pinLength).fill(''));
-  const [error, setError] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const inputs = useRef<(HTMLInputElement | null)[]>([]);
-
-  useEffect(() => {
-    if (visible) {
-      setPin(new Array(pinLength).fill(''));
-      setError(false);
-      // Defer focus so the transition completes first
-      const t = setTimeout(() => inputs.current[0]?.focus(), 120);
-      return () => clearTimeout(t);
-    }
-  }, [visible, pinLength]);
-
-  const verify = async (full: string) => {
-    setBusy(true);
-    const res = await vaultUnlock(full);
-    setBusy(false);
-    if (res.success) {
-      onUnlocked();
-    } else {
-      setError(true);
-      setPin(new Array(pinLength).fill(''));
-      inputs.current[0]?.focus();
-    }
-  };
-
-  const onChange = (idx: number, v: string) => {
-    if (!/^\d*$/.test(v)) return;
-    const next = [...pin];
-    next[idx] = v.slice(-1);
-    setPin(next);
-    setError(false);
-    if (v && idx < pinLength - 1) inputs.current[idx + 1]?.focus();
-    const full = next.join('');
-    if (full.length === pinLength) verify(full);
-  };
-
-  const onKeyDown = (idx: number, e: React.KeyboardEvent) => {
-    if (e.key === 'Backspace' && !pin[idx] && idx > 0) inputs.current[idx - 1]?.focus();
-  };
-
-  if (!visible) return null;
-  return (
-    <div
-      role="alert"
-      aria-live="polite"
-      className={cn(
-        'fixed inset-x-0 top-0 z-[120] flex justify-center pointer-events-none transition-all duration-300',
-      )}
-    >
-      <div className="pointer-events-auto mt-4 max-w-lg w-full mx-4 bg-vault-cardBg border border-vault-border rounded-xl shadow-2xl backdrop-blur-md p-5 flex items-center gap-4 animate-in slide-in-from-top-4 fade-in duration-300">
-        <Icons.PinIcon size={24} className={cn('shrink-0', error ? 'text-red-400' : 'text-vault-accent')} />
-        <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-bold text-vault-text tracking-tight">Vault locked</h3>
-          <p className="text-[11px] text-vault-muted mt-0.5">
-            {error ? 'Wrong PIN — try again' : `Auto-lock fired. Enter your ${pinLength}-digit PIN to continue.`}
-          </p>
-        </div>
-        <div className="flex gap-1.5 shrink-0">
-          {pin.map((digit, i) => (
-            <input
-              key={i}
-              ref={el => { inputs.current[i] = el; }}
-              type="password"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              maxLength={1}
-              value={digit}
-              disabled={busy}
-              onChange={e => onChange(i, e.target.value)}
-              onKeyDown={e => onKeyDown(i, e)}
-              className={cn(
-                'w-7 h-9 text-center text-sm font-mono font-bold rounded-md border outline-none transition-all duration-150',
-                'bg-vault-bg/60 text-vault-text',
-                error
-                  ? 'border-red-400/60 text-red-400'
-                  : digit
-                    ? 'border-vault-accent/60'
-                    : 'border-vault-border focus:border-vault-accent',
-                busy && 'opacity-50',
-              )}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-async function getPreviewForVideo(video: VideoData): Promise<Blob | null> {
-  console.debug('[getPreviewForVideo] Fetching primary for:', video.url);
-  const primary = await getPreview(video.url);
-  if (primary || !video.rawVideoSrc || video.rawVideoSrc === video.url) {
-    console.debug('[getPreviewForVideo] Returning primary / no fallback needed. Found primary?', !!primary);
-    return primary;
-  }
-  console.debug('[getPreviewForVideo] Primary not found, fetching fallback for:', video.rawVideoSrc);
-  return getPreview(video.rawVideoSrc);
-}
-
-function isDisplayableImageThumbnail(thumbnail?: string): thumbnail is string {
-  return Boolean(thumbnail && !thumbnail.startsWith('data:video'));
-}
-
-function mergeSyncedMetadata(localItems: VideoData[], syncedItems: VideoData[]) {
-  const seen = new Set(localItems.map(item => item.url));
-  const additions = syncedItems.filter(item => {
-    if (seen.has(item.url)) return false;
-    seen.add(item.url);
-    return true;
-  });
-  return {
-    merged: [...localItems, ...additions],
-    addedCount: additions.length
-  };
-}
-
-function getDomainFromUrl(url: string, removeWww = false): string {
-  if (!url) return 'Unknown';
-  const cacheKey = `${url}-${removeWww}`;
-  if (domainCache.has(cacheKey)) {
-    return domainCache.get(cacheKey)!;
-  }
-  try {
-    const urlObj = new URL(url);
-    const hostname = removeWww ? urlObj.hostname.replace(/^www\./, '') : urlObj.hostname;
-    const domain = hostname || 'Unknown';
-    domainCache.set(cacheKey, domain);
-    return domain;
-  } catch (e) {
-    domainCache.set(cacheKey, 'Unknown');
-    return 'Unknown';
-  }
-}
-
-/**
- * Preview Player Component
- * Handles the "YouTube-style" 10x2s hover preview
- */
-// ⚡ BOLT OPTIMIZATION:
-// Wrapping `PreviewThumb` in `React.memo` prevents unnecessary and costly re-renders
-// when parent components update state (e.g., when opening a video modal or changing themes).
-const PreviewThumb: React.FC<{ video: VideoData }> = React.memo(({ video }) => {
-  const [blob, setBlob] = useState<Blob | null>(null);
-  const [previewBlob, setPreviewBlob] = useState<string | null>(null);
-  const [frameSequence, setFrameSequence] = useState<string[] | null>(null);
-  const [currentFrame, setCurrentFrame] = useState(0);
-  const [isHovering, setIsHovering] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const wasHovering = useRef(false);
-
-  useEffect(() => {
-    let active = true;
-    let retryIndex = 0;
-    const retryDelays = [2000, 5000, 15000, 30000];
-
-    const attempt = () => {
-      console.debug(`[PreviewThumb] attempt ${retryIndex + 1} for: ${video.url}`);
-      getPreviewForVideo(video)
-        .then(blob => {
-          if (!active) return;
-          if (blob) {
-            console.debug(`[PreviewThumb] blob found on attempt ${retryIndex + 1} for: ${video.url}`);
-            setBlob(blob);
-          } else if (retryIndex < retryDelays.length) {
-            console.debug(`[PreviewThumb] no blob, scheduling retry ${retryIndex + 1} for: ${video.url}`);
-            const delay = retryDelays[retryIndex++];
-            setTimeout(attempt, delay);
-          } else {
-            console.debug(`[PreviewThumb] all polling attempts exhausted for: ${video.url}`);
-          }
-        })
-        .catch((err) => {
-          console.error(`[PreviewThumb] error during attempt for: ${video.url}`, err);
-          if (!active || retryIndex >= retryDelays.length) return;
-          const delay = retryDelays[retryIndex++];
-          setTimeout(attempt, delay);
-        });
-    };
-
-    attempt();
-    return () => { active = false; };
-  }, [video.url, video.rawVideoSrc]);
-
-  // Control video play/pause based on hover state
-  useEffect(() => {
-    if (!videoRef.current || !previewBlob) return;
-    if (isHovering) {
-      wasHovering.current = true;
-      videoRef.current.play().catch(() => {});
-    } else {
-      if (wasHovering.current) {
-        videoRef.current.pause();
-        // Firefox cannot seek WebM created by MediaRecorder (missing Cues). 
-        // Using .load() resets the stream without throwing NS_ERROR_DOM_MEDIA_METADATA_ERR.
-        videoRef.current.load();
-      }
-      wasHovering.current = false;
-    }
-  }, [isHovering, previewBlob]);
-
-  useEffect(() => {
-    if (!blob) return;
-    if (blob.size < 100) {
-      console.warn('[PreviewThumb] Loaded blob is abnormally small:', blob.size, 'bytes');
-      return;
-    }
-    if (blob.type === 'application/json') {
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const text = reader.result as string;
-          const data = JSON.parse(text);
-          if (data.isFrames && Array.isArray(data.frames)) {
-             setFrameSequence(data.frames);
-          }
-        } catch(e) {
-          console.error("Failed to parse frame JSON:", e);
-        }
-      };
-      reader.readAsText(blob);
-    } else {
-      const url = URL.createObjectURL(blob);
-      setPreviewBlob(url);
-      return () => { URL.revokeObjectURL(url); };
-    }
-  }, [blob]);
-
-  useEffect(() => {
-    if (!frameSequence || !isHovering) {
-        if (!isHovering) setCurrentFrame(0);
-        return;
-    }
-    let frameIdx = 0;
-    const interval = setInterval(() => {
-       frameIdx = (frameIdx + 1) % frameSequence.length;
-       setCurrentFrame(frameIdx);
-    }, 150); // ~7 fps
-    return () => clearInterval(interval);
-  }, [frameSequence, isHovering]);
-
-  const handleMouseEnter = async () => {
-    setIsHovering(true);
-    
-    // Check if we already have it in state
-    if (previewBlob || frameSequence) {
-      return;
-    }
-
-    // Check if it exists in the database (may have been written since mount)
-    const blob = await getPreviewForVideo(video);
-    if (blob) {
-      setBlob(blob);
-      return;
-    }
-
-    /**
-     * Recovery Logic: If more than 30s have elapsed since save and the preview is
-     * still missing, the background job likely failed or was interrupted. Re-trigger
-     * generation via the offscreen FFmpeg processor.
-     */
-    const elapsed = Date.now() - video.timestamp;
-    if (elapsed > 30000 && !isProcessing && video.rawVideoSrc) {
-      setIsProcessing(true);
-      try {
-        const response: any = await browser.runtime.sendMessage({
-          action: 'generate_preview',
-          data: { 
-            previewKey: video.url,
-            sourceUrl: video.rawVideoSrc || video.url,
-            duration: typeof video.duration === 'number' ? video.duration : 60 
-          }
-        });
-        
-        if (response && response.success) {
-            // Poll for the result until it appears in DB or timeout (10s)
-            let attempts = 0;
-            const poll = setInterval(async () => {
-                const retryBlob = await getPreviewForVideo(video);
-                if (retryBlob) {
-                    setBlob(retryBlob);
-                    setIsProcessing(false);
-                    clearInterval(poll);
-                }
-                if (attempts++ > 20) {
-                    setIsProcessing(false);
-                    clearInterval(poll);
-                }
-            }, 500);
-            return;
-        }
-      } catch (e) {
-        console.error("[PreviewThumb] Error sending generate_preview message:", e);
-      } finally {
-        setIsProcessing(false);
-      }
-    }
-  };
-
-  return (
-    <div 
-      className="absolute inset-0 z-20 overflow-hidden bg-black"
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={() => setIsHovering(false)}
-    >
-      {frameSequence ? (
-        <img 
-          src={frameSequence[isHovering ? currentFrame : 0]} 
-          alt={video.title}
-          className="w-full h-full object-cover" 
-          loading="eager" 
-          onError={(e) => {
-            const target = e.currentTarget;
-            const fallbackSrc = 'data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="%23333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Crect x="3" y="3" width="18" height="18" rx="2" ry="2"%3E%3C/rect%3E%3Ccircle cx="8.5" cy="8.5" r="1.5"%3E%3C/circle%3E%3Cpolyline points="21 15 16 10 5 21"%3E%3C/polyline%3E%3C/svg%3E';
-            if (target.src !== fallbackSrc) {
-              target.src = fallbackSrc;
-            }
-          }}
-        />
-      ) : previewBlob ? (
-        // Show as a static first-frame when not hovering; play on hover.
-        // The play/pause is driven by the isHovering useEffect above.
-        <video
-          ref={videoRef}
-          src={previewBlob}
-          className="w-full h-full object-cover"
-          preload="none"
-          muted
-          loop
-          playsInline
-        />
-      ) : (
-        isDisplayableImageThumbnail(video.thumbnail) ? (
-          // ⚡ BOLT OPTIMIZATION:
-          // Adding `loading="lazy"` defers the loading of off-screen thumbnails,
-          // significantly reducing initial network payload and memory footprint for large lists.
-          <img 
-            src={video.thumbnail} 
-            alt={video.title} 
-            loading="lazy"
-            className="w-full h-full object-cover"
-            onError={(e) => {
-              const target = e.currentTarget;
-              const fallbackSrc = 'data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="%23333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Crect x="3" y="3" width="18" height="18" rx="2" ry="2"%3E%3C/rect%3E%3Ccircle cx="8.5" cy="8.5" r="1.5"%3E%3C/circle%3E%3Cpolyline points="21 15 16 10 5 21"%3E%3C/polyline%3E%3C/svg%3E';
-              if (target.src !== fallbackSrc) {
-                target.src = fallbackSrc;
-              }
-            }}
-          />
-        ) : (
-          <div className="w-full h-full bg-black" aria-label={video.title} />
-        )
-      )}
-      
-      {isProcessing ? (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <Icons.LoaderIcon className="text-vault-accent animate-spin" size={20} />
-        </div>
-      ) : (
-        !previewBlob && !frameSequence && isHovering && (
-          <div className="absolute bottom-2 left-2 bg-black/60 text-[8px] text-white px-1 rounded uppercase tracking-tighter z-10">
-            Generating preview…
-          </div>
-        )
-      )}
-    </div>
-  );
-});
+import { PromptDialog } from './PromptDialog';
+import { LockedBanner } from './LockedBanner';
+import { PreviewThumb } from './PreviewThumb';
+import {
+  computePerRow,
+  formatDuration,
+  isDisplayableImageThumbnail,
+  mergeSyncedMetadata,
+  getDomainFromUrl,
+  dateFormatter,
+  dateTimeFormatter,
+  collator
+} from '../lib/dashboard-utils';
 
 export const VaultDashboard: React.FC = () => {
   const [items, setItems] = useState<VideoData[]>([]);
@@ -501,6 +51,7 @@ export const VaultDashboard: React.FC = () => {
     return saved !== 'false';
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [pinSetupOpen, setPinSetupOpen] = useState(false);
 
   // Custom Dialog States
   const [toastMessage, setToastMessage] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
@@ -508,74 +59,12 @@ export const VaultDashboard: React.FC = () => {
   const [promptDialog, setPromptDialog] = useState<{message: string, type?: 'password' | 'text', onConfirm: (val: string) => void} | null>(null);
   const [editingItem, setEditingItem] = useState<{current: VideoData, original: VideoData} | null>(null);
 
-  // PIN Setup Modal States
-  const [pinSetupOpen, setPinSetupOpen] = useState(false);
-  const [pinSetupBoxes, setPinSetupBoxes] = useState<string[]>([]);
-  const [pinSetupLength, setPinSetupLength] = useState<4 | 6>(4);
-  const [pinSetupError, setPinSetupError] = useState(false);
-  const pinSetupRefs = useRef<(HTMLInputElement | null)[]>([]);
-
   useEffect(() => {
     if (toastMessage) {
       const timer = setTimeout(() => setToastMessage(null), 3000);
       return () => clearTimeout(timer);
     }
   }, [toastMessage]);
-
-  const handleExportVault = async () => {
-    try {
-      const data = await getSavedVideos();
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `vault-backup-${new Date().toISOString().split('T')[0]}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error("Failed to export vault backup", err);
-      setToastMessage({ msg: "Failed to export vault backup.", type: "error" });
-    }
-  };
-
-  const handleImportVault = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // 50MB file size limit to prevent memory exhaustion / DoS during JSON parsing
-    if (file.size > 50 * 1024 * 1024) {
-      setToastMessage({ msg: "Failed to import. File exceeds 50MB limit.", type: "error" });
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const json = JSON.parse(event.target?.result as string);
-        if (Array.isArray(json)) {
-          const current = await getSavedVideos(true);
-          const knownUrls = new Set(current.map(item => item.url));
-          const validImports = json
-            .map(item => VideoDataSchema.safeParse(item))
-            .filter((result): result is { success: true; data: VideoData } => result.success)
-            .map(result => result.data);
-          const additions = validImports.filter(item => {
-            if (knownUrls.has(item.url)) return false;
-            knownUrls.add(item.url);
-            return true;
-          });
-          const next = [...current, ...additions];
-          await saveVideos(next);
-          setItems(next);
-          setToastMessage({msg: `Imported ${additions.length} items. Skipped ${json.length - additions.length}.`, type: "success"});
-        } else {
-          setToastMessage({msg: "Failed to import. Backup must be a JSON array.", type: "error"});
-        }
-      } catch (err) {
-        setToastMessage({msg: "Failed to import. Invalid JSON backup.", type: "error"});
-      }
-    };
-    reader.readAsText(file);
-  };
 
   const handleDelete = async (url: string) => {
     setConfirmDialog({
@@ -713,10 +202,7 @@ export const VaultDashboard: React.FC = () => {
   const syncEnabledRef = useRef(false);
   const [isFirefox] = useState(() => navigator.userAgent.toLowerCase().includes('firefox'));
 
-  // Local Backup State
-  const [backupSettings, setBackupSettings] = useState<BackupSettings>(DEFAULT_BACKUP_SETTINGS);
-  const [backupFolderDraft, setBackupFolderDraft] = useState(DEFAULT_BACKUP_SETTINGS.folder);
-  const [isBackupBusy, setIsBackupBusy] = useState(false);
+
 
   useEffect(() => {
     syncEnabledRef.current = isSyncing;
@@ -728,13 +214,10 @@ export const VaultDashboard: React.FC = () => {
     if (savedTheme) {
       const themeNum = parseInt(savedTheme, 10);
       setCurrentTheme(themeNum);
-      const mode = VAULT_THEMES[themeNum]?.mode || 'dark';
-      document.documentElement.setAttribute('data-theme', getThemeClass(themeNum));
-      document.documentElement.classList.toggle('dark', mode === 'dark');
-    } else {
-      document.documentElement.setAttribute('data-theme', getThemeClass(3));
-      document.documentElement.classList.add('dark');
     }
+    // Lock to warm theme: remove any custom theme attributes and dark classes
+    document.documentElement.removeAttribute('data-theme');
+    document.documentElement.classList.remove('dark');
 
     const savedSidebar = localStorage.getItem('vault-sidebar-open');
     if (savedSidebar !== null) {
@@ -765,15 +248,7 @@ export const VaultDashboard: React.FC = () => {
       }
       setIsSyncing(syncEnabled);
 
-      try {
-        const backupResponse = await browser.runtime.sendMessage({ action: "get_backup_settings" }) as any;
-        if (backupResponse?.success && backupResponse.settings) {
-          setBackupSettings(backupResponse.settings);
-          setBackupFolderDraft(backupResponse.settings.folder || '');
-        }
-      } catch (err) {
-        console.warn("[VaultDashboard] Failed to load backup settings:", err);
-      }
+
 
       let all = await getSavedVideos();
       if (syncEnabled) {
@@ -885,145 +360,11 @@ export const VaultDashboard: React.FC = () => {
     void (isSyncing ? disableBrowserSync() : enableBrowserSync());
   };
 
-  const refreshBackupSettings = async () => {
-    try {
-      const response = await browser.runtime.sendMessage({ action: "get_backup_settings" }) as any;
-      if (response?.success && response.settings) {
-        setBackupSettings(response.settings);
-        setBackupFolderDraft(response.settings.folder || '');
-      }
-    } catch (err) {
-      console.warn("[VaultDashboard] Failed to refresh backup settings:", err);
-    }
-  };
 
-  const saveBackupSettingsFromDraft = async (patch: Partial<BackupSettings> = {}) => {
-    const next = {
-      ...backupSettings,
-      ...patch,
-      folder: backupFolderDraft
-    };
-    setBackupSettings(next);
-
-    const response = await browser.runtime.sendMessage({
-      action: "save_backup_settings",
-      settings: next
-    }) as any;
-    if (!response?.success) {
-      throw new Error(response?.error || "Failed to save backup settings.");
-    }
-    setToastMessage({ msg: "Backup settings saved.", type: "success" });
-  };
-
-  const handleToggleDailyBackup = async (enabled: boolean) => {
-    try {
-      await saveBackupSettingsFromDraft({ enabled });
-    } catch (err) {
-      console.error("[VaultDashboard] Failed to update daily backup setting:", err);
-      setToastMessage({ msg: "Failed to update daily backup setting.", type: "error" });
-      await refreshBackupSettings();
-    }
-  };
-
-  const handleSaveBackupSettings = async () => {
-    try {
-      await saveBackupSettingsFromDraft();
-    } catch (err) {
-      console.error("[VaultDashboard] Failed to save backup settings:", err);
-      setToastMessage({ msg: "Failed to save backup settings.", type: "error" });
-      await refreshBackupSettings();
-    }
-  };
-
-  const handleRunFullBackup = async () => {
-    setIsBackupBusy(true);
-    try {
-      const response = await browser.runtime.sendMessage({ action: "run_full_backup" }) as any;
-      if (!response?.success) {
-        throw new Error(response?.error || "Backup failed.");
-      }
-      setToastMessage({
-        msg: `Full backup downloaded (${response.videos} items, ${response.previews} previews).`,
-        type: "success"
-      });
-      await refreshBackupSettings();
-    } catch (err) {
-      console.error("[VaultDashboard] Full backup failed:", err);
-      setToastMessage({ msg: "Full backup failed. Check debug logs.", type: "error" });
-    } finally {
-      setIsBackupBusy(false);
-    }
-  };
-
-  const doConfirmPinSetup = async (pin: string, length: 4 | 6) => {
-    // Provision the zero-knowledge vault: derives the master KEK from the
-    // PIN via Argon2id, mints an ML-KEM-1024 keypair, wraps the private
-    // key, persists material, and unlocks. The raw PIN is never stored.
-    const res = await vaultSetup(pin);
-    if (!res.success) {
-      setToastMessage({ msg: `PIN activation failed: ${res.error || 'unknown'}`, type: 'error' });
-      return;
-    }
-    const updated = { ...pinSettings, enabled: true, length, lastUnlocked: Date.now() };
-    await savePinSettings(updated);
-    setPinSettings(updated);
-    setPinSetupOpen(false);
-    setPinSetupBoxes([]);
-    setPinSetupError(false);
-    setToastMessage({ msg: `${length}-digit PIN activated.`, type: 'success' });
-  };
-
-  const handlePinSetupChange = (index: number, value: string) => {
-    if (!/^\d*$/.test(value)) return;
-    const newBoxes = [...pinSetupBoxes];
-    newBoxes[index] = value.slice(-1);
-    setPinSetupBoxes(newBoxes);
-    setPinSetupError(false);
-    if (value && index < newBoxes.length - 1) {
-      pinSetupRefs.current[index + 1]?.focus();
-    }
-    const fullPin = newBoxes.join('');
-    if (fullPin.length === pinSetupLength && /^\d+$/.test(fullPin)) {
-      void doConfirmPinSetup(fullPin, pinSetupLength);
-    }
-  };
-
-  const handlePinSetupKeyDown = (index: number, e: React.KeyboardEvent) => {
-    if (e.key === 'Backspace' && !pinSetupBoxes[index] && index > 0) {
-      pinSetupRefs.current[index - 1]?.focus();
-    }
-  };
-
-  const handlePinSetupLengthChange = (len: 4 | 6) => {
-    setPinSetupLength(len);
-    setPinSetupBoxes(new Array(len).fill(''));
-    setPinSetupError(false);
-    setTimeout(() => pinSetupRefs.current[0]?.focus(), 0);
-  };
-
-  const cancelPinSetup = () => {
-    setPinSetupOpen(false);
-    setPinSetupBoxes([]);
-    setPinSetupError(false);
-  };
-
-  const confirmPinSetup = async () => {
-    const pin = pinSetupBoxes.join('');
-    if (pin.length !== pinSetupLength || !/^\d+$/.test(pin)) {
-      setPinSetupError(true);
-      pinSetupRefs.current[0]?.focus();
-      return;
-    }
-    void doConfirmPinSetup(pin, pinSetupLength);
-  };
 
   const togglePin = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const enabled = e.target.checked;
     if (enabled) {
-      const length = (pinSettings?.length as 4 | 6) || 4;
-      setPinSetupLength(length);
-      setPinSetupBoxes(new Array(length).fill(''));
-      setPinSetupError(false);
       setPinSetupOpen(true);
       // Temporarily revert UI checkbox until confirmed
       e.target.checked = false;
@@ -1031,6 +372,7 @@ export const VaultDashboard: React.FC = () => {
       const updated = { ...pinSettings, enabled: false };
       await savePinSettings(updated);
       setPinSettings(updated);
+      setToastMessage({ msg: "PIN protection disabled.", type: "success" });
     }
   };
 
@@ -1047,9 +389,6 @@ export const VaultDashboard: React.FC = () => {
   };
   const changeTheme = (id: number) => {
     setCurrentTheme(id);
-    const mode = VAULT_THEMES[id]?.mode || 'dark';
-    document.documentElement.setAttribute('data-theme', getThemeClass(id));
-    document.documentElement.classList.toggle('dark', mode === 'dark');
     localStorage.setItem('vault-theme', id.toString());
   };
 
@@ -1058,9 +397,6 @@ export const VaultDashboard: React.FC = () => {
     const idx = themeIds.indexOf(currentTheme);
     const nextTheme = themeIds[(idx + 1) % themeIds.length] ?? themeIds[0];
     setCurrentTheme(nextTheme);
-    const mode = VAULT_THEMES[nextTheme]?.mode || 'dark';
-    document.documentElement.setAttribute('data-theme', getThemeClass(nextTheme));
-    document.documentElement.classList.toggle('dark', mode === 'dark');
     localStorage.setItem('vault-theme', nextTheme.toString());
   };
 
@@ -1155,11 +491,11 @@ export const VaultDashboard: React.FC = () => {
   // too wide for a portrait card proportions at 1-2 columns.
   const CARD_CLASS: Record<number, string> = {
     1: "flex-row items-center gap-2 h-[60px] px-3 py-1 border-b border-vault-border rounded-none shadow-none hover:bg-vault-cardBg/50",
-    2: "flex-row items-stretch p-0 h-[110px] hover:-translate-y-1",
-    3: "flex-col h-[200px]",
-    4: "flex-col h-[250px]",
-    5: "flex-row items-stretch p-0 h-[200px]",
-    6: "flex-row items-stretch p-0 h-[260px]",
+    2: "flex-row items-stretch p-0 h-[115px]",
+    3: "flex-col h-[230px]",
+    4: "flex-col h-[290px]",
+    5: "flex-row items-stretch p-0 h-[210px]",
+    6: "flex-row items-stretch p-0 h-[270px]",
   };
 
   // Thumbnail wrapper classes per view size.
@@ -1250,11 +586,8 @@ export const VaultDashboard: React.FC = () => {
             </div>
           </div>
 
-          <button onClick={() => setIsSettingsOpen(true)} className="vault-btn flex items-center justify-center p-1.5 rounded-full h-7 w-7 group" title="Vault Settings">
-            <Icons.SettingsIcon size={14} className="text-vault-accent group-hover:text-vault-bg transition-colors duration-200" />
-          </button>
-          <button onClick={cycleTheme} className="vault-btn flex items-center justify-center p-1.5 rounded-full h-7 w-7 group" title="Cycle Theme">
-            <Icons.ThemeIcon size={14} className="text-vault-accent group-hover:text-vault-bg transition-colors duration-200" />
+          <button onClick={() => setIsSettingsOpen(true)} className="vault-btn flex items-center justify-center p-1.5 rounded-md h-8 w-8 group border border-vault-border hover:border-vault-accent" title="Vault Settings">
+            <Icons.SettingsIcon size={16} className="text-vault-accent group-hover:text-vault-accent/85 transition-colors duration-200" />
           </button>
         </div>
       </header>
@@ -1274,7 +607,7 @@ export const VaultDashboard: React.FC = () => {
             <div className="space-y-4">
             {/* View Mode */}
             <div>
-              <label className="text-[11px] font-semibold text-vault-muted/85 flex items-center gap-1.5 mb-1.5 tracking-tight">
+              <label className="text-xs font-bold text-vault-muted/90 flex items-center gap-1.5 mb-2 uppercase tracking-wider">
                 <Icons.ViewModeIcon size={14} className="text-vault-accent" /> View Mode
               </label>
               <input 
@@ -1291,24 +624,10 @@ export const VaultDashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* Theme Config */}
-            <div>
-              <label className="text-[11px] font-semibold text-vault-muted/85 flex items-center gap-1.5 mb-1.5 tracking-tight">
-                <Icons.ThemeIcon size={14} className="text-vault-accent" /> UI Theme
-              </label>
-              <select 
-                value={currentTheme}
-                onChange={(e) => changeTheme(parseInt(e.target.value))}
-                className="w-full bg-vault-bg border border-vault-border text-xs p-1.5 rounded outline-none focus:border-vault-accent text-vault-text"
-              >
-                {Object.values(VAULT_THEMES).map(t => (
-                  <option key={t.id} value={t.id}>{t.name.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')} ({t.mode})</option>
-                ))}
-              </select>
-            </div>
+
             {/* Grouping */}
             <div>
-              <label className="text-[11px] font-semibold text-vault-muted/85 flex items-center gap-1.5 mb-1.5 tracking-tight">
+              <label className="text-xs font-bold text-vault-muted/90 flex items-center gap-1.5 mb-2 uppercase tracking-wider">
                 <Icons.GroupIcon size={14} className="text-vault-accent" /> Group By
               </label>
               <select 
@@ -1323,7 +642,7 @@ export const VaultDashboard: React.FC = () => {
 
             {/* Sorting */}
             <div className="space-y-2">
-               <label className="text-[11px] font-semibold text-vault-muted/85 flex items-center gap-1.5 mb-1.5 tracking-tight">
+               <label className="text-xs font-bold text-vault-muted/90 flex items-center gap-1.5 mb-2 uppercase tracking-wider">
                 <Icons.SortIcon size={14} className="text-vault-accent" /> Sort Params
               </label>
               <div className="flex gap-2">
@@ -1360,7 +679,7 @@ export const VaultDashboard: React.FC = () => {
             
             {/* PIN System */}
             <div className="pt-2">
-              <label className="text-[11px] font-semibold text-vault-muted/85 flex items-center gap-1.5 mb-2 tracking-tight">
+              <label className="text-xs font-bold text-vault-muted/90 flex items-center gap-1.5 mb-2.5 uppercase tracking-wider">
                 <Icons.PinIcon size={14} className="text-vault-accent" /> PIN Protection
               </label>
               <div className="space-y-4">
@@ -1439,22 +758,22 @@ export const VaultDashboard: React.FC = () => {
             
             {/* Sync Option */}
             <div className="pt-2">
-              <label className="text-[11px] font-semibold text-vault-muted/85 flex items-center gap-1.5 mb-1.5 tracking-tight">
+              <label className="text-xs font-bold text-vault-muted/90 flex items-center gap-1.5 mb-2 uppercase tracking-wider">
                 <Icons.DebugIcon size={14} className="text-vault-accent" /> Persistence
               </label>
               <button
                 onClick={handleToggleBrowserSync}
                 disabled={isSyncBusy}
                 className={cn(
-                  "w-full vault-btn p-2 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2",
+                  "w-full vault-btn p-2 text-[11px] font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all",
                   isSyncing
-                    ? "bg-vault-accent text-vault-bg border-transparent hover:border-dashed hover:border-vault-accentHover"
-                    : "border-dashed border-vault-border text-vault-muted opacity-60 hover:opacity-100",
+                    ? "bg-vault-accent/12 text-vault-text border-vault-accent/60 hover:bg-vault-accent/22 hover:border-vault-accent/80"
+                    : "border-dashed border-vault-border text-vault-muted opacity-60 hover:opacity-100 hover:bg-vault-accent/12 hover:border-vault-accent/60",
                   isSyncBusy && "cursor-wait opacity-70"
                 )}
                 title={isFirefox ? "Use Firefox Sync Storage" : "Use Chrome Sync Storage"}
               >
-                <div className={cn("w-1.5 h-1.5 rounded-full", isSyncing ? "bg-vault-bg animate-pulse" : "bg-vault-muted")} />
+                <div className={cn("w-1.5 h-1.5 rounded-full", isSyncing ? "bg-vault-accent animate-pulse" : "bg-vault-muted")} />
                 {isSyncBusy ? "Syncing..." : isSyncing ? "Sync Enabled" : "Enable Browser Sync"}
               </button>
               <p className="text-[9px] text-vault-muted mt-2 leading-relaxed opacity-60 italic">
@@ -1538,23 +857,23 @@ export const VaultDashboard: React.FC = () => {
 
                     {/* Pagination Controls (Only on non-isolated view and if multiple pages) */}
                     {!isolatedGroup && totalPages > 1 && (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 bg-vault-cardBg/60 border border-vault-border/50 rounded-full px-2 py-1 shadow-sm">
                         <button 
                           onClick={() => setGroupPage(groupName, -1)}
                           disabled={currentPage === 0}
-                          className="vault-btn p-1 h-7 w-7 flex items-center justify-center disabled:opacity-30"
+                          className="vault-btn p-1 h-8 w-8 flex items-center justify-center rounded-full border border-vault-border bg-vault-cardBg text-vault-text hover:bg-vault-accent/10 hover:border-vault-accent disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                         >
-                          <Icons.ChevronLeftIcon size={14} />
+                          <Icons.ChevronLeftIcon size={16} />
                         </button>
-                        <span className="text-[10px] font-mono font-bold text-vault-muted w-10 text-center">
-                          {currentPage + 1} / {totalPages}
+                        <span className="text-xs font-mono font-black text-vault-text min-w-[48px] text-center">
+                          {currentPage + 1} <span className="opacity-40">/</span> {totalPages}
                         </span>
                         <button 
                           onClick={() => setGroupPage(groupName, 1)}
                           disabled={currentPage >= totalPages - 1}
-                          className="vault-btn p-1 h-7 w-7 flex items-center justify-center disabled:opacity-30"
+                          className="vault-btn p-1 h-8 w-8 flex items-center justify-center rounded-full border border-vault-border bg-vault-cardBg text-vault-text hover:bg-vault-accent/10 hover:border-vault-accent disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                         >
-                          <Icons.ChevronRightIcon size={14} />
+                          <Icons.ChevronRightIcon size={16} />
                         </button>
                       </div>
                     )}
@@ -1567,7 +886,7 @@ export const VaultDashboard: React.FC = () => {
                   )}>
                     {displayItems.map((fav, idx) => (
                       <div key={`${fav.url}-${idx}`} className={cn(
-                        "vault-card group relative flex transform transition-all hover:shadow-lg overflow-hidden",
+                        "vault-card group relative flex overflow-hidden",
                         CARD_CLASS[viewSize]
                       )}>
                         
@@ -1696,11 +1015,11 @@ export const VaultDashboard: React.FC = () => {
                             <div className={viewSize === 1 ? "flex-1 mr-4" : ""}>
                               <h3 className={cn(
                                 "font-bold mb-1 leading-snug cursor-pointer hover:text-vault-accent transition-colors",
-                                viewSize === 1 ? "text-base line-clamp-1" : "text-[15px] line-clamp-2"
+                                viewSize === 1 ? "text-base line-clamp-1" : "text-[16px] line-clamp-2"
                               )}>
                                 {fav.title || 'Untitled Reference'}
                               </h3>
-                              <p className="text-xs text-vault-muted truncate max-w-[250px] font-mono opacity-80" title={fav.url}>
+                              <p className="text-[13px] text-vault-muted truncate max-w-[250px] font-mono opacity-80" title={fav.url}>
                                 {(fav.domain && fav.domain !== 'Unknown') ? fav.domain : getDomainFromUrl(fav.url, true)}
                               </p>
                             </div>
@@ -1708,13 +1027,13 @@ export const VaultDashboard: React.FC = () => {
                             {viewSize > 1 && (
                               <div className="mt-3 space-y-1 mb-2 flex-1">
                                 {fav.author && (
-                                  <p className="text-[11px] text-vault-text line-clamp-1"><span className="text-vault-muted">By:</span> {fav.author}</p>
+                                  <p className="text-[13px] text-vault-text line-clamp-1"><span className="text-vault-muted">By:</span> {fav.author}</p>
                                 )}
                                 {fav.actors && fav.actors.length > 0 && (
-                                  <p className="text-[11px] text-vault-accent line-clamp-1 opacity-90"><span className="text-vault-muted">With:</span> {fav.actors.join(', ')}</p>
+                                  <p className="text-[13px] text-vault-accent line-clamp-1 opacity-90"><span className="text-vault-muted">With:</span> {fav.actors.join(', ')}</p>
                                 )}
                                 {(fav.views || fav.likes) && (
-                                  <p className="text-[11px] text-vault-muted flex gap-3 mt-1">
+                                  <p className="text-[13px] text-vault-muted flex gap-3 mt-1">
                                     {fav.views && <span><strong>{fav.views}</strong> views</span>}
                                     {fav.likes && <span><strong>{fav.likes}</strong> likes</span>}
                                   </p>
@@ -1722,12 +1041,12 @@ export const VaultDashboard: React.FC = () => {
                                 {fav.tags && fav.tags.length > 0 && (
                                   <div className="flex flex-wrap gap-1 mt-2">
                                     {fav.tags.slice(0, 3).map(tag => (
-                                      <span key={tag} className="text-[9px] bg-vault-cardBg border border-vault-border px-1.5 py-0.5 rounded text-vault-muted inline-block">
+                                      <span key={tag} className="text-[11px] bg-vault-cardBg border border-vault-border px-1.5 py-0.5 rounded text-vault-muted inline-block">
                                         {tag}
                                       </span>
                                     ))}
                                     {fav.tags.length > 3 && (
-                                      <span className="text-[9px] bg-vault-cardBg/50 border border-vault-border border-dashed px-1.5 py-0.5 rounded text-vault-muted inline-block">
+                                      <span className="text-[11px] bg-vault-cardBg/50 border border-vault-border border-dashed px-1.5 py-0.5 rounded text-vault-muted inline-block">
                                         +{fav.tags.length - 3}
                                       </span>
                                     )}
@@ -1741,14 +1060,14 @@ export const VaultDashboard: React.FC = () => {
                             "flex items-center justify-between border-vault-border pt-3 mt-auto",
                             viewSize === 1 ? "border-none ml-4 gap-4 mt-0 pt-0" : "border-t"
                           )}>
-                            <span className="text-[11px] font-semibold text-vault-muted tracking-wider">
+                            <span className="text-[13px] font-semibold text-vault-muted tracking-wider">
                               {dateFormatter.format(fav.timestamp)}
                             </span>
                             <a 
                               href={fav.url} 
                               target="_blank" 
                               rel="noreferrer"
-                              className="text-[10px] font-bold text-vault-bg bg-vault-accent hover:bg-vault-accentHover transition-colors flex items-center gap-1 px-3 py-1.5 rounded-sm"
+                              className="text-[12px] font-bold text-vault-bg bg-vault-accent hover:bg-vault-accentHover transition-colors flex items-center gap-1 px-3 py-1.5 rounded-sm"
                             >
                               OPEN <Icons.ChevronRightIcon size={12} strokeWidth={3} className="group-hover:translate-x-0.5 transition-transform" />
                             </a>
@@ -1876,380 +1195,64 @@ export const VaultDashboard: React.FC = () => {
       )}
 
       {/* SETTINGS & EXPORT MODAL */}
-      {isSettingsOpen && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 cursor-pointer"
-          onClick={() => setIsSettingsOpen(false)}
-        >
-          <div 
-            className="bg-vault-bg border border-vault-border rounded-lg shadow-2xl w-full max-w-2xl p-0 relative flex flex-col animate-in zoom-in-95 duration-200 cursor-default"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-4 border-b border-vault-border bg-vault-cardBg">
-              <h2 className="text-lg font-bold text-vault-text flex items-center gap-2">
-                <Icons.SettingsIcon size={20} className="text-vault-accent" /> Advanced Options & Export
-              </h2>
-              <button 
-                onClick={() => setIsSettingsOpen(false)} 
-                className="vault-btn p-1.5 h-8 w-8 flex items-center justify-center rounded-full hover:bg-vault-bg border-none"
-              >
-                <Icons.CloseIcon size={16} className="text-vault-muted" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 overflow-y-auto max-h-[70vh] flex flex-col gap-8">
-               
-               {/* Export / Import */}
-               <section>
-                 <h3 className="text-sm font-black uppercase text-vault-muted mb-4 border-b border-vault-border pb-2 tracking-widest">Data Portability</h3>
-                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                   <div className="bg-vault-cardBg border border-vault-border rounded p-4 flex flex-col gap-3">
-                     <div className="flex items-center gap-2 text-vault-text font-bold">
-                       <Icons.ExportIcon size={18} className="text-vault-accent"/> Export Vault JSON
-                     </div>
-                     <p className="text-xs text-vault-muted leading-relaxed flex-1">
-                       Download a metadata-only JSON backup of tags, references, and saved item records.
-                     </p>
-                     <button onClick={handleExportVault} className="vault-btn py-2 text-xs font-bold w-full bg-vault-accent/10 text-vault-accent border-vault-accent/30 hover:bg-vault-accent hover:text-vault-bg transition-colors">
-                       Generate Backup
-                     </button>
-                   </div>
-
-                   <div className="bg-vault-cardBg border border-vault-border rounded p-4 flex flex-col gap-3">
-                     <div className="flex items-center gap-2 text-vault-text font-bold">
-                       <Icons.ImportIcon size={18} className="text-vault-accent"/> Import Vault Backup
-                     </div>
-                     <p className="text-xs text-vault-muted leading-relaxed flex-1">
-                       Restore a previously exported Vault JSON file. Note: Pre-existing duplicate URLs will be skipped.
-                     </p>
-                     <label className="vault-btn py-2 text-xs font-bold w-full bg-vault-accent/10 text-vault-accent border-vault-accent/30 hover:bg-vault-accent hover:text-vault-bg transition-colors text-center cursor-pointer">
-                        Select JSON File
-                        <input type="file" accept=".json" onChange={(e) => { handleImportVault(e); setIsSettingsOpen(false); }} className="hidden" />
-                     </label>
-                   </div>
-
-                   <div className="col-span-1 md:col-span-2 bg-vault-cardBg border border-vault-border rounded p-4 flex flex-col gap-4">
-                     <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-                       <div className="flex-1">
-                         <h4 className="text-vault-text font-bold flex items-center gap-2">
-                           <Icons.ExportIcon size={16} className="text-vault-accent"/> Full Local Backup
-                         </h4>
-                         <p className="text-xs text-vault-muted mt-1 leading-relaxed">
-                           Includes metadata, thumbnails, and WebM previews. Folder is relative to the browser Downloads folder; leave it blank for the Downloads root.
-                         </p>
-                         {backupSettings.lastBackupAt && (
-                           <p className={cn(
-                             "text-xs mt-2",
-                             backupSettings.lastBackupStatus === 'error' ? "text-red-400" : "text-vault-accent"
-                           )}>
-                             Last backup: {dateTimeFormatter.format(backupSettings.lastBackupAt)}
-                             {backupSettings.lastBackupStatus === 'error' ? ` - ${backupSettings.lastBackupError || 'failed'}` : ''}
-                           </p>
-                         )}
-                       </div>
-                       <label className="flex items-center gap-2 text-xs font-bold text-vault-text whitespace-nowrap">
-                         <input
-                           type="checkbox"
-                           checked={backupSettings.enabled}
-                           onChange={(e) => void handleToggleDailyBackup(e.target.checked)}
-                           className="accent-vault-accent"
-                         />
-                         Daily automatic backup
-                       </label>
-                     </div>
-                     <div className="flex flex-col md:flex-row gap-3">
-                       <input
-                         type="text"
-                         value={backupFolderDraft}
-                         onChange={(e) => setBackupFolderDraft(e.target.value)}
-                         placeholder="Downloads root"
-                         className="flex-1 bg-vault-bg border border-vault-border rounded px-3 py-2 text-xs text-vault-text focus:border-vault-accent outline-none"
-                       />
-                       <button
-                         onClick={() => void handleSaveBackupSettings()}
-                         className="vault-btn py-2 px-4 text-xs font-bold bg-vault-cardBg text-vault-text border-vault-border hover:border-vault-accent hover:text-vault-accent transition-colors"
-                       >
-                         Save Folder
-                       </button>
-                       <button
-                         onClick={() => void handleRunFullBackup()}
-                         disabled={isBackupBusy}
-                         className="vault-btn py-2 px-5 text-xs font-bold bg-vault-accent/10 text-vault-accent border-vault-accent/30 hover:bg-vault-accent hover:text-vault-bg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                       >
-                         {isBackupBusy ? "Backing Up..." : "Run Full Backup"}
-                       </button>
-                     </div>
-                   </div>
-
-                   <div className="col-span-1 md:col-span-2 bg-vault-cardBg border border-vault-border rounded p-4 flex flex-col md:flex-row items-center justify-between gap-4">
-                     <div className="flex-1">
-                       <h4 className="text-vault-text font-bold flex items-center gap-2">
-                         <Icons.DebugIcon size={16} className="text-vault-accent"/> Debug Logs
-                       </h4>
-                       <p className="text-xs text-vault-muted mt-1">Download background capture logs for troubleshooting extension issues.</p>
-                     </div>
-                     <button 
-                        onClick={() => {
-                          browser.runtime.sendMessage({ action: "download_debug_logs" });
-                          setToastMessage({msg: "Downloading debug logs...", type: "success"});
-                        }} 
-                        className="vault-btn py-2 px-6 text-xs font-bold bg-vault-accent/10 text-vault-accent border-vault-accent/30 hover:bg-vault-accent hover:text-vault-bg transition-colors shrink-0"
-                     >
-                       Download Logs
-                     </button>
-                   </div>
-                 </div>
-               </section>
-
-               {/* Danger Zone */}
-               <section>
-                 <h3 className="text-sm font-black uppercase text-red-500/80 mb-4 border-b border-red-900/30 pb-2 tracking-widest">Danger Zone</h3>
-                 <div className="bg-red-900/10 border border-red-900/30 rounded p-4 flex flex-col md:flex-row items-center justify-between gap-4">
-                   <div>
-                     <h4 className="text-red-400 font-bold flex items-center gap-2"><Icons.AlertIcon size={16}/> Wipe Vault Data</h4>
-                     <p className="text-xs text-red-400/70 mt-1">Permanently obliterate all bookmarks, metadata, and locally stored previews.</p>
-                   </div>
-                   <button onClick={handleWipeVault} className="vault-btn py-2 px-4 shadow-[0_0_15px_-3px_var(--color-red-500)] text-xs font-black uppercase tracking-widest bg-red-600 hover:bg-red-500 text-white border border-red-400/60 whitespace-nowrap">
-                     Wipe Database
-                   </button>
-                 </div>
-               </section>
-
-            </div>
-          </div>
-        </div>
-      )}
+      <SettingsDialog
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onWipeVault={handleWipeVault}
+        onImportSuccess={(nextItems) => setItems(nextItems)}
+        onShowToast={(msg, type) => setToastMessage({ msg, type })}
+      />
 
       {/* VIDEO PLAYER MODAL */}
       {playingVideo && (
-        <div 
-          className={cn(
-            "fixed inset-0 z-50 flex items-center justify-center transition-all duration-700",
-            isDimmed ? "bg-black/98" : "bg-black/80 backdrop-blur-sm"
-          )}
-          onClick={() => { setPlayingVideo(null); setIsDimmed(false); }}
-        >
-          <div 
-            className={cn(
-              "w-[90vw] max-w-5xl bg-vault-cardBg border border-vault-border rounded-lg shadow-2xl flex flex-col overflow-hidden transition-transform duration-500",
-              playingVideo ? "scale-100 opacity-100" : "scale-95 opacity-0"
-            )}
-            onClick={e => e.stopPropagation()} // Prevent close on click inside
-          >
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-4 border-b border-vault-border bg-vault-bg/50">
-              <div className="flex items-center gap-3">
-                <button 
-                  onClick={() => setIsDimmed(!isDimmed)}
-                  className={cn(
-                    "vault-btn p-1.5 h-8 w-8 flex items-center justify-center rounded-full transition-all border border-vault-border/50",
-                    isDimmed ? "bg-vault-accent text-vault-bg" : "bg-vault-cardBg text-vault-muted hover:text-vault-accent"
-                  )}
-                  title={isDimmed ? "Turn Lights ON" : "Turn Lights OFF"}
-                >
-                  <Icons.ThemeIcon size={16} fill={isDimmed ? "currentColor" : "none"} />
-                </button>
-                <h3 className="font-bold text-lg text-vault-text line-clamp-1 pr-4">
-                  {playingVideo.title || 'Untitled Video'}
-                </h3>
-              </div>
-              <button 
-                title="Close Player"
-                onClick={() => { setPlayingVideo(null); setIsDimmed(false); }}
-                className="vault-btn p-1.5 h-8 w-8 flex items-center justify-center rounded-full hover:bg-red-500/10 hover:text-red-500 transition-colors border-none"
-              >
-                <Icons.CloseIcon size={20} />
-              </button>
-            </div>
-            
-            {/* Modal Body / Player */}
-            <div className="relative w-full aspect-video bg-black flex items-center justify-center group/player">
-              {playingVideo.type === 'video' && playingVideo.rawVideoSrc && !videoError ? (
-                <div className="w-full h-full relative">
-                  <video 
-                    src={playingVideo.rawVideoSrc}
-                    autoPlay
-                    controls
-                    preload="auto"
-                    className="w-full h-full object-contain"
-                    playsInline
-                    onError={() => setVideoError(true)}
-                  />
-                  {/* Status Overlay */}
-                  <div className="absolute top-4 left-4 z-20 pointer-events-none transition-opacity group-hover/player:opacity-100 opacity-20 group-hover/player:delay-100">
-                    <div className="flex items-center gap-2 bg-black/60 px-3 py-1.5 rounded-sm border border-vault-accent/30 backdrop-blur-md">
-                      <div className="w-2 h-2 rounded-full bg-vault-accent animate-pulse" />
-                      <span className="text-[10px] font-mono font-bold text-vault-accent uppercase tracking-widest">
-                        Vault Stream: {playingVideo.quality || playingVideo.resolution || 'AUTO'}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ) : videoError ? (
-                <div className="text-center space-y-4 p-6">
-                  <Icons.AlertIcon className="mx-auto text-yellow-500" size={48} />
-                  <div>
-                    <h4 className="text-vault-text font-bold text-lg mb-1">Playback Failed</h4>
-                    <p className="text-vault-muted text-sm">The media link may have expired or is blocked by CORS.</p>
-                  </div>
-                  <div className="flex justify-center gap-3 mt-4">
-                    <button 
-                      className="vault-btn text-sm px-4 py-2 flex items-center gap-2"
-                      onClick={async () => {
-                        if (!playingVideo) return;
-                        setIsRefreshing(true);
-                        setVideoError(false);
-                        try {
-                          const response = (await browser.runtime.sendMessage({
-                            action: "extract_fresh_m3u8",
-                            url: playingVideo.url
-                          })) as { src: string | null };
-                          
-                          if (response && response.src) {
-                            // Update the video in local state
-                            const updated = { ...playingVideo, rawVideoSrc: response.src };
-                            setPlayingVideo(updated);
-                            
-                            // Update in permanent storage
-                            const all = await getSavedVideos();
-                            const idx = all.findIndex(v => v.url === playingVideo.url);
-                            if (idx !== -1) {
-                              all[idx].rawVideoSrc = response.src;
-                              await saveVideos(all);
-                              setItems(all);
-                            }
-                          } else {
-                            setVideoError(true);
-                          }
-                        } catch (err) {
-                          console.error("Failed to refresh video link", err);
-                          setToastMessage({ msg: "Failed to refresh video link.", type: "error" });
-                          setVideoError(true);
-                        } finally {
-                          setIsRefreshing(false);
-                        }
-                      }}
-                      disabled={isRefreshing}
-                    >
-                      {isRefreshing ? 'Refreshing Link...' : 'Try Refreshing Link'}
-                    </button>
-                    <a 
-                      href={playingVideo.url} 
-                      target="_blank" 
-                      rel="noreferrer"
-                      className="vault-btn text-sm px-4 py-2 bg-vault-accent text-vault-bg flex items-center gap-2 hover:bg-vault-accentHover"
-                    >
-                      Open Original Page
-                    </a>
-                  </div>
-                </div>
-              ) : (
-                <video 
-                  src={playingVideo.rawVideoSrc || undefined} 
-                  controls 
-                  autoPlay
-                  className="w-full h-full outline-none"
-                  onError={() => setVideoError(true)}
-                >
-                  <source src={playingVideo.rawVideoSrc || undefined} />
-                </video>
-              )}
-            </div>
-            
-            {/* Modal Footer / Metadata */}
-            <div className="p-4 bg-vault-cardBg flex items-center justify-between text-sm text-vault-muted">
-              <div>
-                <span className="font-semibold text-vault-text">{playingVideo.domain || getDomainFromUrl(playingVideo.url)}</span>
-                {playingVideo.author && <span className="ml-2 px-2 border-l border-vault-border">By: {playingVideo.author}</span>}
-              </div>
-              <div className="font-mono text-xs">
-                {dateTimeFormatter.format(playingVideo.timestamp)}
-              </div>
-            </div>
-          </div>
-        </div>
+        <VideoPlayer
+          video={playingVideo}
+          playlist={items.filter((item: VideoData) => item.type === 'video')}
+          onClose={() => { setPlayingVideo(null); setIsDimmed(false); }}
+          onSelectVideo={(video) => setPlayingVideo(video)}
+          onRefresh={async () => {
+            setIsRefreshing(true);
+            try {
+              const response = (await browser.runtime.sendMessage({
+                action: "extract_fresh_m3u8",
+                url: playingVideo.url
+              })) as { src: string | null };
+              
+              if (response && response.src) {
+                const updated = { ...playingVideo, rawVideoSrc: response.src };
+                setPlayingVideo(updated);
+                
+                const all = await getSavedVideos();
+                const idx = all.findIndex(v => v.url === playingVideo.url);
+                if (idx !== -1) {
+                  all[idx].rawVideoSrc = response.src;
+                  await saveVideos(all);
+                  setItems(all);
+                }
+              }
+            } catch (err) {
+              console.error("Failed to refresh video link", err);
+              setToastMessage({ msg: "Failed to refresh video link.", type: "error" });
+            } finally {
+              setIsRefreshing(false);
+            }
+          }}
+          isRefreshing={isRefreshing}
+        />
       )}
 
       {/* PIN SETUP MODAL */}
-      {pinSetupOpen && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-sm">
-          <div className="bg-vault-bg border border-vault-border rounded-lg shadow-2xl p-6 w-80 flex flex-col items-center gap-5 animate-in zoom-in-95 duration-200">
-            <div className="relative">
-              <Icons.PinIcon size={28} className="text-vault-accent" />
-              <div className="absolute -inset-1 blur-lg bg-vault-accent/20 rounded-full" />
-            </div>
-            <div className="text-center">
-              <h3 className="text-sm font-black uppercase tracking-widest text-vault-text">Set New PIN</h3>
-              <p className="text-[10px] text-vault-muted mt-1">Enter a {pinSetupLength}-digit security sequence</p>
-            </div>
-
-            {/* Length selector */}
-            <div className="flex gap-2 w-full">
-              {([4, 6] as const).map(len => (
-                <button
-                  key={len}
-                  onClick={() => handlePinSetupLengthChange(len)}
-                  className={cn(
-                    "flex-1 py-1 text-[10px] font-black rounded-sm border transition-all",
-                    pinSetupLength === len
-                      ? "bg-vault-accent border-vault-accent text-vault-bg"
-                      : "bg-transparent border-vault-border text-vault-muted hover:border-vault-muted"
-                  )}
-                >
-                  {len} DIGITS
-                </button>
-              ))}
-            </div>
-
-            {/* PIN boxes */}
-            <div className="flex gap-3 justify-center">
-              {pinSetupBoxes.map((digit, idx) => (
-                <input
-                  key={`${pinSetupLength}-${idx}`}
-                  ref={el => { pinSetupRefs.current[idx] = el; }}
-                  type="password"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={1}
-                  value={digit}
-                  onChange={e => handlePinSetupChange(idx, e.target.value)}
-                  onKeyDown={e => handlePinSetupKeyDown(idx, e)}
-                  className={cn(
-                    "w-10 h-14 bg-vault-cardBg/50 border-2 rounded-xl text-center text-xl font-bold",
-                    "focus:border-vault-accent focus:bg-vault-accent/5 outline-none transition-all",
-                    pinSetupError ? 'border-red-500/50' : 'border-vault-border/50',
-                    digit ? 'border-vault-accent/50 scale-105 shadow-[0_0_12px_-4px_var(--vault-accent)]' : ''
-                  )}
-                  autoFocus={idx === 0}
-                />
-              ))}
-            </div>
-
-            {pinSetupError && (
-              <p className="text-[10px] font-black text-red-500 uppercase tracking-tight animate-in slide-in-from-top-1">
-                Enter exactly {pinSetupLength} numeric digits
-              </p>
-            )}
-
-            <div className="flex gap-3 w-full mt-1">
-              <button
-                onClick={cancelPinSetup}
-                className="flex-1 px-4 py-2 text-xs font-bold text-vault-muted hover:text-vault-text border border-vault-border rounded hover:border-vault-muted transition-all"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmPinSetup}
-                className="flex-1 px-4 py-2 text-xs font-black bg-vault-accent text-vault-bg rounded hover:bg-vault-accentHover transition-all"
-              >
-                Activate PIN
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <PinSetupDialog
+        isOpen={pinSetupOpen}
+        onClose={() => setPinSetupOpen(false)}
+        onSuccess={async (length) => {
+          const updated = { ...pinSettings, enabled: true, length, lastUnlocked: Date.now() };
+          await savePinSettings(updated);
+          setPinSettings(updated);
+          setToastMessage({ msg: `${length}-digit PIN activated.`, type: 'success' });
+        }}
+        onError={(err) => setToastMessage({ msg: err, type: 'error' })}
+      />
     </div>
   );
 };

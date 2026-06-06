@@ -20,7 +20,6 @@
 import browser from 'webextension-polyfill';
 import { savePreview } from '../lib/vault-client';
 let _sandboxIframe = null;
-let _ffmpegCoreBytes = null;
 let _sandboxReady = false;
 let _initPromise = null;
 const _pending = new Map();
@@ -51,16 +50,6 @@ function createSandboxIframe() {
 }
 async function initSandbox() {
     const iframe = await createSandboxIframe();
-    // Fetch FFmpeg core files (only once per offscreen document lifetime).
-    if (!_ffmpegCoreBytes) {
-        const [js, wasm] = await Promise.all([
-            fetch(browser.runtime.getURL('ffmpeg-core/ffmpeg-core.js')).then(r => r.arrayBuffer()),
-            fetch(browser.runtime.getURL('ffmpeg-core/ffmpeg-core.wasm')).then(r => r.arrayBuffer()),
-        ]);
-        _ffmpegCoreBytes = { js, wasm };
-    }
-    // Send init message.  Do NOT transfer the buffers — processor must keep
-    // its copy so it can re-initialize a new sandbox if the iframe is torn down.
     await new Promise((resolve, reject) => {
         const id = '_init_' + Date.now();
         const timeoutId = setTimeout(() => {
@@ -72,7 +61,13 @@ async function initSandbox() {
             reject: (e) => { clearTimeout(timeoutId); reject(e); },
         });
         console.log("[VaultProcessor] Sending vc_init to sandbox iframe...");
-        iframe.contentWindow.postMessage({ type: 'vc_init', id, jsBytes: _ffmpegCoreBytes.js, wasmBytes: _ffmpegCoreBytes.wasm }, '*');
+        iframe.contentWindow.postMessage({
+            type: 'vc_init',
+            id,
+            coreURL: browser.runtime.getURL('ffmpeg-core/ffmpeg-core.js'),
+            wasmURL: browser.runtime.getURL('ffmpeg-core/ffmpeg-core.wasm'),
+            workerURL: browser.runtime.getURL('ffmpeg-core/ffmpeg-worker.js'),
+        }, '*');
     });
 }
 /**
@@ -98,14 +93,15 @@ async function ensureSandbox() {
 // ────────────────────────────────────────────────────────────
 // Video processing
 // ────────────────────────────────────────────────────────────
-async function processVideoPreview(mediaUrl, duration) {
-    console.log("[VaultProcessor] Starting preview generation for:", mediaUrl);
+async function processVideoPreviewFFmpeg(mediaUrl, duration) {
+    console.log("[VaultProcessor] Starting FFmpeg sandbox preview generation for:", mediaUrl);
     if (mediaUrl.includes('.m3u8') || mediaUrl.includes('manifest')) {
         console.warn("[VaultProcessor] HLS/M3U8 is not supported natively.");
         return null;
     }
     try {
-        console.log("[VaultProcessor] Fetching video...");
+        const iframe = await ensureSandbox();
+        console.log("[VaultProcessor] Fetching video bytes for sandbox...");
         const response = await fetch(mediaUrl, {
             headers: { "User-Agent": navigator.userAgent }
         });
@@ -113,109 +109,158 @@ async function processVideoPreview(mediaUrl, duration) {
             console.error("[VaultProcessor] Fetch failed:", response.status);
             return null;
         }
-        const videoBlob = await response.blob();
-        console.log("[VaultProcessor] Fetched bytes:", videoBlob.size, "type:", videoBlob.type);
-        if (videoBlob.size < 1000) {
-            console.error("[VaultProcessor] Fetched blob is too small (403 block?).");
+        const videoBuffer = await response.arrayBuffer();
+        console.log("[VaultProcessor] Fetched bytes:", videoBuffer.byteLength);
+        if (videoBuffer.byteLength < 1000) {
+            console.error("[VaultProcessor] Fetched video is too small (403 block?).");
             return null;
         }
-        const objectUrl = URL.createObjectURL(videoBlob);
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve) => {
+            const id = 'proc_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
             const timeoutId = setTimeout(() => {
-                URL.revokeObjectURL(objectUrl);
-                console.error("[VaultProcessor] Native preview generation timed out");
-                reject(new Error('[VaultProcessor] Native preview generation timed out'));
-            }, 120_000);
-            const video = document.createElement('video');
-            video.muted = true;
-            video.playsInline = true;
-            video.src = objectUrl;
-            video.addEventListener('loadedmetadata', async () => {
-                console.log("[VaultProcessor] loadedmetadata fired, duration:", video.duration);
-                const canvas = document.createElement('canvas');
-                canvas.width = 426; // 240p
-                canvas.height = 240;
-                const ctx = canvas.getContext('2d');
-                if (!ctx) {
+                _pending.delete(id);
+                console.error("[VaultProcessor] FFmpeg sandbox process timed out");
+                resolve(null);
+            }, 180_000); // 3 minutes timeout for heavy transcoding
+            _pending.set(id, {
+                resolve: (bytes) => {
                     clearTimeout(timeoutId);
-                    URL.revokeObjectURL(objectUrl);
-                    if (video.parentNode)
-                        video.parentNode.removeChild(video);
-                    return resolve(null);
-                }
-                try {
-                    let start = (video.duration && isFinite(video.duration)) ? video.duration * 0.1 : 0;
-                    if (start > 120)
-                        start = Math.min(start, 30);
-                    video.currentTime = start;
-                    const stream = canvas.captureStream(10);
-                    let recorder;
-                    try {
-                        recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
+                    if (bytes) {
+                        resolve(new Blob([bytes], { type: 'video/webm' }));
                     }
-                    catch (e) {
-                        recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+                    else {
+                        resolve(null);
                     }
-                    const chunks = [];
-                    recorder.ondataavailable = e => { if (e.data.size > 0)
-                        chunks.push(e.data); };
-                    recorder.onstop = () => {
-                        clearTimeout(timeoutId);
-                        stream.getTracks().forEach(t => t.stop());
-                        if (video.parentNode)
-                            video.parentNode.removeChild(video);
-                        URL.revokeObjectURL(objectUrl);
-                        if (chunks.length > 0) {
-                            console.log("[VaultProcessor] Output generated:", chunks.reduce((acc, c) => acc + c.size, 0), "bytes");
-                            resolve(new Blob(chunks, { type: 'video/webm' }));
-                        }
-                        else {
-                            console.error("[VaultProcessor] No chunks from MediaRecorder");
-                            resolve(null);
-                        }
-                    };
-                    recorder.start(1000);
-                    // Step through frames manually to avoid autoplay blocks completely
-                    const frameCount = 30; // 3 seconds at 10 fps
-                    const step = 0.1; // 100ms
-                    for (let i = 0; i < frameCount; i++) {
-                        await new Promise(r => {
-                            video.addEventListener('seeked', r, { once: true });
-                            setTimeout(r, 1000);
-                        });
-                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                        if (i < frameCount - 1) {
-                            video.currentTime += step;
-                            await new Promise(r => setTimeout(r, 100)); // allow interval encoding
-                        }
-                    }
-                    recorder.stop();
-                }
-                catch (e) {
-                    console.error("[VaultProcessor] Processing loop failed:", e);
+                },
+                reject: (err) => {
                     clearTimeout(timeoutId);
-                    URL.revokeObjectURL(objectUrl);
-                    if (video.parentNode)
-                        video.parentNode.removeChild(video);
+                    console.error("[VaultProcessor] Sandbox run rejected:", err);
                     resolve(null);
                 }
             });
-            video.addEventListener('error', (e) => {
-                console.error("[VaultProcessor] Video load error for native processing", video.error);
-                clearTimeout(timeoutId);
-                URL.revokeObjectURL(objectUrl);
-                if (video.parentNode)
-                    video.parentNode.removeChild(video);
-                resolve(null);
-            });
-            // Do not append to body. video.load() without appending causes no autoplay constraints
-            video.load();
+            console.log("[VaultProcessor] Sending vc_process to sandbox iframe. id:", id);
+            iframe.contentWindow.postMessage({ type: 'vc_process', id, videoBytes: videoBuffer, duration }, '*', [videoBuffer] // Transfer the ArrayBuffer to avoid copying!
+            );
         });
     }
     catch (e) {
-        console.error("[VaultProcessor] Fallback processor failed during fetch:", e);
+        console.error("[VaultProcessor] Sandbox preview generation failed:", e);
         return null;
     }
+}
+async function processVideoPreview(mediaUrl, duration) {
+    console.log("[VaultProcessor] Starting native WebP frame preview generation for:", mediaUrl);
+    return new Promise((resolve) => {
+        const video = document.createElement('video');
+        video.crossOrigin = 'anonymous';
+        video.muted = true;
+        video.playsInline = true;
+        video.src = mediaUrl;
+        const canvas = document.createElement('canvas');
+        canvas.width = 426;
+        canvas.height = 240;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            console.error("[VaultProcessor] Canvas 2d context not available");
+            return resolve(null);
+        }
+        let isResolved = false;
+        let timeoutId = null;
+        const cleanup = () => {
+            if (timeoutId)
+                clearTimeout(timeoutId);
+            video.pause();
+            video.src = '';
+            video.load();
+        };
+        const finish = (blob) => {
+            if (isResolved)
+                return;
+            isResolved = true;
+            cleanup();
+            resolve(blob);
+        };
+        // 3-minute hard timeout
+        timeoutId = setTimeout(() => {
+            console.error("[VaultProcessor] Preview generation timed out");
+            finish(null);
+        }, 180000);
+        video.addEventListener('error', (e) => {
+            console.error("[VaultProcessor] Video element encountered error:", video.error);
+            finish(null);
+        });
+        video.addEventListener('loadedmetadata', async () => {
+            try {
+                const vidDuration = (video.duration && !isNaN(video.duration) && video.duration > 0) ? video.duration : duration;
+                const startOffset = vidDuration * 0.1;
+                const endOffset = vidDuration * 0.9;
+                const segmentLength = (endOffset - startOffset) / 9;
+                // Play briefly to make sure rendering frames is initialized
+                await video.play().catch(() => { });
+                video.pause();
+                const frames = [];
+                for (let i = 0; i < 10; i++) {
+                    const targetTime = startOffset + (i * segmentLength);
+                    video.currentTime = targetTime;
+                    await new Promise(r => {
+                        let seekDone = false;
+                        let seekTimeout = null;
+                        const done = () => {
+                            if (seekDone)
+                                return;
+                            seekDone = true;
+                            video.removeEventListener('seeked', onSeeked);
+                            if (seekTimeout)
+                                clearTimeout(seekTimeout);
+                            r(null);
+                        };
+                        const onSeeked = () => { done(); };
+                        video.addEventListener('seeked', onSeeked);
+                        seekTimeout = setTimeout(done, 2000); // 2s timeout per seek
+                    });
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    // Simple check if canvas center pixel throws security error (CORS block)
+                    try {
+                        ctx.getImageData(canvas.width / 2, canvas.height / 2, 1, 1);
+                        const frameData = canvas.toDataURL('image/webp', 0.5);
+                        frames.push(frameData);
+                    }
+                    catch (err) {
+                        console.warn("[VaultProcessor] Canvas tainted, CORS block on video source:", err);
+                        return finish(null); // Tainted canvas -> return null to fallback
+                    }
+                }
+                if (frames.length === 0) {
+                    return finish(null);
+                }
+                // Verify the center pixel has color content
+                let hasContent = false;
+                try {
+                    const sample = ctx.getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data;
+                    if (sample[0] > 8 || sample[1] > 8 || sample[2] > 8) {
+                        hasContent = true;
+                    }
+                }
+                catch { }
+                if (!hasContent) {
+                    console.warn("[VaultProcessor] Frames are entirely black/empty.");
+                    return finish(null);
+                }
+                const payload = {
+                    isFrames: true,
+                    frames: frames
+                };
+                const jsonStr = JSON.stringify(payload);
+                const blob = new Blob([jsonStr], { type: 'application/json' });
+                console.log("[VaultProcessor] Successfully generated JSON frames preview. Size:", blob.size, "bytes");
+                finish(blob);
+            }
+            catch (err) {
+                console.error("[VaultProcessor] Error extracting frames:", err);
+                finish(null);
+            }
+        });
+    });
 }
 // ────────────────────────────────────────────────────────────
 // Runtime message handler (called by background.ts)

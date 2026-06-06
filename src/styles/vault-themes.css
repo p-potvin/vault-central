@@ -1,104 +1,34 @@
 [data-theme="vault-theme-golden-slate"] {
-  --vault-bg: #2E3538;
+  --vault-bg: #002B36;
   --vault-text: #F3F4F6;
-  --vault-border: #42494c;
+  --vault-border: #143f4a;
   --vault-card-bg: rgba(0,0,0,0.5);
   --vault-muted: #A0AEC0;
-  --vault-accent: #D4AF37;
-  --vault-accent-hover: #e8c34b;
+  --vault-accent: #CC9B21;
+  --vault-accent-hover: #e0af35;
 }
 
-[data-theme="vault-theme-codex-solarized-light-revisited"] {
+[data-theme="vault-theme-codex-solar-light"] {
   --vault-bg: #FDF6E3;
   --vault-text: #1A202C;
   --vault-border: #e9e2cf;
   --vault-card-bg: rgba(255,255,255,0.7);
   --vault-muted: #718096;
-  --vault-accent: #268BD2;
-  --vault-accent-hover: #1277be;
+  --vault-accent: #CC9B21;
+  --vault-accent-hover: #b8870d;
 }
 
-[data-theme="vault-theme-cyberpunk-cinder"] {
-  --vault-bg: #0A1520;
-  --vault-text: #F3F4F6;
-  --vault-border: #1e2934;
-  --vault-card-bg: rgba(0,0,0,0.5);
-  --vault-muted: #A0AEC0;
-  --vault-accent: #CB4B16;
-  --vault-accent-hover: #df5f2a;
-}
-
-[data-theme="vault-theme-vintage-velvet"] {
-  --vault-bg: #F5F0E8;
+[data-theme="vault-theme-catppuccin-·-latte"] {
+  --vault-bg: #EFF1F5;
   --vault-text: #1A202C;
-  --vault-border: #e1dcd4;
+  --vault-border: #dbdde1;
   --vault-card-bg: rgba(255,255,255,0.7);
   --vault-muted: #718096;
-  --vault-accent: #800020;
-  --vault-accent-hover: #6c000c;
+  --vault-accent: #8839EF;
+  --vault-accent-hover: #7425db;
 }
 
-[data-theme="vault-theme-modern-monolith"] {
-  --vault-bg: #F8F7F4;
-  --vault-text: #1A202C;
-  --vault-border: #e4e3e0;
-  --vault-card-bg: rgba(255,255,255,0.7);
-  --vault-muted: #718096;
-  --vault-accent: #1A1A1A;
-  --vault-accent-hover: #060606;
-}
-
-[data-theme="vault-theme-neon-void"] {
-  --vault-bg: #0D0D0D;
-  --vault-text: #F3F4F6;
-  --vault-border: #212121;
-  --vault-card-bg: rgba(0,0,0,0.5);
-  --vault-muted: #A0AEC0;
-  --vault-accent: #00E5FF;
-  --vault-accent-hover: #14f9ff;
-}
-
-[data-theme="vault-theme-ocean-mist"] {
-  --vault-bg: #EEF2F5;
-  --vault-text: #1A202C;
-  --vault-border: #dadee1;
-  --vault-card-bg: rgba(255,255,255,0.7);
-  --vault-muted: #718096;
-  --vault-accent: #006994;
-  --vault-accent-hover: #005580;
-}
-
-[data-theme="vault-theme-royal-tangerine"] {
-  --vault-bg: #1A0A2E;
-  --vault-text: #F3F4F6;
-  --vault-border: #2e1e42;
-  --vault-card-bg: rgba(0,0,0,0.5);
-  --vault-muted: #A0AEC0;
-  --vault-accent: #F28500;
-  --vault-accent-hover: #ff9914;
-}
-
-[data-theme="vault-theme-crimson-bloom"] {
-  --vault-bg: #2A0A0A;
-  --vault-text: #F3F4F6;
-  --vault-border: #3e1e1e;
-  --vault-card-bg: rgba(0,0,0,0.5);
-  --vault-muted: #A0AEC0;
-  --vault-accent: #E8A0B4;
-  --vault-accent-hover: #fcb4c8;
-}
-
-[data-theme="vault-theme-amethyst-frost"] {
-  --vault-bg: #FAFAFE;
-  --vault-text: #1A202C;
-  --vault-border: #e6e6ea;
-  --vault-card-bg: rgba(255,255,255,0.7);
-  --vault-muted: #718096;
-  --vault-accent: #6B30A8;
-  --vault-accent-hover: #571c94;
-}
-
-[data-theme="vault-theme-catppuccin-mocha"] {
+[data-theme="vault-theme-catppuccin-·-mocha"] {
   --vault-bg: #1E1E2E;
   --vault-text: #F3F4F6;
   --vault-border: #323242;
@@ -108,42 +38,102 @@
   --vault-accent-hover: #dfbaff;
 }
 
-[data-theme="vault-theme-dracula"] {
+[data-theme="vault-theme-monokai-vault"] {
+  --vault-bg: #272822;
+  --vault-text: #F3F4F6;
+  --vault-border: #3b3c36;
+  --vault-card-bg: rgba(0,0,0,0.5);
+  --vault-muted: #A0AEC0;
+  --vault-accent: #F92672;
+  --vault-accent-hover: #ff3a86;
+}
+
+[data-theme="vault-theme-dracula-vault"] {
   --vault-bg: #282A36;
   --vault-text: #F3F4F6;
   --vault-border: #3c3e4a;
   --vault-card-bg: rgba(0,0,0,0.5);
   --vault-muted: #A0AEC0;
-  --vault-accent: #FF79C6;
-  --vault-accent-hover: #ff8dda;
+  --vault-accent: #BD93F9;
+  --vault-accent-hover: #d1a7ff;
 }
 
-[data-theme="vault-theme-tokyo-night-storm"] {
-  --vault-bg: #24283B;
+[data-theme="vault-theme-nord-vault"] {
+  --vault-bg: #2E3440;
   --vault-text: #F3F4F6;
-  --vault-border: #383c4f;
+  --vault-border: #424854;
+  --vault-card-bg: rgba(0,0,0,0.5);
+  --vault-muted: #A0AEC0;
+  --vault-accent: #88C0D0;
+  --vault-accent-hover: #9cd4e4;
+}
+
+[data-theme="vault-theme-tokyo-night-vault"] {
+  --vault-bg: #1A1B26;
+  --vault-text: #F3F4F6;
+  --vault-border: #2e2f3a;
   --vault-card-bg: rgba(0,0,0,0.5);
   --vault-muted: #A0AEC0;
   --vault-accent: #7AA2F7;
   --vault-accent-hover: #8eb6ff;
 }
 
-[data-theme="vault-theme-github-light-default"] {
-  --vault-bg: #FFFFFF;
+[data-theme="vault-theme-gruvbox-vault-·-dark"] {
+  --vault-bg: #1D2021;
+  --vault-text: #F3F4F6;
+  --vault-border: #313435;
+  --vault-card-bg: rgba(0,0,0,0.5);
+  --vault-muted: #A0AEC0;
+  --vault-accent: #FABD2F;
+  --vault-accent-hover: #ffd143;
+}
+
+[data-theme="vault-theme-gruvbox-vault-·-light"] {
+  --vault-bg: #FBF1C7;
   --vault-text: #1A202C;
-  --vault-border: #ebebeb;
+  --vault-border: #e7ddb3;
+  --vault-card-bg: rgba(255,255,255,0.7);
+  --vault-muted: #718096;
+  --vault-accent: #B57614;
+  --vault-accent-hover: #a16200;
+}
+
+[data-theme="vault-theme-rosé-pine"] {
+  --vault-bg: #191724;
+  --vault-text: #F3F4F6;
+  --vault-border: #2d2b38;
+  --vault-card-bg: rgba(0,0,0,0.5);
+  --vault-muted: #A0AEC0;
+  --vault-accent: #EBBCBA;
+  --vault-accent-hover: #ffd0ce;
+}
+
+[data-theme="vault-theme-one-dark-vault"] {
+  --vault-bg: #282C34;
+  --vault-text: #F3F4F6;
+  --vault-border: #3c4048;
+  --vault-card-bg: rgba(0,0,0,0.5);
+  --vault-muted: #A0AEC0;
+  --vault-accent: #61AFEF;
+  --vault-accent-hover: #75c3ff;
+}
+
+[data-theme="vault-theme-ayu-vault-·-light"] {
+  --vault-bg: #FAFAF7;
+  --vault-text: #1A202C;
+  --vault-border: #e6e6e3;
+  --vault-card-bg: rgba(255,255,255,0.7);
+  --vault-muted: #718096;
+  --vault-accent: #FA8D3E;
+  --vault-accent-hover: #e6792a;
+}
+
+[data-theme="vault-theme-github-vault-·-light"] {
+  --vault-bg: #FAFAF7;
+  --vault-text: #1A202C;
+  --vault-border: #e6e6e3;
   --vault-card-bg: rgba(255,255,255,0.7);
   --vault-muted: #718096;
   --vault-accent: #0969DA;
   --vault-accent-hover: #0055c6;
-}
-
-[data-theme="vault-theme-monokai-pro"] {
-  --vault-bg: #2D2A2E;
-  --vault-text: #F3F4F6;
-  --vault-border: #413e42;
-  --vault-card-bg: rgba(0,0,0,0.5);
-  --vault-muted: #A0AEC0;
-  --vault-accent: #FFD866;
-  --vault-accent-hover: #ffec7a;
 }

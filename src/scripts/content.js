@@ -145,7 +145,7 @@ async function highlightVaultItems() {
  */
 const activeNotifications = new Map();
 const MAX_CONCURRENT_NOTIFICATIONS = 5;
-function showVaultNotification(type, message, id, targetElement = null) {
+function showVaultNotification(type, message, id, targetElement) {
     const portalId = id || `vault-notification-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     // If we have an existing notification with this ID (e.g. updating processing -> success), reuse it
     let el = activeNotifications.get(portalId);
@@ -442,7 +442,6 @@ function startCaptureFlow() {
     const titleHint = (target.localMeta.title?.substring(0, 28))
         || target.url.split('/').pop()?.substring(0, 28)
         || 'Item';
-
     // Pass the explicitly resolved element to avoid asynchronous displacement
     const targetElement = target.element?.closest("a") || target.element;
     showVaultNotification('success', `Added to Vault: ${titleHint}`, undefined, targetElement);

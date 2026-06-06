@@ -3,106 +3,34 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
-    /* Default: Theme 3 - Dark Gray | Gold Yellow */
-    --vault-bg: #4A5459;
-    --vault-text: #F3F4F6;
-    --vault-border: #3A4247;
-    --vault-card-bg: rgba(43, 49, 53, 0.65);
-    --vault-muted: #9CA3AF;
-    --vault-accent: #cc9b21;
-    --vault-accent-hover: #e0ac2b;
-    --vault-font: 'Segoe UI Semilight', 'Segoe UI', system-ui, sans-serif;
-  }
+  :root,
+  [data-theme] {
+    /* Warm Mode / Document State by default for the entire dashboard */
+    --vault-bg: #F5F1E8;
+    --vault-text: #161320;
+    --vault-border: rgba(22, 19, 32, 0.08);
+    --vault-card-bg: #FCFAF5;
+    --vault-muted: #8c8273;
+    --vault-accent: #D6A441;
+    --vault-accent-hover: #c1902f;
+    --vault-font: "Inter", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
 
-  [data-theme="vault-theme-burgundy-beige"] { /* 1. light theme | light beige | burgundy */
-    --vault-bg: #F5F5DC;
-    --vault-text: #2D3748;
-    --vault-border: #D2D2B4;
-    --vault-card-bg: rgba(255, 255, 255, 0.6);
-    --vault-muted: #718096;
-    --vault-accent: #800020;
-    --vault-accent-hover: #990026;
-  }
+    /* Console Mode / Terminal State */
+    --vault-console-bg: #161320;
+    --vault-console-surface: #1F1A2B;
+    --vault-console-raised: #2A2340;
+    --vault-console-elevated: #31274A;
+    --vault-console-border-subtle: rgba(255, 255, 255, 0.06);
+    --vault-console-text-secondary: rgba(237, 230, 255, 0.72);
+    --vault-console-gold: #D6A441;
+    --vault-console-violet: #B07CFF;
 
-  [data-theme="vault-theme-solarized-orange"] { /* 2. dark theme | Solarized base02 | Solarized orange */
-    --vault-bg: #073642; 
-    --vault-text: #93a1a1; 
-    --vault-border: #002b36; 
-    --vault-card-bg: rgba(0, 43, 54, 0.7);
-    --vault-muted: #586e75; 
-    --vault-accent: #cb4b16; 
-    --vault-accent-hover: #e35a22;
-  }
-
-  [data-theme="vault-theme-gold-dark"] { /* 3. dark theme | dark gray | gold yellow */
-    --vault-bg: #4A5459;
-    --vault-text: #F3F4F6;
-    --vault-border: #3A4247;
-    --vault-card-bg: rgba(43, 49, 53, 0.65);
-    --vault-muted: #9CA3AF;
-    --vault-accent: #cc9b21;
-    --vault-accent-hover: #e0ac2b;
-  }
-
-  [data-theme="vault-theme-grayscale-light"] { /* 4. light theme | off-white | darker gray */
-    --vault-bg: #FAF9F6;
-    --vault-text: #1A202C;
-    --vault-border: #E2E8F0;
-    --vault-card-bg: rgba(255, 255, 255, 0.8);
-    --vault-muted: #A0AEC0;
-    --vault-accent: #4A5568;
-    --vault-accent-hover: #2D3748;
-  }
-
-  [data-theme="vault-theme-rosy-red"] { /* 5. dark theme | red | light pink */
-    --vault-bg: #3b0000; 
-    --vault-text: #FFF0F5;
-    --vault-border: #290000;
-    --vault-card-bg: rgba(0, 0, 0, 0.3);
-    --vault-muted: #D8B4E2;
-    --vault-accent: #FFB6C1;
-    --vault-accent-hover: #FFC0CB;
-  }
-
-  [data-theme="vault-theme-ocean-light"] { /* 6. light theme | light gray | deep blue sea */
-    --vault-bg: #EAEAEA;
-    --vault-text: #1A202C;
-    --vault-border: #D1D5DB;
-    --vault-card-bg: rgba(255, 255, 255, 0.6);
-    --vault-muted: #718096;
-    --vault-accent: #006994;
-    --vault-accent-hover: #0081B4;
-  }
-
-  [data-theme="vault-theme-neon-dark"] { /* 7. dark theme | light black | logo's color (cyan or bright green) */
-    --vault-bg: #1C1C1C;
-    --vault-text: #E2E8F0;
-    --vault-border: #2D3748;
-    --vault-card-bg: rgba(0, 0, 0, 0.5);
-    --vault-muted: #A0AEC0;
-    --vault-accent: #00F3FF; 
-    --vault-accent-hover: #33F5FF;
-  }
-
-  [data-theme="vault-theme-sunset-purple"] { /* 8. dark theme | dark purple | bright orange */
-    --vault-bg: #2B1B3D;
-    --vault-text: #F3F4F6;
-    --vault-border: #1E122C;
-    --vault-card-bg: rgba(25, 15, 38, 0.6);
-    --vault-muted: #A0AEC0;
-    --vault-accent: #FF8A00;
-    --vault-accent-hover: #FFA233;
-  }
-
-  [data-theme="vault-theme-royal-light"] { /* 9. light theme | pale white | bright purple */
-    --vault-bg: #FDFAFF; 
-    --vault-text: #2D3748;
-    --vault-border: #E9DEEF;
-    --vault-card-bg: rgba(255, 255, 255, 0.8);
-    --vault-muted: #718096;
-    --vault-accent: #8A2BE2;
-    --vault-accent-hover: #9B30FF;
+    /* 5 LED signal colors */
+    --vault-signal-online: #6BE675;
+    --vault-signal-relay: #55D6FF;
+    --vault-signal-sync: #B07CFF;
+    --vault-signal-warning: #F0B94B;
+    --vault-signal-alert: #FF6B7A;
   }
 
   /* Motion system — keep these tight and consistent across the app.
@@ -178,30 +106,26 @@
   border-color: color-mix(in srgb, var(--vault-accent) 35%, var(--vault-border));
 }
 
-/* Button base. No uppercase; relies on weight and a quiet hover shift
- * (background tint, not full inversion). Active state nudges down 1px to
- * give a tactile "press" without animating layout for non-presses. */
-.vault-btn {
-  @apply inline-flex items-center justify-center gap-2 px-3.5 py-1.5 border border-vault-border bg-transparent text-vault-text text-[12px] font-medium tracking-tight;
-  border-radius: var(--vault-radius-sm);
-  transition:
-    background-color var(--vault-dur-fast) var(--vault-ease-soft),
-    border-color var(--vault-dur-fast) var(--vault-ease-soft),
-    color var(--vault-dur-fast) var(--vault-ease-soft),
-    transform var(--vault-dur-fast) var(--vault-ease-soft);
-}
-.vault-btn:hover {
-  background-color: color-mix(in srgb, var(--vault-accent) 12%, transparent);
-  border-color: color-mix(in srgb, var(--vault-accent) 60%, var(--vault-border));
-  color: var(--vault-text);
-}
-.vault-btn:active {
-  transform: translateY(0.5px);
-  background-color: color-mix(in srgb, var(--vault-accent) 18%, transparent);
-}
-.vault-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+@layer components {
+  /* Button base. No uppercase; relies on weight and a quiet hover shift
+   * (background tint, not full inversion). Active state nudges down 1px to
+   * give a tactile "press" without animating layout for non-presses. */
+  .vault-btn {
+    @apply inline-flex items-center justify-center gap-2 px-3.5 py-1.5 border border-vault-border bg-transparent text-vault-text text-[12px] font-medium tracking-tight hover:text-vault-text active:translate-y-[0.5px] disabled:opacity-45 disabled:cursor-not-allowed;
+    border-radius: var(--vault-radius-sm);
+    transition:
+      background-color var(--vault-dur-fast) var(--vault-ease-soft),
+      border-color var(--vault-dur-fast) var(--vault-ease-soft),
+      color var(--vault-dur-fast) var(--vault-ease-soft),
+      transform var(--vault-dur-fast) var(--vault-ease-soft);
+  }
+  .vault-btn:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--vault-accent) 12%, transparent);
+    border-color: color-mix(in srgb, var(--vault-accent) 60%, transparent);
+  }
+  .vault-btn:active:not(:disabled) {
+    background-color: color-mix(in srgb, var(--vault-accent) 18%, transparent);
+  }
 }
 
 /* Fix Lucide SVG icons inside all button contexts.

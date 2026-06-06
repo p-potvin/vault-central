@@ -20,7 +20,7 @@ import {
   type UnlockedVault,
   type VaultMaterial,
   type KemAlgorithm,
-} from '../../vault-themes/security/crypto-vault';
+} from '../../vaultwares-themes/security/crypto-vault';
 import {
   bytesToBase64,
   base64ToBytes,
