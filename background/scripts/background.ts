@@ -133,6 +133,12 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
     let tabUpdateListener: ((tabId: number, info: browser.Tabs.OnUpdatedChangeInfoType) => void) | null = null;
     let globalTimeoutId: ReturnType<typeof setTimeout> | null = null;
     let scraperWindowId: number | undefined = undefined;
+    let scraperMessageListener: ((message: any, sender: browser.Runtime.MessageSender) => void) | null = null;
+
+    const isDirectVideo = /\.(mp4|webm|flv|mkv|mov|m4v|avi)(\?|$)/.test(targetUrl.toLowerCase());
+    const finalUrl = isDirectVideo
+        ? browser.runtime.getURL('scraper-player.html') + "?src=" + encodeURIComponent(targetUrl) + "&originTitle=" + encodeURIComponent(ctx.originTitle || '')
+        : targetUrl;
 
     return new Promise(async (resolve) => {
         let isResolved = false;
@@ -165,6 +171,12 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                 }
             }
 
+            if (scraperMessageListener) {
+                try {
+                    browser.runtime.onMessage.removeListener(scraperMessageListener);
+                } catch (e) {}
+            }
+
             if (scraperWindowId !== undefined) {
                 try {
                     await browser.windows.remove(scraperWindowId);
@@ -182,12 +194,60 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
             resolve(result);
         };
 
+        const injectMocks = async (tabId: number) => {
+            logger.log("[doTabExtraction] Injecting faked focus/visibility mocks in tabId:", tabId);
+            try {
+                await browser.scripting.executeScript({
+                    target: { tabId },
+                    world: 'MAIN',
+                    func: () => {
+                        Object.defineProperty(document, 'visibilityState', {
+                            value: 'visible',
+                            writable: false,
+                            configurable: true
+                        });
+                        Object.defineProperty(document, 'hidden', {
+                            value: false,
+                            writable: false,
+                            configurable: true
+                        });
+                        document.hasFocus = () => true;
+
+                        const blockEvent = (e: Event) => {
+                            e.stopImmediatePropagation();
+                        };
+                        window.addEventListener('visibilitychange', blockEvent, true);
+                        document.addEventListener('visibilitychange', blockEvent, true);
+                        window.addEventListener('blur', blockEvent, true);
+                        document.addEventListener('blur', blockEvent, true);
+                    }
+                });
+                logger.log("[doTabExtraction] Faked focus/visibility mocks injected.");
+            } catch (err) {
+                logger.warn("[doTabExtraction] Faked focus/visibility injection failed:", err);
+            }
+        };
+
         try {
+            if (isDirectVideo) {
+                scraperMessageListener = (message: any, sender: browser.Runtime.MessageSender) => {
+                    if (message.action === 'scraper_result' && sender.tab?.id === scraperTabId) {
+                        logger.log("[doTabExtraction] Received scraper_result from scraper-player:", message.success);
+                        if (message.success) {
+                            cleanup(message.result, "Scraper player success");
+                        } else {
+                            cleanup(null, `Scraper player failed: ${message.error}`);
+                        }
+                    }
+                };
+                browser.runtime.onMessage.addListener(scraperMessageListener);
+            }
+
             try {
                 // Use a popup window so Firefox actually loads the page. 
                 // We create it focused to bypass anti-popup block, then quickly restore focus.
                 const scraperWindow = await (browser.windows as any).create({
-                    url: targetUrl,
+                    url: finalUrl,
                     type: 'popup',
                     state: 'normal',
                     focused: true,
@@ -200,6 +260,10 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                 scraperTabId = scraperTabFromWindow?.id;
                 scraperWindowId = scraperWindow.id;
 
+                if (scraperTabId !== undefined && !isDirectVideo) {
+                    void injectMocks(scraperTabId);
+                }
+
                 // Immediately switch focus back to original tab/window to minimize disruption
                 if (ctx.originWindowId !== undefined) {
                     try { await browser.windows.update(ctx.originWindowId, { focused: true }); } catch (e) {}
@@ -209,7 +273,7 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                 }
             } catch (popupErr) {
                 logger.warn("[doTabExtraction] windows.create failed (popup blocker?). Falling back to tabs.create with active:true:", popupErr);
-                const scraperTab = await browser.tabs.create({ url: targetUrl, active: true });
+                const scraperTab = await browser.tabs.create({ url: finalUrl, active: true });
                 scraperTabId = scraperTab.id;
                 logger.log("[doTabExtraction] Scraper tab fallback (active:true) created. tabId:", scraperTabId);
                 
@@ -223,11 +287,11 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
             }
 
             globalTimeoutId = setTimeout(() => {
-                logger.warn("[doTabExtraction] Global timeout reached after 18s. latestM3u8:", latestM3u8);
+                logger.warn("[doTabExtraction] Global timeout reached after 30s. latestM3u8:", latestM3u8);
                 // Even on hard timeout, return what we got — the pipeline always
                 // saves SOMETHING, never errors out (per decision-tree spec #2b3/#2c).
                 cleanup(latestM3u8 ? { src: latestM3u8, metadata: defaultMetadata } : null, "Timeout reached");
-            }, 18000);
+            }, 30000);
 
             if (browser.webRequest) {
                 webRequestListener = (details) => {
@@ -248,23 +312,37 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
             }
 
             tabUpdateListener = (tabId: number, info: browser.Tabs.OnUpdatedChangeInfoType) => {
-                if (tabId === scraperTabId && info.status === 'complete') {
-                    logger.log("[doTabExtraction] Scraper tab loaded (status=complete) via onUpdated. Injecting script...");
-                    browser.tabs.onUpdated.removeListener(tabUpdateListener!);
-                    tabUpdateListener = null;
-                    injectScript();
+                if (tabId === scraperTabId) {
+                    if (info.status === 'loading' && !isDirectVideo) {
+                        void injectMocks(tabId);
+                    }
+                    if (info.status === 'complete') {
+                        logger.log("[doTabExtraction] Scraper tab loaded (status=complete) via onUpdated.");
+                        browser.tabs.onUpdated.removeListener(tabUpdateListener!);
+                        tabUpdateListener = null;
+                        if (isDirectVideo) {
+                            logger.log("[doTabExtraction] Direct video loaded in scraper-player. Waiting for scraper_result...");
+                        } else {
+                            logger.log("[doTabExtraction] Injecting content extraction script...");
+                            injectScript();
+                        }
+                    }
                 }
             };
             browser.tabs.onUpdated.addListener(tabUpdateListener);
 
             browser.tabs.get(scraperTabId!).then(tab => {
                 if (tab.status === 'complete') {
-                    logger.log("[doTabExtraction] Tab was already 'complete' before listener attached (cache hit). Injecting immediately.");
+                    logger.log("[doTabExtraction] Tab was already 'complete' before listener attached (cache hit).");
                     if (tabUpdateListener) {
                         browser.tabs.onUpdated.removeListener(tabUpdateListener);
                         tabUpdateListener = null;
                     }
-                    injectScript();
+                    if (isDirectVideo) {
+                        logger.log("[doTabExtraction] Direct video already loaded in scraper-player. Waiting for scraper_result...");
+                    } else {
+                        injectScript();
+                    }
                 } else {
                     logger.log("[doTabExtraction] Tab status on post-create check:", tab.status, "— waiting for onUpdated...");
                 }
@@ -302,16 +380,8 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                                 return false;
                             })();
 
-                            const captureWebmPreview = async (video: HTMLVideoElement): Promise<string | null> => {
+                            const captureWebpFramesPreview = async (video: HTMLVideoElement): Promise<string | null> => {
                                 return new Promise(async (resolve) => {
-                                    let cleanup: (() => void) | null = null;
-                                    let resolved = false;
-                                    const finish = (value: string | null) => {
-                                        if (resolved) return;
-                                        resolved = true;
-                                        cleanup?.();
-                                        resolve(value);
-                                    };
                                     try {
                                         const canvas = document.createElement('canvas');
                                         canvas.width = 426;
@@ -319,52 +389,16 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                                         const ctx = canvas.getContext('2d');
                                         if (!ctx) return resolve(null);
 
-                                        const stream = canvas.captureStream(10); // 10 fps
-                                        cleanup = () => {
-                                            stream.getTracks().forEach((track) => track.stop());
-                                        };
-                                        let recorder: MediaRecorder;
-                                        try {
-                                            recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
-                                        } catch (e) {
-                                            try {
-                                                recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
-                                            } catch (e2) {
-                                                console.error("[VaultCentral] MediaRecorder setup failed:", e2);
-                                                return finish(null);
-                                            }
-                                        }
-
-                                        const chunks: Blob[] = [];
-                                        recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-                                        recorder.onstop = () => {
-                                            const blob = new Blob(chunks, { type: 'video/webm' });
-                                            const reader = new FileReader();
-                                            reader.onload = () => finish(reader.result as string);
-                                            reader.onerror = () => {
-                                                console.error("[VaultCentral] Failed to read WebM blob from FileReader.");
-                                                finish(null);
-                                            };
-                                            reader.readAsDataURL(blob);
-                                        };
-                                        recorder.onerror = () => {
-                                            console.error("[VaultCentral] MediaRecorder encountered an error while recording.");
-                                            finish(null);
-                                        };
-
-                                        recorder.start();
-
                                         const duration = (video.duration && !isNaN(video.duration) && video.duration > 0) ? video.duration : 60;
-                                        // Take 10 snapshots spaced evenly across 10% to 90% of the video
                                         const startOffset = duration * 0.1;
                                         const endOffset = duration * 0.9;
                                         const segmentLength = (endOffset - startOffset) / 9;
 
-                                        // Play to make sure readyState is sufficiently advanced
                                         video.muted = true;
                                         await video.play().catch(() => {});
                                         video.pause();
 
+                                        const frames: string[] = [];
                                         for (let i = 0; i < 10; i++) {
                                             video.currentTime = startOffset + (i * segmentLength);
 
@@ -390,50 +424,35 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                                                 video.addEventListener('seeked', seeked);
                                                 timeoutId = setTimeout(() => {
                                                     done();
-                                                }, 400);
+                                                }, 600);
                                             });
 
                                             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                                            // Give stream a moment to encode frame
-                                            await new Promise(r => setTimeout(r, 100));
-                                        }
-
-                                        // Sanity check: if the source video is cross-origin without
-                                        // CORS headers, drawImage paints onto a "tainted" canvas
-                                        // and getImageData throws. captureStream/MediaRecorder
-                                        // produce a valid-looking but visually-empty webm in that
-                                        // case. Detect it here and bail so the FFmpeg fallback
-                                        // (which fetches the source bytes directly via the
-                                        // extension's host_permissions) runs instead.
-                                        let hadVisibleContent = false;
-                                        try {
-                                            // Sample center pixel + two off-center points.
-                                            const samples = [
-                                                ctx.getImageData(canvas.width >> 1, canvas.height >> 1, 1, 1).data,
-                                                ctx.getImageData(canvas.width >> 2, canvas.height >> 2, 1, 1).data,
-                                                ctx.getImageData((canvas.width * 3) >> 2, (canvas.height * 3) >> 2, 1, 1).data,
-                                            ];
-                                            for (const s of samples) {
-                                                if (s[0] > 8 || s[1] > 8 || s[2] > 8) { hadVisibleContent = true; break; }
+                                            try {
+                                                // Check for tainted canvas
+                                                ctx.getImageData(canvas.width / 2, canvas.height / 2, 1, 1);
+                                                const dataUrl = canvas.toDataURL('image/webp', 0.5);
+                                                frames.push(dataUrl);
+                                            } catch (err) {
+                                                console.warn("[VaultCentral] Canvas tainted, CORS block on video source.");
                                             }
-                                        } catch (e) {
-                                            // SecurityError -> tainted canvas. Treat as no content.
-                                            console.warn("[VaultCentral] Canvas tainted by cross-origin video; yielding to FFmpeg fallback.");
-                                            hadVisibleContent = false;
                                         }
 
-                                        if (recorder.state !== 'inactive') {
-                                            recorder.stop();
-                                        }
-
-                                        if (!hadVisibleContent) {
-                                            // The webm we'd produce would be black. Discard so the
-                                            // pipeline's FFmpeg fallback path triggers.
-                                            return finish(null);
+                                        if (frames.length > 0) {
+                                            const payload = {
+                                                isFrames: true,
+                                                frames: frames
+                                            };
+                                            const jsonString = JSON.stringify(payload);
+                                            const base64Payload = btoa(unescape(encodeURIComponent(jsonString)));
+                                            const dataUrl = "data:application/json;base64," + base64Payload;
+                                            resolve(dataUrl);
+                                        } else {
+                                            resolve(null);
                                         }
                                     } catch (e) {
-                                        console.error("[VaultCentral] captureWebmPreview failed:", e);
-                                        finish(null);
+                                        console.error("[VaultCentral] captureWebpFramesPreview failed:", e);
+                                        resolve(null);
                                     }
                                 });
                             };
@@ -570,15 +589,15 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                                 const best = sorted[0];
 
                                 if (best.el.duration && !isNaN(best.el.duration)) metadata.duration = best.el.duration;
-                                const webm = await captureWebmPreview(best.el);
-                                if (webm) metadata.thumbnail = webm;
+                                const frames = await captureWebpFramesPreview(best.el);
+                                if (frames) metadata.thumbnail = frames;
 
                                 return { src: best.src, metadata };
                             };
 
                             // First pass: maybe the page already has the player ready
                             let result = await findBestVideoAndMeta();
-                            if (!result.src && !result.metadata.thumbnail.startsWith('data:video')) {
+                            if (!result.src && !result.metadata.thumbnail?.startsWith('data:application/json')) {
                                 // Decision-tree #2b: messy page — escalate
                                 await delay(1500);
                                 await aggressiveTrigger();
@@ -706,8 +725,8 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
                 const meta = extracted.metadata;
                 if (meta.title) { logger.log("[runCapturePipeline] Scraped title:", meta.title); data.title = meta.title; }
                 if (meta.author) { logger.log("[runCapturePipeline] Scraped author:", meta.author); data.author = meta.author; }
-                if (meta.thumbnail?.startsWith('data:video')) {
-                    logger.log("[runCapturePipeline] Scraped WebM preview present (len:", meta.thumbnail.length, "). Saving it as binary preview instead of metadata thumbnail.");
+                if (meta.thumbnail?.startsWith('data:application/json') || meta.thumbnail?.startsWith('data:video')) {
+                    logger.log("[runCapturePipeline] Scraped preview payload present (len:", meta.thumbnail.length, "). Saving it as binary preview instead of metadata thumbnail.");
                     capturedWebmPreviewDataUrl = meta.thumbnail;
                 } else if (meta.thumbnail) {
                     logger.log("[runCapturePipeline] Scraped thumbnail present (len:", meta.thumbnail.length, "). Replacing fallback.");
@@ -737,11 +756,11 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
         
         data.timestamp = Date.now(); 
 
-        if (!capturedWebmPreviewDataUrl && data.thumbnail?.startsWith('data:video')) {
+        if (!capturedWebmPreviewDataUrl && (data.thumbnail?.startsWith('data:application/json') || data.thumbnail?.startsWith('data:video'))) {
             capturedWebmPreviewDataUrl = data.thumbnail;
         }
-        const thumbIsWebm = Boolean(capturedWebmPreviewDataUrl);
-        if (thumbIsWebm) {
+        const hasPreviewPayload = Boolean(capturedWebmPreviewDataUrl);
+        if (hasPreviewPayload) {
             data.thumbnail = "";
         }
         
@@ -749,24 +768,24 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
         await saveVideos(saved);
         logger.log("[runCapturePipeline] Saved! New vault size:", saved.length);
 
-        if (thumbIsWebm) {
-            logger.log("[runCapturePipeline] Injected script captured WebM. Decoding and saving to IndexedDB.");
+        if (hasPreviewPayload) {
+            logger.log("[runCapturePipeline] Injected script captured preview payload. Saving to IndexedDB.");
             try {
                 const response = await fetch(capturedWebmPreviewDataUrl);
                 const blob = await response.blob();
                 try {
                     await savePreviewBlob(data.url, blob);
-                    logger.log("[runCapturePipeline] Successfully saved injected WebM preview to Dexie.");
+                    logger.log("[runCapturePipeline] Successfully saved injected preview payload to Dexie.");
                 } catch (e) {
                     // Vault may be locked — preview will be regenerated on next view
                     logger.warn("[runCapturePipeline] Could not save preview now (vault state):", e);
                 }
             } catch (err) {
-                logger.warn("[runCapturePipeline] Failed to save injected WebM to Dexie:", err);
+                logger.warn("[runCapturePipeline] Failed to save injected preview payload to Dexie:", err);
             }
         }
 
-        if (data.rawVideoSrc && !thumbIsWebm) {
+        if (data.rawVideoSrc && !hasPreviewPayload) {
             logger.log("[runCapturePipeline] Queuing background preview generation for:", data.rawVideoSrc);
             setupOffscreenDocument().then((ready: boolean) => {
                 if (!ready) {
@@ -831,7 +850,8 @@ async function setupOffscreenDocument(): Promise<boolean> {
             reasons: ['DOM_PARSER', 'AUDIO_PLAYBACK', 'BLOBS' as any],
             justification: 'FFmpeg WASM processing for video previews'
         });
-        logger.log("[setupOffscreenDocument] Offscreen document created.");
+        logger.log("[setupOffscreenDocument] Offscreen document created. Waiting 800ms to allow initialization...");
+        await new Promise((resolve) => setTimeout(resolve, 800));
         return true;
     } catch (e) {
         logger.error("[setupOffscreenDocument] Failed to create offscreen document:", e);
@@ -895,8 +915,9 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
         return destroyVault().then(() => ({ success: true }));
     }
     if (request.action === "preview.save") {
-        // request: { videoUrl, blobBytes (number[]), mimeType }
-        const blob = new Blob([new Uint8Array(request.blobBytes)], { type: request.mimeType || 'application/octet-stream' });
+        // request: { videoUrl, blobBytes (number[] | Uint8Array), mimeType }
+        const bytes = request.blobBytes instanceof Uint8Array ? request.blobBytes : new Uint8Array(request.blobBytes);
+        const blob = new Blob([bytes as any], { type: request.mimeType || 'application/octet-stream' });
         return savePreviewBlob(request.videoUrl, blob)
             .then(() => ({ success: true }))
             .catch((e: any) => {
@@ -908,10 +929,7 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
         return getPreviewBlob(request.videoUrl).then(async (blob) => {
             if (!blob) return { success: true, found: false };
             const bytes = new Uint8Array(await blob.arrayBuffer());
-            const arr = new Array(bytes.length);
-            for(let i=0; i<bytes.length; i++) arr[i] = bytes[i];
-            // Convert to a transferable plain array for runtime messaging.
-            return { success: true, found: true, bytes: arr, mimeType: blob.type };
+            return { success: true, found: true, bytes, mimeType: blob.type };
         }).catch((e: any) => {
             logger.error('[preview.get] failed:', e);
             return { success: false, error: 'Preview retrieval failed' };

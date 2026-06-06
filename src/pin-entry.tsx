@@ -149,7 +149,7 @@ const PinPopup: React.FC = () => {
               w-10 h-14 bg-vault-cardBg/50 border-2 rounded-xl text-center text-xl font-bold 
               focus:border-vault-accent focus:bg-vault-accent/5 outline-none transition-all
               ${error ? 'border-red-500/50 animate-shake' : 'border-vault-border/50'}
-              ${digit ? 'border-vault-accent/50 scale-105 shadow-[0_0_15px_-5px_var(--color-vault-accent)]' : ''}
+              ${digit ? 'border-vault-accent/50 scale-105 shadow-[0_0_15px_-5px_var(--vault-accent)]' : ''}
             `}
             autoFocus={idx === 0}
           />

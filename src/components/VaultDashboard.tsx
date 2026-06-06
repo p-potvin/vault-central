@@ -24,15 +24,12 @@ import { PinSetupDialog } from './PinSetupDialog';
 
 import { PromptDialog } from './PromptDialog';
 import { LockedBanner } from './LockedBanner';
-import { PreviewThumb } from './PreviewThumb';
+import { DashboardSidebar } from './DashboardSidebar';
+import { EditMetadataDialog } from './EditMetadataDialog';
+import { VideoGrid } from './VideoGrid';
 import {
-  computePerRow,
-  formatDuration,
-  isDisplayableImageThumbnail,
   mergeSyncedMetadata,
   getDomainFromUrl,
-  dateFormatter,
-  dateTimeFormatter,
   collator
 } from '../lib/dashboard-utils';
 
@@ -209,6 +206,48 @@ export const VaultDashboard: React.FC = () => {
     localStorage.setItem('vault-sync-enabled', isSyncing.toString());
   }, [isSyncing]);
 
+  const loadVideos = async () => {
+    try {
+      let syncEnabled = await getSyncEnabled();
+      const legacySyncEnabled = localStorage.getItem('vault-sync-enabled') === 'true';
+      if (!syncEnabled && legacySyncEnabled) {
+        await setSyncEnabled(true);
+        syncEnabled = true;
+      }
+      setIsSyncing(syncEnabled);
+
+      const all = await getSavedVideos();
+      setItems(all || []);
+
+      if (syncEnabled) {
+        void (async () => {
+          try {
+            const synced = await getSyncedVideos();
+            const { merged, addedCount } = mergeSyncedMetadata(all, synced);
+            if (addedCount > 0) {
+              await saveVideos(merged);
+              setItems(merged);
+            } else {
+              await saveSyncedVideos(all);
+            }
+          } catch (err) {
+            console.error("[VaultDashboard] Browser Sync background load failed:", err);
+          }
+        })();
+      }
+    } catch (err) {
+      console.error("[VaultDashboard] Failed to load videos:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (vaultLocked) {
+      setItems([]);
+    } else {
+      loadVideos();
+    }
+  }, [vaultLocked]);
+
   useEffect(() => {
     const savedTheme = localStorage.getItem('vault-theme');
     if (savedTheme) {
@@ -239,34 +278,6 @@ export const VaultDashboard: React.FC = () => {
     const load = async () => {
       const settings = await getPinSettings();
       setPinSettings(settings);
-
-      let syncEnabled = await getSyncEnabled();
-      const legacySyncEnabled = localStorage.getItem('vault-sync-enabled') === 'true';
-      if (!syncEnabled && legacySyncEnabled) {
-        await setSyncEnabled(true);
-        syncEnabled = true;
-      }
-      setIsSyncing(syncEnabled);
-
-
-
-      let all = await getSavedVideos();
-      if (syncEnabled) {
-        try {
-          const synced = await getSyncedVideos();
-          const { merged, addedCount } = mergeSyncedMetadata(all, synced);
-          if (addedCount > 0) {
-            await saveVideos(merged);
-            all = merged;
-          } else {
-            await saveSyncedVideos(all);
-          }
-        } catch (err) {
-          console.error("[VaultDashboard] Browser Sync load failed:", err);
-          setToastMessage({ msg: "Browser Sync metadata could not be loaded.", type: "error" });
-        }
-      }
-      setItems(all || []);
     };
     load();
     
@@ -586,6 +597,23 @@ export const VaultDashboard: React.FC = () => {
             </div>
           </div>
 
+          {pinSettings?.enabled && (
+            <button 
+              onClick={async () => {
+                await vaultLock();
+                const next = { ...pinSettings, lastUnlocked: 0 };
+                await savePinSettings(next);
+                setPinSettings(next);
+                setVaultLocked(true);
+                setItems([]);
+              }}
+              className="vault-btn flex items-center justify-center p-1.5 rounded-md h-8 w-8 group border border-vault-border hover:border-vault-accent"
+              title="Lock Vault"
+            >
+              <Icons.PinIcon size={16} className="text-vault-accent group-hover:text-vault-accent/85 transition-colors duration-200" />
+            </button>
+          )}
+
           <button onClick={() => setIsSettingsOpen(true)} className="vault-btn flex items-center justify-center p-1.5 rounded-md h-8 w-8 group border border-vault-border hover:border-vault-accent" title="Vault Settings">
             <Icons.SettingsIcon size={16} className="text-vault-accent group-hover:text-vault-accent/85 transition-colors duration-200" />
           </button>
@@ -598,199 +626,35 @@ export const VaultDashboard: React.FC = () => {
         {/* SIDEBAR CONTAINER */}
         <div className="flex flex-none relative z-20">
           {/* SIDEBAR */}
-          <aside 
-            data-testid="dashboard-sidebar"
-            className={cn(
-            "bg-vault-cardBg/30 border-r border-vault-border transition-all duration-300 overflow-y-auto h-full flex flex-col gap-6",
-            isSidebarOpen ? "w-64 p-4 opacity-100 visible" : "w-0 p-0 opacity-0 invisible border-none"
-          )}>
-            <div className="space-y-4">
-            {/* View Mode */}
-            <div>
-              <label className="text-xs font-bold text-vault-muted/90 flex items-center gap-1.5 mb-2 uppercase tracking-wider">
-                <Icons.ViewModeIcon size={14} className="text-vault-accent" /> View Mode
-              </label>
-              <input 
-                type="range" 
-                min="1" 
-                max="6" 
-                value={viewSize} 
-                onChange={(e) => setViewSize(parseInt(e.target.value))}
-                className="w-full accent-vault-accent"
-              />
-              <div className="flex justify-between text-[10px] text-vault-muted mt-1 font-semibold">
-                <span>Details</span>
-                <span>Biggest</span>
-              </div>
-            </div>
-
-
-            {/* Grouping */}
-            <div>
-              <label className="text-xs font-bold text-vault-muted/90 flex items-center gap-1.5 mb-2 uppercase tracking-wider">
-                <Icons.GroupIcon size={14} className="text-vault-accent" /> Group By
-              </label>
-              <select 
-                value={groupBy}
-                onChange={(e) => setGroupBy(e.target.value)}
-                className="w-full bg-vault-bg border border-vault-border text-xs p-1.5 rounded outline-none focus:border-vault-accent text-vault-text"
-              >
-                <option value="None">None (Flat List)</option>
-                <option value="Hostname">Source Hostname</option>
-              </select>
-            </div>
-
-            {/* Sorting */}
-            <div className="space-y-2">
-               <label className="text-xs font-bold text-vault-muted/90 flex items-center gap-1.5 mb-2 uppercase tracking-wider">
-                <Icons.SortIcon size={14} className="text-vault-accent" /> Sort Params
-              </label>
-              <div className="flex gap-2">
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as keyof VideoData)}
-                  className="flex-1 bg-vault-bg border border-vault-border text-[10px] p-1.5 rounded outline-none focus:border-vault-accent text-vault-text"
-                >
-                  <option value="timestamp">Date Saved</option>
-                  <option value="datePublished">Date Published</option>
-                  <optgroup label="Metadata Fields">
-                    <option value="title">Title</option>
-                    <option value="author">Author</option>
-                    <option value="domain">Domain</option>
-                    <option value="views">Views</option>
-                    <option value="likes">Likes</option>
-                    <option value="dislikes">Dislikes</option>
-                    <option value="quality">Quality</option>
-                    <option value="resolution">Resolution</option>
-                    <option value="size">Size</option>
-                  </optgroup>
-                </select>
-                <button
-                  onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
-                  className="vault-btn p-1 px-2 text-[10px] font-bold"
-                  title="Toggle Asc/Desc"
-                >
-                  {sortOrder === 'asc' ? 'ASC' : 'DESC'}
-                </button>
-              </div>
-            </div>
-            
-            <hr className="border-vault-border opacity-50 my-2" />
-            
-            {/* PIN System */}
-            <div className="pt-2">
-              <label className="text-xs font-bold text-vault-muted/90 flex items-center gap-1.5 mb-2.5 uppercase tracking-wider">
-                <Icons.PinIcon size={14} className="text-vault-accent" /> PIN Protection
-              </label>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-vault-muted font-bold uppercase tracking-widest">Master PIN</span>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input 
-                      type="checkbox" 
-                      className="sr-only peer" 
-                      checked={pinSettings?.enabled || false} 
-                      onChange={togglePin}
-                    />
-                    <div className="w-9 h-5 bg-vault-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-transparent after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-vault-bg after:border-vault-border after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-vault-accent peer-checked:after:bg-white" />
-                  </label>
-                </div>
-
-                {pinSettings?.enabled && (
-                  <div className="space-y-3 animate-in slide-in-from-top-2 duration-300">
-                    <div>
-                      <span className="text-[9px] text-vault-muted font-bold block mb-1.5 uppercase opacity-60">Sequence Length</span>
-                      <div className="flex gap-2">
-                        {[4, 6].map(len => (
-                          <button
-                            key={len}
-                            onClick={() => updatePinLength(len as 4 | 6)}
-                            className={cn(
-                              "flex-1 py-1 text-[10px] font-black rounded-sm border transition-all",
-                              pinSettings.length === len 
-                                ? "bg-vault-accent border-vault-accent text-vault-bg shadow-[0_0_10px_-2px_var(--color-vault-accent)]" 
-                                : "bg-vault-bg border-vault-border text-vault-muted hover:border-vault-muted"
-                            )}
-                          >
-                            {len} DIGITS
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <span className="text-[9px] text-vault-muted font-bold block mb-1.5 uppercase opacity-60">Auto-Locker Delay</span>
-                      <select 
-                        value={pinSettings.lockTimeout}
-                        onChange={(e) => updateLockTimeout(parseInt(e.target.value))}
-                        className="w-full bg-vault-bg border border-vault-border text-[10px] p-1.5 rounded outline-none focus:border-vault-accent text-vault-text font-bold"
-                      >
-                        <option value={600000}>10 Minutes</option>
-                        <option value={1800000}>30 Minutes</option>
-                        <option value={3600000}>1 Hour</option>
-                        <option value={7200000}>2 Hours</option>
-                        <option value={-1}>Never (Manual only)</option>
-                      </select>
-                    </div>
-
-                    <button
-                      onClick={async () => {
-                        // Tell background to clear its in-memory unlocked
-                        // vault. The polling effect picks up the new state
-                        // and surfaces the LockedBanner.
-                        await vaultLock();
-                        const next = { ...pinSettings, lastUnlocked: 1 };
-                        await savePinSettings(next);
-                        setPinSettings(next);
-                        setVaultLocked(true);
-                        setItems([]);
-                      }}
-                      className="w-full py-1.5 text-[10px] font-black uppercase tracking-widest bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white transition-all rounded-sm"
-                    >
-                      Lock Vault Now
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <hr className="border-vault-border opacity-50 my-2" />
-            
-            {/* Sync Option */}
-            <div className="pt-2">
-              <label className="text-xs font-bold text-vault-muted/90 flex items-center gap-1.5 mb-2 uppercase tracking-wider">
-                <Icons.DebugIcon size={14} className="text-vault-accent" /> Persistence
-              </label>
-              <button
-                onClick={handleToggleBrowserSync}
-                disabled={isSyncBusy}
-                className={cn(
-                  "w-full vault-btn p-2 text-[11px] font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all",
-                  isSyncing
-                    ? "bg-vault-accent/12 text-vault-text border-vault-accent/60 hover:bg-vault-accent/22 hover:border-vault-accent/80"
-                    : "border-dashed border-vault-border text-vault-muted opacity-60 hover:opacity-100 hover:bg-vault-accent/12 hover:border-vault-accent/60",
-                  isSyncBusy && "cursor-wait opacity-70"
-                )}
-                title={isFirefox ? "Use Firefox Sync Storage" : "Use Chrome Sync Storage"}
-              >
-                <div className={cn("w-1.5 h-1.5 rounded-full", isSyncing ? "bg-vault-accent animate-pulse" : "bg-vault-muted")} />
-                {isSyncBusy ? "Syncing..." : isSyncing ? "Sync Enabled" : "Enable Browser Sync"}
-              </button>
-              <p className="text-[9px] text-vault-muted mt-2 leading-relaxed opacity-60 italic">
-                {isFirefox 
-                  ? "Uses Firefox Sync to backup metadata across devices (excludes large binary previews)." 
-                  : "Uses Chrome Sync for metadata only, chunked for browser quota limits."}
-              </p>
-            </div>
-
-            <hr className="border-vault-border opacity-50 my-2" />
-            
-            <div className="text-xs text-vault-muted space-y-2">
-              <p>Total Items: <strong className="text-vault-accent">{items.length}</strong></p>
-              <p>Visible: <strong className="text-vault-text">{filtered.length}</strong></p>
-            </div>
-          </div>
-        </aside>
+          <DashboardSidebar
+            isSidebarOpen={isSidebarOpen}
+            viewSize={viewSize}
+            setViewSize={setViewSize}
+            groupBy={groupBy}
+            setGroupBy={setGroupBy}
+            sortBy={sortBy}
+            setSortBy={setSortBy}
+            sortOrder={sortOrder}
+            setSortOrder={setSortOrder}
+            pinSettings={pinSettings}
+            togglePin={togglePin}
+            updatePinLength={updatePinLength}
+            updateLockTimeout={updateLockTimeout}
+            lockVaultNow={async () => {
+              await vaultLock();
+              const next = { ...pinSettings, lastUnlocked: 1 };
+              await savePinSettings(next);
+              setPinSettings(next);
+              setVaultLocked(true);
+              setItems([]);
+            }}
+            isSyncing={isSyncing}
+            isSyncBusy={isSyncBusy}
+            handleToggleBrowserSync={handleToggleBrowserSync}
+            isFirefox={isFirefox}
+            totalItems={items.length}
+            visibleItems={filtered.length}
+          />
           
           {/* TOGGLE BAR */}
           <div 
@@ -809,276 +673,19 @@ export const VaultDashboard: React.FC = () => {
         {/* MAIN ITEM WINDOW */}
         <main ref={mainRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 md:p-6 bg-vault-bg/50 scroll-smooth">
           <div className="max-w-[1920px] mx-auto space-y-10">
-            
-            {isolatedGroup && (
-              <div className="mb-6">
-                <button 
-                  onClick={() => setIsolatedGroup(null)}
-                  className="vault-btn flex items-center gap-2"
-                >
-                  <Icons.BackIcon size={16} /> Back to Dashboard
-                </button>
-              </div>
-            )}
-
-            {groupsToRender.map(([groupName, groupItems]) => {
-              const currentPage = pages[groupName] || 0;
-              // If isolated, show all items using simple array, otherwise paginate
-              const maxRows = 2;
-              // perRow comes from the actual breakpoint that matches the current
-              // viewport, not a substring search of the class string. The first
-              // search ("grid-cols-4") would otherwise win against "grid-cols-5",
-              // breaking pagination at every viewport size.
-              const perRow = computePerRow(viewSize);
-              const itemsPerPage = isolatedGroup ? groupItems.length : perRow * maxRows;
-              
-              const displayItems = isolatedGroup 
-                ? groupItems 
-                : groupItems.slice(currentPage * itemsPerPage, (currentPage + 1) * itemsPerPage);
-              
-              const totalPages = Math.ceil(groupItems.length / itemsPerPage);
-
-              return (
-                <section key={groupName} className="space-y-4">
-                  {/* Section Header */}
-                  <div className="flex items-center justify-between">
-                    <div 
-                      className={cn("flex items-center gap-3", !isolatedGroup && "cursor-pointer group")}
-                      onClick={() => !isolatedGroup && setIsolatedGroup(groupName)}
-                    >
-                      <h2 className="text-base font-semibold text-vault-text inline-flex items-center gap-2.5 tracking-tight transition-colors group-hover:text-vault-accent">
-                        <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-vault-accent shrink-0" />
-                        {groupName}
-                      </h2>
-                      <span className="text-xs bg-vault-cardBg border border-vault-border px-2 py-0.5 rounded-full text-vault-muted font-bold">
-                        {groupItems.length}
-                      </span>
-                    </div>
-
-                    {/* Pagination Controls (Only on non-isolated view and if multiple pages) */}
-                    {!isolatedGroup && totalPages > 1 && (
-                      <div className="flex items-center gap-2 bg-vault-cardBg/60 border border-vault-border/50 rounded-full px-2 py-1 shadow-sm">
-                        <button 
-                          onClick={() => setGroupPage(groupName, -1)}
-                          disabled={currentPage === 0}
-                          className="vault-btn p-1 h-8 w-8 flex items-center justify-center rounded-full border border-vault-border bg-vault-cardBg text-vault-text hover:bg-vault-accent/10 hover:border-vault-accent disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-                        >
-                          <Icons.ChevronLeftIcon size={16} />
-                        </button>
-                        <span className="text-xs font-mono font-black text-vault-text min-w-[48px] text-center">
-                          {currentPage + 1} <span className="opacity-40">/</span> {totalPages}
-                        </span>
-                        <button 
-                          onClick={() => setGroupPage(groupName, 1)}
-                          disabled={currentPage >= totalPages - 1}
-                          className="vault-btn p-1 h-8 w-8 flex items-center justify-center rounded-full border border-vault-border bg-vault-cardBg text-vault-text hover:bg-vault-accent/10 hover:border-vault-accent disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-                        >
-                          <Icons.ChevronRightIcon size={16} />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Section Grid */}
-                  <div className={cn(
-                    "grid gap-4 md:gap-6",
-                    viewClasses[viewSize as keyof typeof viewClasses]
-                  )}>
-                    {displayItems.map((fav, idx) => (
-                      <div key={`${fav.url}-${idx}`} className={cn(
-                        "vault-card group relative flex overflow-hidden",
-                        CARD_CLASS[viewSize]
-                      )}>
-                        
-                        {/* THUMBNAIL AREA */}
-                        {viewSize >= 2 && (
-                          <div 
-                            onClick={(e) => {
-                              // If clicking an action button inside the thumb, don't trigger play
-                              if ((e.target as HTMLElement).closest('.thumb-action')) return;
-
-                              if (fav.type === 'video' && fav.rawVideoSrc) {
-                                setPlayingVideo(fav);
-                                setVideoError(false);
-                                setIsRefreshing(false);
-                              } else {
-                                // Test-mode override: suppress popups during automated tests
-                                if (typeof window !== 'undefined' && (window as any).__TEST_MODE__) {
-                                  if ((window as any).__MOCK_WINDOW_OPEN__) {
-                                    (window as any).__MOCK_WINDOW_OPEN__(fav.url);
-                                  }
-                                  // No-op in test mode
-                                } else {
-                                  window.open(fav.url, '_blank');
-                                }
-                              }
-                            }}
-                            className={THUMB_CLASS[viewSize]}
-                          >
-                            {fav.type === 'video' ? (
-                              <PreviewThumb video={fav} />
-                            ) : (
-                              isDisplayableImageThumbnail(fav.thumbnail) ? (
-                                // ⚡ BOLT OPTIMIZATION: `loading="lazy"` prevents fetching all images simultaneously.
-                                <img
-                                  src={fav.thumbnail}
-                                  alt={fav.title}
-                                  loading="lazy"
-                                  className="w-full h-full object-cover transition-transform duration-500 group-hover/thumb:scale-105"
-                                  onError={(e) => {
-                                    const target = e.currentTarget;
-                                    const fallbackSrc = 'data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="%23333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Crect x="3" y="3" width="18" height="18" rx="2" ry="2"%3E%3C/rect%3E%3Ccircle cx="8.5" cy="8.5" r="1.5"%3E%3C/circle%3E%3Cpolyline points="21 15 16 10 5 21"%3E%3C/polyline%3E%3C/svg%3E';
-                                    if (target.src !== fallbackSrc) {
-                                      target.src = fallbackSrc;
-                                    }
-                                  }}
-                                />
-                              ) : (
-                                <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-vault-cardBg to-vault-bg/50">
-                                    <Icons.DebugIcon size={32} className="opacity-10 mb-1" />
-                                    <span className="text-[10px] font-mono opacity-30">NO PREVIEW</span>
-                                </div>
-                              )
-                            )}
-
-                            {/* Subtle inset stroke replaces the four corner accents — quieter, no hover animation. */}
-                            <div className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-white/5 rounded-[inherit]" />
-
-                            {/* Internal Thumbnail Actions */}
-                            {viewSize > 2 && (
-                              <>
-                                <div className="absolute top-2 left-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2">
-                                  <button onClick={(e) => { e.stopPropagation(); handleEdit(fav); }} className="thumb-action p-1.5 bg-black/60 hover:bg-vault-accent text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" title="Edit Metadata">
-                                    <Icons.EditIcon size={12} />
-                                  </button>
-                                </div>
-                                <div className="absolute top-2 right-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2">
-                                  <button onClick={(e) => { e.stopPropagation(); handleDelete(fav.url); }} className="thumb-action p-1.5 bg-black/60 hover:bg-red-500 text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" title="Delete Item">
-                                    <Icons.DeleteIcon size={12} />
-                                  </button>
-                                </div>
-                              </>
-                            )}
-
-                            {/* Duration Badge */}
-                            {fav.duration && (
-                              <div className="absolute bottom-2 right-2 bg-black/80 text-white text-[10px] font-mono font-bold px-1.5 py-0.5 rounded shadow z-20">
-                                {formatDuration(fav.duration)}
-                              </div>
-                            )}
-
-                            {/* Hover overlay — gentle dim + play affordance fade. No scale jump. */}
-                            <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-                              <div className="absolute inset-0 bg-black/0 group-hover/thumb:bg-black/15 transition-colors duration-200" />
-                              <div className="relative w-11 h-11 rounded-full bg-white/90 opacity-0 group-hover/thumb:opacity-100 flex items-center justify-center shadow-lg transition-opacity duration-200">
-                                {fav.type === 'video'
-                                  ? <Icons.PlayIcon fill="currentColor" className="text-vault-bg ml-0.5" size={18} />
-                                  : <Icons.ChevronRightIcon className="text-vault-bg" size={18} />}
-                              </div>
-                            </div>
-                            
-                            {/* Type chip — sentence case, no animation noise. */}
-                            <div className="absolute bottom-2 left-2 z-20 opacity-0 group-hover/thumb:opacity-100 transition-opacity duration-200 pointer-events-none">
-                              <div className="flex items-center gap-1.5 bg-black/55 px-2 py-0.5 rounded-full text-[10px] font-medium text-white/90 backdrop-blur-sm tracking-tight">
-                                <span className="w-1 h-1 rounded-full bg-vault-accent" />
-                                {fav.type === 'video' ? 'Video' : 'Link'}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* DETAILS AREA */}
-                        <div className={cn("z-10 relative flex flex-col flex-1", viewSize === 1 ? "flex-row items-center justify-between w-full min-h-[60px]" : "p-4")}>
-                          
-                          <div className={cn("flex justify-between items-start mb-2", viewSize === 1 && "mb-0 items-center")}>
-                            <div className="flex gap-2 items-center">
-                              <span className={cn(
-                                "text-[10px] uppercase font-bold tracking-widest text-vault-bg bg-vault-muted px-2 py-0.5 rounded-sm",
-                                viewSize === 1 && "flex items-center justify-center h-5"
-                              )}>
-                                {viewSize > 1 ? `#${idx + 1 + (currentPage * itemsPerPage)}` : 'V-ID'}
-                              </span>
-                            </div>
-                            {viewSize <= 2 && (
-                                <div className="flex gap-1 ml-auto">
-                                  <button onClick={(e) => { e.stopPropagation(); handleEdit(fav); }} className="vault-btn p-1 flex items-center justify-center border-none hover:bg-vault-cardBg" title="Edit">
-                                    <Icons.EditIcon size={14} className="text-vault-muted hover:text-vault-accent" />
-                                  </button>
-                                  <button onClick={(e) => { e.stopPropagation(); handleDelete(fav.url); }} className="vault-btn p-1 flex items-center justify-center border-none hover:bg-vault-cardBg" title="Delete">
-                                    <Icons.DeleteIcon size={14} className="text-vault-muted hover:text-red-500" />
-                                  </button>
-                                </div>
-                            )}
-                          </div>
-                          
-                          <div className={cn("flex-1", viewSize === 1 ? "flex items-center justify-between w-full ml-4" : "flex flex-col")}>
-                            <div className={viewSize === 1 ? "flex-1 mr-4" : ""}>
-                              <h3 className={cn(
-                                "font-bold mb-1 leading-snug cursor-pointer hover:text-vault-accent transition-colors",
-                                viewSize === 1 ? "text-base line-clamp-1" : "text-[16px] line-clamp-2"
-                              )}>
-                                {fav.title || 'Untitled Reference'}
-                              </h3>
-                              <p className="text-[13px] text-vault-muted truncate max-w-[250px] font-mono opacity-80" title={fav.url}>
-                                {(fav.domain && fav.domain !== 'Unknown') ? fav.domain : getDomainFromUrl(fav.url, true)}
-                              </p>
-                            </div>
-                            
-                            {viewSize > 1 && (
-                              <div className="mt-3 space-y-1 mb-2 flex-1">
-                                {fav.author && (
-                                  <p className="text-[13px] text-vault-text line-clamp-1"><span className="text-vault-muted">By:</span> {fav.author}</p>
-                                )}
-                                {fav.actors && fav.actors.length > 0 && (
-                                  <p className="text-[13px] text-vault-accent line-clamp-1 opacity-90"><span className="text-vault-muted">With:</span> {fav.actors.join(', ')}</p>
-                                )}
-                                {(fav.views || fav.likes) && (
-                                  <p className="text-[13px] text-vault-muted flex gap-3 mt-1">
-                                    {fav.views && <span><strong>{fav.views}</strong> views</span>}
-                                    {fav.likes && <span><strong>{fav.likes}</strong> likes</span>}
-                                  </p>
-                                )}
-                                {fav.tags && fav.tags.length > 0 && (
-                                  <div className="flex flex-wrap gap-1 mt-2">
-                                    {fav.tags.slice(0, 3).map(tag => (
-                                      <span key={tag} className="text-[11px] bg-vault-cardBg border border-vault-border px-1.5 py-0.5 rounded text-vault-muted inline-block">
-                                        {tag}
-                                      </span>
-                                    ))}
-                                    {fav.tags.length > 3 && (
-                                      <span className="text-[11px] bg-vault-cardBg/50 border border-vault-border border-dashed px-1.5 py-0.5 rounded text-vault-muted inline-block">
-                                        +{fav.tags.length - 3}
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-
-                          <div className={cn(
-                            "flex items-center justify-between border-vault-border pt-3 mt-auto",
-                            viewSize === 1 ? "border-none ml-4 gap-4 mt-0 pt-0" : "border-t"
-                          )}>
-                            <span className="text-[13px] font-semibold text-vault-muted tracking-wider">
-                              {dateFormatter.format(fav.timestamp)}
-                            </span>
-                            <a 
-                              href={fav.url} 
-                              target="_blank" 
-                              rel="noreferrer"
-                              className="text-[12px] font-bold text-vault-bg bg-vault-accent hover:bg-vault-accentHover transition-colors flex items-center gap-1 px-3 py-1.5 rounded-sm"
-                            >
-                              OPEN <Icons.ChevronRightIcon size={12} strokeWidth={3} className="group-hover:translate-x-0.5 transition-transform" />
-                            </a>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              );
-            })}
+            <VideoGrid
+              groupsToRender={groupsToRender}
+              pages={pages}
+              setGroupPage={setGroupPage}
+              viewSize={viewSize}
+              isolatedGroup={isolatedGroup}
+              setIsolatedGroup={setIsolatedGroup}
+              setPlayingVideo={setPlayingVideo}
+              setVideoError={setVideoError}
+              setIsRefreshing={setIsRefreshing}
+              handleEdit={handleEdit}
+              handleDelete={handleDelete}
+            />
 
             {filtered.length === 0 && (
               <div className="py-24 text-center border border-dashed border-vault-border rounded-xl bg-vault-cardBg/30 flex flex-col items-center justify-center">

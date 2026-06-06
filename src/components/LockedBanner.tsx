@@ -55,46 +55,51 @@ export const LockedBanner: React.FC<LockedBannerProps> = ({ visible, pinLength, 
 
   if (!visible) return null;
   return (
-    <div
-      role="alert"
-      aria-live="polite"
-      className={cn(
-        'fixed inset-x-0 top-0 z-[120] flex justify-center pointer-events-none transition-all duration-300',
-      )}
-    >
-      <div className="pointer-events-auto mt-4 max-w-lg w-full mx-4 bg-vault-cardBg border border-vault-border rounded-xl shadow-2xl backdrop-blur-md p-5 flex items-center gap-4 animate-in slide-in-from-top-4 fade-in duration-300">
-        <Icons.PinIcon size={24} className={cn('shrink-0', error ? 'text-red-400' : 'text-vault-accent')} />
-        <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-bold text-vault-text tracking-tight">Vault locked</h3>
-          <p className="text-[11px] text-vault-muted mt-0.5">
-            {error ? 'Wrong PIN — try again' : `Auto-lock fired. Enter your ${pinLength}-digit PIN to continue.`}
-          </p>
+    <div className="fixed inset-0 z-[120] bg-vault-bg/85 backdrop-blur-md flex items-center justify-center animate-in fade-in duration-300">
+      <div className="w-[320px] p-6 bg-vault-cardBg border border-vault-border rounded-2xl shadow-2xl flex flex-col items-center gap-6 select-none animate-in zoom-in-95 duration-200">
+        <div className="relative">
+          <Icons.PinIcon size={32} className={error ? "text-red-500 animate-bounce" : "text-vault-accent"} />
+          <div className="absolute -inset-1 blur-lg bg-vault-accent/20 rounded-full" />
         </div>
-        <div className="flex gap-1.5 shrink-0">
-          {pin.map((digit, i) => (
+        
+        <div className="text-center space-y-1">
+          <h2 className="text-xs font-mono font-black uppercase tracking-[0.2em] text-vault-text">Authenticating</h2>
+          <p className="text-[10px] text-vault-muted font-bold tracking-tighter opacity-60">Enter {pinLength}-digit sequence</p>
+        </div>
+
+        <div className="flex gap-3 justify-center">
+          {pin.map((digit, idx) => (
             <input
-              key={i}
-              ref={el => { inputs.current[i] = el; }}
+              key={idx}
+              ref={el => { inputs.current[idx] = el; }}
               type="password"
               inputMode="numeric"
               pattern="[0-9]*"
               maxLength={1}
               value={digit}
               disabled={busy}
-              onChange={e => onChange(i, e.target.value)}
-              onKeyDown={e => onKeyDown(i, e)}
+              onChange={e => onChange(idx, e.target.value)}
+              onKeyDown={e => onKeyDown(idx, e)}
               className={cn(
-                'w-7 h-9 text-center text-sm font-mono font-bold rounded-md border outline-none transition-all duration-150',
-                'bg-vault-bg/60 text-vault-text',
-                error
-                  ? 'border-red-400/60 text-red-400'
-                  : digit
-                    ? 'border-vault-accent/60'
-                    : 'border-vault-border focus:border-vault-accent',
-                busy && 'opacity-50',
+                "w-10 h-14 bg-vault-bg/50 border-2 rounded-xl text-center text-xl font-bold text-vault-text",
+                "focus:border-vault-accent focus:bg-vault-accent/5 outline-none transition-all duration-150",
+                error ? "border-red-500/50 animate-shake" : "border-vault-border/50",
+                digit ? "border-vault-accent/50 scale-105 shadow-[0_0_15px_-5px_var(--vault-accent)]" : "",
+                busy && "opacity-50"
               )}
+              autoFocus={idx === 0}
             />
           ))}
+        </div>
+
+        {error && (
+          <p className="text-[10px] font-black text-red-500 uppercase tracking-tighter animate-in slide-in-from-top-1">
+            Invalid Access Code
+          </p>
+        )}
+
+        <div className="text-[9px] text-vault-muted font-bold uppercase tracking-widest opacity-40">
+          Vault-Central Security Protocol 4.0
         </div>
       </div>
     </div>

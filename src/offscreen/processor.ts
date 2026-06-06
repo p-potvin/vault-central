@@ -20,6 +20,7 @@
 
 import browser from 'webextension-polyfill';
 import { savePreview } from '../lib/vault-client';
+import Hls from 'hls.js';
 
 // ────────────────────────────────────────────────────────────
 // Sandbox iframe management
@@ -118,42 +119,63 @@ async function ensureSandbox(): Promise<HTMLIFrameElement> {
 async function processVideoPreview(mediaUrl: string, duration: number): Promise<Blob | null> {
     console.log("[VaultProcessor] Starting preview generation for:", mediaUrl);
     
-    if (mediaUrl.includes('.m3u8') || mediaUrl.includes('manifest')) {
-        console.warn("[VaultProcessor] HLS/M3U8 is not supported natively.");
-        return null;
-    }
+    const isHls = mediaUrl.includes('.m3u8') || mediaUrl.includes('manifest');
 
     try {
-        console.log("[VaultProcessor] Fetching video...");
-        const response = await fetch(mediaUrl, { 
-            headers: { "User-Agent": navigator.userAgent } 
-        });
-        
-        if (!response.ok) {
-            console.error("[VaultProcessor] Fetch failed:", response.status);
-            return null;
-        }
+        let objectUrl = '';
+        if (!isHls) {
+            console.log("[VaultProcessor] Fetching video...");
+            const response = await fetch(mediaUrl, { 
+                headers: { "User-Agent": navigator.userAgent } 
+            });
+            
+            if (!response.ok) {
+                console.error("[VaultProcessor] Fetch failed:", response.status);
+                return null;
+            }
 
-        const videoBlob = await response.blob();
-        console.log("[VaultProcessor] Fetched bytes:", videoBlob.size, "type:", videoBlob.type);
-        if (videoBlob.size < 1000) {
-            console.error("[VaultProcessor] Fetched blob is too small (403 block?).");
-            return null;
+            const videoBlob = await response.blob();
+            console.log("[VaultProcessor] Fetched bytes:", videoBlob.size, "type:", videoBlob.type);
+            if (videoBlob.size < 1000) {
+                console.error("[VaultProcessor] Fetched blob is too small (403 block?).");
+                return null;
+            }
+            
+            objectUrl = URL.createObjectURL(videoBlob);
         }
         
-        const objectUrl = URL.createObjectURL(videoBlob);
-        
-        return new Promise<Blob | null>((resolve, reject) => {
+        return new Promise<Blob | null>((resolve) => {
             const timeoutId = setTimeout(() => {
-                URL.revokeObjectURL(objectUrl);
+                if (objectUrl) URL.revokeObjectURL(objectUrl);
+                if (hls) hls.destroy();
                 console.error("[VaultProcessor] Native preview generation timed out");
-                reject(new Error('[VaultProcessor] Native preview generation timed out'));
-            }, 120_000);
+                resolve(null);
+            }, 60_000);
 
             const video = document.createElement('video');
             video.muted = true;
             video.playsInline = true;
-            video.src = objectUrl;
+
+            let hls: Hls | null = null;
+            if (isHls) {
+                if (Hls.isSupported()) {
+                    hls = new Hls({
+                        enableWorker: false,
+                        maxBufferLength: 10,
+                        maxMaxBufferLength: 20
+                    });
+                    hls.loadSource(mediaUrl);
+                    hls.attachMedia(video);
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = mediaUrl;
+                } else {
+                    console.error("[VaultProcessor] HLS not supported");
+                    clearTimeout(timeoutId);
+                    return resolve(null);
+                }
+            } else {
+                video.src = objectUrl;
+            }
 
             video.addEventListener('loadedmetadata', async () => {
                 console.log("[VaultProcessor] loadedmetadata fired, duration:", video.duration);
@@ -163,64 +185,68 @@ async function processVideoPreview(mediaUrl: string, duration: number): Promise<
                 const ctx = canvas.getContext('2d');
                 if (!ctx) {
                     clearTimeout(timeoutId);
-                    URL.revokeObjectURL(objectUrl);
-                    if (video.parentNode) video.parentNode.removeChild(video);
+                    if (objectUrl) URL.revokeObjectURL(objectUrl);
+                    if (hls) hls.destroy();
                     return resolve(null);
                 }
 
                 try {
-                    let start = (video.duration && isFinite(video.duration)) ? video.duration * 0.1 : 0;
-                    if (start > 120) start = Math.min(start, 30);
-                    video.currentTime = start;
-                    
-                    const stream = canvas.captureStream(10);
-                    let recorder: MediaRecorder;
-                    try { recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' }); }
-                    catch (e) { recorder = new MediaRecorder(stream, { mimeType: 'video/webm' }); }
+                    const videoDuration = (video.duration && isFinite(video.duration)) ? video.duration : 60;
+                    const startOffset = videoDuration * 0.1;
+                    const endOffset = videoDuration * 0.9;
+                    const segmentLength = (endOffset - startOffset) / 9;
 
-                    const chunks: Blob[] = [];
-                    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-                    
-                    recorder.onstop = () => {
-                        clearTimeout(timeoutId);
-                        stream.getTracks().forEach(t => t.stop());
-                        if (video.parentNode) video.parentNode.removeChild(video);
-                        URL.revokeObjectURL(objectUrl);
-                        if (chunks.length > 0) {
-                            console.log("[VaultProcessor] Output generated:", chunks.reduce((acc, c) => acc + c.size, 0), "bytes");
-                            resolve(new Blob(chunks, { type: 'video/webm' }));
-                        } else {
-                            console.error("[VaultProcessor] No chunks from MediaRecorder");
-                            resolve(null);
-                        }
-                    };
+                    await video.play().catch(() => {});
+                    video.pause();
 
-                    recorder.start(1000);
-
-                    // Step through frames manually to avoid autoplay blocks completely
-                    const frameCount = 30; // 3 seconds at 10 fps
-                    const step = 0.1; // 100ms
-                    
-                    for (let i = 0; i < frameCount; i++) {
+                    const frames: string[] = [];
+                    for (let i = 0; i < 10; i++) {
+                        video.currentTime = startOffset + (i * segmentLength);
+                        
                         await new Promise(r => {
-                            video.addEventListener('seeked', r, { once: true });
-                            setTimeout(r, 1000);
+                            let finished = false;
+                            const done = () => {
+                                if (finished) return;
+                                finished = true;
+                                video.removeEventListener('seeked', seeked);
+                                r(null);
+                            };
+                            const seeked = () => done();
+                            video.addEventListener('seeked', seeked);
+                            setTimeout(done, 1500);
                         });
-                        
+
                         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                        
-                        if (i < frameCount - 1) {
-                            video.currentTime += step;
-                            await new Promise(r => setTimeout(r, 100)); // allow interval encoding
+                        try {
+                            ctx.getImageData(canvas.width / 2, canvas.height / 2, 1, 1);
+                            const dataUrl = canvas.toDataURL('image/webp', 0.5);
+                            frames.push(dataUrl);
+                        } catch (err) {
+                            console.warn("[VaultProcessor] Canvas tainted, CORS block on video source.");
                         }
                     }
 
-                    recorder.stop();
+                    clearTimeout(timeoutId);
+                    if (objectUrl) URL.revokeObjectURL(objectUrl);
+                    if (hls) hls.destroy();
+
+                    if (frames.length > 0) {
+                        const payload = {
+                            isFrames: true,
+                            frames: frames
+                        };
+                        const jsonBlob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+                        console.log("[VaultProcessor] WebP frames preview generated:", jsonBlob.size, "bytes");
+                        resolve(jsonBlob);
+                    } else {
+                        console.error("[VaultProcessor] No frames captured");
+                        resolve(null);
+                    }
                 } catch (e) {
                     console.error("[VaultProcessor] Processing loop failed:", e);
                     clearTimeout(timeoutId);
-                    URL.revokeObjectURL(objectUrl);
-                    if (video.parentNode) video.parentNode.removeChild(video);
+                    if (objectUrl) URL.revokeObjectURL(objectUrl);
+                    if (hls) hls.destroy();
                     resolve(null);
                 }
             });
@@ -228,12 +254,11 @@ async function processVideoPreview(mediaUrl: string, duration: number): Promise<
             video.addEventListener('error', (e) => {
                 console.error("[VaultProcessor] Video load error for native processing", video.error);
                 clearTimeout(timeoutId);
-                URL.revokeObjectURL(objectUrl);
-                if (video.parentNode) video.parentNode.removeChild(video);
+                if (objectUrl) URL.revokeObjectURL(objectUrl);
+                if (hls) hls.destroy();
                 resolve(null);
             });
             
-            // Do not append to body. video.load() without appending causes no autoplay constraints
             video.load();
         });
     } catch (e) {

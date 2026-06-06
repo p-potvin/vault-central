@@ -393,7 +393,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                  <h4 className="text-red-400 font-bold flex items-center gap-2"><Icons.AlertIcon size={16}/> Wipe Vault Data</h4>
                  <p className="text-xs text-red-400/70 mt-1">Permanently obliterate all bookmarks, metadata, and locally stored previews.</p>
                </div>
-               <button onClick={onWipeVault} className="vault-btn py-2 px-4 shadow-[0_0_15px_-3px_var(--color-red-500)] text-xs font-black uppercase tracking-widest bg-red-600 hover:bg-red-500 text-white border border-red-400/60 whitespace-nowrap">
+               <button onClick={onWipeVault} className="vault-btn py-2 px-4 shadow-[0_0_15px_-3px_var(--vault-signal-alert)] text-xs font-black uppercase tracking-widest bg-red-600 hover:bg-red-500 text-white border border-red-400/60 whitespace-nowrap">
                  Wipe Database
                </button>
              </div>
