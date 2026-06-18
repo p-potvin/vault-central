@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "VaultWares - Vault Central",
+  "name": "Vault Central | VaultWares",
   "short_name": "Vault Central",
-  "version": "3.2.0",
-  "description": "A privacy-first video vault. Save and revisit favorite videos from around the web without hidden tracking.",
+  "version": "3.4.3",
+  "description": "A browser extension to save and revisit your favorite videos from around the web. Fully encrypted locally so only you can ever access it. Losing your PIN is not recommended.",
   "browser_specific_settings": {
     "gecko": {
       "id": "vault-central@p-potvin",
@@ -32,20 +32,20 @@
     "pages": ["src/offscreen/sandbox.html"]
   },
   "action": {
-    "default_title": "Open Vault Central",
+    "default_title": "Access Vault Central",
     "default_popup": "pin-entry.html",
     "default_icon": {
-      "16": "icons/icon16.png",
-      "32": "icons/icon32.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
+      "16": "icons/vaultwares-gold-filled-16.png",
+      "32": "icons/vaultwares-gold-filled-32.png",
+      "48": "icons/vaultwares-gold-filled-48.png",
+      "128": "icons/vaultwares-gold-filled-128.png"
     }
   },
   "icons": {
-    "16": "icons/icon16.png",
-    "32": "icons/icon32.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
+    "16": "icons/vaultwares-gold-filled-16.png",
+    "32": "icons/vaultwares-gold-filled-32.png",
+    "48": "icons/vaultwares-gold-filled-48.png",
+    "128": "icons/vaultwares-gold-filled-128.png"
   },
   "background": {
     "service_worker": "background-worker.js",
@@ -85,13 +85,13 @@
       "suggested_key": {
         "default": "Alt+C"
       },
-      "description": "Opens the dashboard"
+      "description": "Opens the Vault dashboard"
     },
     "capture-video": {
       "suggested_key": {
         "default": "Alt+X"
       },
-      "description": "Capture video source URL under mouse"
+      "description": "Captures the video under your cursor"
     }
   }
 }
