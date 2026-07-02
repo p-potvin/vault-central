@@ -1,6 +1,6 @@
 {
   "name": "vault-central",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "VaultWares Vault Central — a privacy-first browser extension that instantly saves videos and links under your cursor into an AES-256-encrypted local vault, complete with a fully themed dashboard, HLS stream interception, FFmpeg preview generation, and optional PIN lock.",
   "main": "content.js",
   "scripts": {
