@@ -33,8 +33,6 @@ export const PreviewThumb: React.FC<PreviewThumbProps> = React.memo(({ video }) 
   const [isProcessing, setIsProcessing] = useState(false);
   const wasHovering = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const hoverVideoRef = useRef<HTMLVideoElement>(null);
-  const [nativePlaybackFailed, setNativePlaybackFailed] = useState(false);
 
   const markPreviewAsFailed = async (videoUrl: string) => {
     try {
@@ -101,49 +99,17 @@ export const PreviewThumb: React.FC<PreviewThumbProps> = React.memo(({ video }) 
     }
   }, [isHovering, previewBlob]);
 
-  // Native video preview segment-hopping logic (for videos without pre-generated previews)
-  useEffect(() => {
-    const videoEl = hoverVideoRef.current;
-    if (!videoEl || !isHovering || !video.rawVideoSrc || previewBlob) return;
-
-    let segmentTimer: ReturnType<typeof setTimeout> | null = null;
-    let currentSegment = 0;
-    const numSegments = 5;
-    const segmentDuration = 2000; // 2 seconds per segment
-    
-    const playNextSegment = () => {
-      if (!videoEl || videoEl.paused) return;
-      const duration = videoEl.duration || (typeof video.duration === 'number' ? video.duration : parseFloat(video.duration as any) || 0) || 60;
-      const interval = Math.max(2, (duration - 10) / (numSegments - 1));
-      const targetTime = currentSegment * interval;
-      
-      console.log(`[PreviewThumb] Native segment hop: seeking to ${targetTime.toFixed(1)}s`);
-      videoEl.currentTime = targetTime;
-      
-      segmentTimer = setTimeout(() => {
-        currentSegment = (currentSegment + 1) % numSegments;
-        playNextSegment();
-      }, segmentDuration);
-    };
-
-    const onCanPlay = () => {
-      videoEl.play().catch(() => {});
-      if (!segmentTimer) {
-        playNextSegment();
-      }
-    };
-
-    videoEl.addEventListener('canplay', onCanPlay);
-    if (videoEl.readyState >= 2) {
-      onCanPlay();
-    }
-
-    return () => {
-      if (segmentTimer) clearTimeout(segmentTimer);
-      videoEl.removeEventListener('canplay', onCanPlay);
-      videoEl.pause();
-    };
-  }, [isHovering, video.rawVideoSrc, video.duration, previewBlob]);
+  /**
+   * There used to be a "native segment hop" fallback here: when an item had no
+   * stored preview, hovering it streamed the *remote* source into a <video> and
+   * seeked across the whole file (0s → 409s → 818s → 1227s → 1636s on a 34-minute
+   * video), looping every 2s. Every one of those seeks is a fresh HTTP range
+   * request against the origin, so hovering a card hammered the network and the
+   * picture barely moved. Removed Mon, 03 Aug 2026.
+   *
+   * The generated preview *is* that idea done once, offscreen, and cached — so a
+   * missing preview now asks for generation instead of improvising a slow one.
+   */
 
   useEffect(() => {
     if (!blob) return;
@@ -197,12 +163,15 @@ export const PreviewThumb: React.FC<PreviewThumbProps> = React.memo(({ video }) 
     }
 
     /**
-     * Recovery Logic: If more than 30s have elapsed since save and the preview is
-     * still missing, the background job likely failed or was interrupted. Re-trigger
-     * generation via the offscreen generator.
+     * Recovery: the preview is missing, so the capture-time job either never ran,
+     * failed, or was interrupted. Ask the offscreen generator for it.
+     *
+     * This used to wait until 30s after the item was saved before it would try,
+     * on the assumption that the native hover fallback was covering the gap. That
+     * fallback is gone, so a hover with nothing to show should start generating
+     * immediately — waiting only leaves the card blank for longer.
      */
-    const elapsed = Date.now() - (typeof video.timestamp === 'number' ? video.timestamp : Number(video.timestamp) || 0);
-    if (elapsed > 30000 && !isProcessing && video.rawVideoSrc) {
+    if (!isProcessing && video.rawVideoSrc) {
       setIsProcessing(true);
       let startedPolling = false;
       try {
@@ -262,24 +231,20 @@ export const PreviewThumb: React.FC<PreviewThumbProps> = React.memo(({ video }) 
             }
           }}
         />
-      ) : (previewBlob || (isHovering && video.rawVideoSrc && !nativePlaybackFailed)) ? (
+      ) : previewBlob ? (
+        // Only ever a locally stored preview blob — never the remote source.
         <video
-          ref={previewBlob ? videoRef : hoverVideoRef}
-          src={(previewBlob || video.rawVideoSrc) ?? undefined}
+          ref={videoRef}
+          src={previewBlob}
           className="w-full h-full object-cover"
           preload="auto"
           muted
-          loop={!!previewBlob}
+          loop
           playsInline
           onError={() => {
-            if (previewBlob) {
-              console.warn(`[PreviewThumb] WebM preview decoding failed for: ${video.url}. Falling back to native player.`);
-              void markPreviewAsFailed(video.url);
-              setPreviewBlob(null);
-            } else {
-              console.warn(`[PreviewThumb] Native video preview playback failed for: ${video.rawVideoSrc}`);
-              setNativePlaybackFailed(true);
-            }
+            console.warn(`[PreviewThumb] Stored preview failed to decode for: ${video.url}`);
+            void markPreviewAsFailed(video.url);
+            setPreviewBlob(null);
           }}
         />
       ) : (
@@ -307,7 +272,7 @@ export const PreviewThumb: React.FC<PreviewThumbProps> = React.memo(({ video }) 
           <Icons.LoaderIcon className="text-vault-accent animate-spin" size={20} />
         </div>
       ) : (
-        !previewBlob && !frameSequence && isHovering && !video.rawVideoSrc && (
+        !previewBlob && !frameSequence && isHovering && (
           <div className="absolute bottom-2 left-2 bg-black/60 text-[8px] text-white px-1 rounded uppercase tracking-tighter z-10">
             {video.previewStatus === 'failed' ? 'Preview failed' : 'Generating preview…'}
           </div>

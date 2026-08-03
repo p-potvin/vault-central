@@ -26,8 +26,12 @@ export default defineConfig({
           // (vault-central-logo.{png,svg}, vault-central-nobg.{png,svg}) and the
           // unused nobg derivatives stay in the repo but must not ship — they add
           // ~3.4 MB of dead weight to every AMO upload.
+          // Trailing [0-9] so this covers both the solid and -nobg sized sets
+          // while still excluding the masters (…-logo.png, …-nobg.png, *.svg).
+          // Whichever set manifest.json points at, verify-manifest-icons.cjs
+          // fails the build if a referenced file did not get copied.
           // dest '.' because the glob keeps its own `icons/` path segment.
-          src: 'icons/vault-central-[0-9]*.png',
+          src: 'icons/vault-central-*[0-9].png',
           dest: '.',
         },
         {

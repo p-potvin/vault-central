@@ -10,6 +10,7 @@ import {
   type BackupSettings
 } from '../lib/storage-vault';
 import { VideoDataSchema, type VideoData } from '../types/schemas';
+import { restoreAnyBackup } from '../lib/backup-vault';
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -82,28 +83,25 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
     reader.onload = async (event) => {
       try {
         const json = JSON.parse(event.target?.result as string);
-        if (Array.isArray(json)) {
-          const current = await getSavedVideos(true);
-          const knownUrls = new Set(current.map(item => item.url));
-          const validImports = json
-            .map(item => VideoDataSchema.safeParse(item))
-            .filter((result): result is { success: true; data: VideoData } => result.success)
-            .map(result => result.data);
-          const additions = validImports.filter(item => {
-            if (knownUrls.has(item.url)) return false;
-            knownUrls.add(item.url);
-            return true;
-          });
-          const next = [...current, ...additions];
-          await saveVideos(next);
-          onImportSuccess(next);
-          onShowToast(`Imported ${additions.length} items. Skipped ${json.length - additions.length}.`, "success");
-          onClose();
-        } else {
-          onShowToast("Failed to import. Backup must be a JSON array.", "error");
-        }
-      } catch (err) {
-        onShowToast("Failed to import. Invalid JSON backup.", "error");
+        // Accepts both shapes: the metadata-only array from "Export Vault JSON"
+        // and the full daily backup object (videos + previews + vault material).
+        // The full backup used to be rejected outright as "must be a JSON array".
+        const result = await restoreAnyBackup(json);
+        onImportSuccess(await getSavedVideos(true));
+
+        const parts = [`Imported ${result.videosAdded} items`];
+        if (result.videosSkipped > 0) parts.push(`skipped ${result.videosSkipped}`);
+        if (result.previewsRestored > 0) parts.push(`restored ${result.previewsRestored} previews`);
+        if (result.vaultMaterialRestored) parts.push('restored vault keys');
+        onShowToast(`${parts.join(', ')}.`, "success");
+
+        for (const warning of result.warnings) onShowToast(warning, "error");
+        onClose();
+      } catch (err: any) {
+        const message = err?.message === 'Unrecognised backup file'
+          ? "Failed to import. Not a Vault Central backup file."
+          : "Failed to import. Invalid JSON backup.";
+        onShowToast(message, "error");
       }
     };
     reader.readAsText(file);

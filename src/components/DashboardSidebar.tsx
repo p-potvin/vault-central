@@ -48,18 +48,18 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
   totalItems,
   visibleItems,
 }) => {
-  const sectionLabel = "text-[10px] font-bold text-vault-muted/90 flex items-center gap-1.5 mb-1.5 uppercase tracking-wider";
-  const field = "w-full bg-vault-bg border border-vault-border text-[11px] px-2 py-1 rounded outline-none focus:border-vault-accent text-vault-text";
+  const sectionLabel = "text-[10px] font-bold text-vault-muted/90 flex items-center gap-1.5 mb-2 uppercase tracking-wider";
+  const field = "w-full bg-vault-bg border border-vault-border text-[11px] px-2 py-1.5 rounded outline-none focus:border-vault-accent text-vault-text";
 
   return (
     <aside
       data-testid="dashboard-sidebar"
       className={cn(
         "bg-vault-cardBg/30 border-r border-vault-border transition-all duration-300 overflow-y-auto h-full flex flex-col",
-        isSidebarOpen ? "w-56 px-3 py-3 opacity-100 visible" : "w-0 p-0 opacity-0 invisible border-none"
+        isSidebarOpen ? "w-60 px-4 py-4 opacity-100 visible" : "w-0 p-0 opacity-0 invisible border-none"
       )}
     >
-      <div className="space-y-3.5">
+      <div className="space-y-5">
         {/* View Mode */}
         <div>
           <label className={sectionLabel}>
@@ -121,7 +121,7 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
             </select>
             <button
               onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-              className="vault-btn flex-none px-2 py-1 text-[10px] font-bold"
+              className="vault-btn flex-none px-2.5 py-1.5 text-[10px] font-bold"
               title="Toggle Asc/Desc"
             >
               {sortOrder === 'asc' ? 'ASC' : 'DESC'}
@@ -129,14 +129,14 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
           </div>
         </div>
 
-        <hr className="border-vault-border opacity-50" />
+        <hr className="border-vault-border opacity-50 -mx-1" />
 
         {/* PIN System */}
         <div>
           <label className={sectionLabel}>
             <Icons.PinIcon size={13} className="text-vault-accent" /> PIN Protection
           </label>
-          <div className="space-y-2.5">
+          <div className="space-y-3">
             {/* Horizontal switch. Explicit px sizing: the width and height
              * utilities are exactly what broke this before (h-5 resolved to
              * 40px against a 36px width), so the pill geometry is pinned here. */}
@@ -163,7 +163,7 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
             </label>
 
             {pinSettings?.enabled && (
-              <div className="space-y-2 animate-in slide-in-from-top-2 duration-300">
+              <div className="space-y-2.5 animate-in slide-in-from-top-2 duration-300">
                 <div>
                   <span className="text-[9px] text-vault-muted font-bold block mb-1 uppercase opacity-60">Sequence Length</span>
                   <div className="flex gap-1.5">
@@ -201,7 +201,7 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
 
                 <button
                   onClick={lockVaultNow}
-                  className="w-full py-1 text-[10px] font-black uppercase tracking-widest bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white transition-all rounded-sm"
+                  className="w-full py-1.5 text-[10px] font-black uppercase tracking-widest bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white transition-all rounded-sm"
                 >
                   Lock Vault Now
                 </button>
@@ -210,7 +210,7 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
           </div>
         </div>
 
-        <hr className="border-vault-border opacity-50" />
+        <hr className="border-vault-border opacity-50 -mx-1" />
 
         {/* Sync Option */}
         <div>
@@ -242,7 +242,7 @@ export const DashboardSidebar: React.FC<DashboardSidebarProps> = ({
           </p>
         </div>
 
-        <hr className="border-vault-border opacity-50" />
+        <hr className="border-vault-border opacity-50 -mx-1" />
 
         <div className="flex items-center justify-between gap-2 text-[10px] text-vault-muted uppercase tracking-wider font-bold">
           <span>Total Items: <strong className="text-vault-accent font-black">{totalItems}</strong></span>
