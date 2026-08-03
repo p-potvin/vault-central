@@ -1,4 +1,8 @@
 import browser from 'webextension-polyfill';
+import { captureFrames } from '../lib/frame-capture';
+
+/** Matches the offscreen processor: fewer than this and the capture stalled. */
+const MIN_USABLE_FRAMES = 4;
 async function run() {
     const params = new URLSearchParams(window.location.search);
     const videoUrl = params.get('src');
@@ -24,43 +28,27 @@ async function run() {
         });
         const duration = (video.duration && !isNaN(video.duration) && video.duration > 0) ? video.duration : 60;
         console.log("[ScraperPlayer] Video loaded. Duration: ", duration);
-        // Capture WebP preview
-        const canvas = document.createElement('canvas');
-        canvas.width = 426;
-        canvas.height = 240;
-        const ctx = canvas.getContext('2d');
-        if (!ctx)
-            throw new Error("Canvas context is null");
 
-        // 30 segments
-        const startOffset = duration * 0;
-        const endOffset = duration * 0.95;
-        const segmentLength = (endOffset - startOffset) / 29;
-        video.muted = true;
-        await video.play().catch(() => { });
-        video.pause();
-        const frames = [];
-        for (let i = 0; i < 30; i++) {
-            video.currentTime = startOffset + (i * segmentLength);
-            await new Promise(r => {
-                let finished = false;
-                const done = () => {
-                    if (finished)
-                        return;
-                    finished = true;
-                    video.removeEventListener('seeked', seeked);
-                    r(null);
-                };
-                const seeked = () => done();
-                video.addEventListener('seeked', seeked);
-                setTimeout(done, 1500); // 1.5s max seek timeout for background safety
-            });
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const dataUrl = canvas.toDataURL('image/webp', 0.5);
-            frames.push(dataUrl);
-        }
+        // Shared with the offscreen processor. The loop that used to live here
+        // abandoned each seek after 1500ms and then immediately issued the next
+        // one, which supersedes the pending seek — so on a slow source the element
+        // never settled (a 34-minute video that never got past ~2 minutes) and all
+        // but one or two frames were captured from a stale or empty decoder.
+        const capture = await captureFrames(video, { frameCount: 10 });
+        console.log(
+            `[ScraperPlayer] Capture: ${capture.frames.length}/${capture.attempted} usable` +
+            ` (${capture.timedOut} seek timeouts, ${capture.blank} blank, ${capture.tainted} tainted)`
+        );
 
         URL.revokeObjectURL(blobUrl);
+
+        if (capture.frames.length < MIN_USABLE_FRAMES) {
+            throw new Error(
+                `Only ${capture.frames.length} usable frames captured (need ${MIN_USABLE_FRAMES}); refusing to store a broken preview`
+            );
+        }
+
+        const frames = capture.frames;
         const payload = {
             isFrames: true,
             frames: frames

@@ -16,54 +16,15 @@
 
 import browser from 'webextension-polyfill';
 import { savePreview } from '../lib/vault-client';
+import { captureFrames } from '../lib/frame-capture';
 import Hls from 'hls.js';
 
-// ────────────────────────────────────────────────────────────
-// Frame capture helpers
-// ────────────────────────────────────────────────────────────
-
-type VideoWithFrameCallback = HTMLVideoElement & {
-    requestVideoFrameCallback?: (cb: () => void) => number;
-};
-
 /**
- * Resolve once the element has actually painted a frame for the current
- * position. `seeked` fires when the seek lands, which is earlier than the
- * decoder presenting the frame — drawing at that point captures solid black.
- *
- * requestVideoFrameCallback is the precise signal; where it is unavailable we
- * fall back to two animation frames, which lets a paint land in practice.
- * Both paths are capped so a stalled decoder cannot hang generation.
+ * Below this many usable frames the result is not worth storing: a stalling seek
+ * loop reliably yields one or two good stills, and persisting that stops anything
+ * from ever retrying the item.
  */
-function waitForFramePaint(video: HTMLVideoElement, timeoutMs = 600): Promise<void> {
-    return new Promise((resolve) => {
-        let settled = false;
-        const done = () => { if (!settled) { settled = true; resolve(); } };
-        setTimeout(done, timeoutMs);
-
-        const withCallback = video as VideoWithFrameCallback;
-        if (typeof withCallback.requestVideoFrameCallback === 'function') {
-            withCallback.requestVideoFrameCallback(done);
-            return;
-        }
-        requestAnimationFrame(() => requestAnimationFrame(done));
-    });
-}
-
-/**
- * True when every sampled pixel is the same colour — i.e. the frame is a flat
- * fill (usually black) rather than real imagery. Samples a sparse grid instead
- * of reading the full bitmap; a real frame diverges almost immediately.
- */
-function isUniformCanvas(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement): boolean {
-    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const stride = 4 * 97; // prime stride so the sampling grid never aligns with the image
-    const r0 = data[0], g0 = data[1], b0 = data[2];
-    for (let i = stride; i < data.length; i += stride) {
-        if (data[i] !== r0 || data[i + 1] !== g0 || data[i + 2] !== b0) return false;
-    }
-    return true;
-}
+const MIN_USABLE_FRAMES = 4;
 
 // ────────────────────────────────────────────────────────────
 // Video processing
@@ -132,89 +93,32 @@ async function processVideoPreview(mediaUrl: string, duration: number): Promise<
 
             video.addEventListener('loadedmetadata', async () => {
                 console.log("[VaultProcessor] loadedmetadata fired, duration:", video.duration);
-                const canvas = document.createElement('canvas');
-                canvas.width = 426;  // 240p
-                canvas.height = 240;
-                const ctx = canvas.getContext('2d');
-                if (!ctx) {
+                try {
+                    const capture = await captureFrames(video, { frameCount: 10 });
+                    console.log(
+                        `[VaultProcessor] Capture: ${capture.frames.length}/${capture.attempted} usable` +
+                        ` (${capture.timedOut} seek timeouts, ${capture.blank} blank, ${capture.tainted} tainted)`,
+                    );
+
                     clearTimeout(timeoutId);
                     if (objectUrl) URL.revokeObjectURL(objectUrl);
                     if (hls) hls.destroy();
-                    return resolve(null);
-                }
 
-                try {
-                    const videoDuration = (video.duration && isFinite(video.duration)) ? video.duration : 60;
-                    const startOffset = videoDuration * 0.1;
-                    const endOffset = videoDuration * 0.9;
-                    const segmentLength = (endOffset - startOffset) / 9;
-
-                    await video.play().catch(() => {});
-                    video.pause();
-
-                    const frames: string[] = [];
-                    let blankFrames = 0;
-                    for (let i = 0; i < 10; i++) {
-                        video.currentTime = startOffset + (i * segmentLength);
-
-                        await new Promise(r => {
-                            let finished = false;
-                            const done = () => {
-                                if (finished) return;
-                                finished = true;
-                                video.removeEventListener('seeked', seeked);
-                                r(null);
-                            };
-                            const seeked = () => done();
-                            video.addEventListener('seeked', seeked);
-                            setTimeout(done, 1500);
-                        });
-
-                        // `seeked` only means the seek completed — the decoder has not
-                        // necessarily painted the new frame yet, and drawImage on an
-                        // unpainted video yields solid black. That is why most stored
-                        // previews were ten identical 419-byte black WebPs.
-                        await waitForFramePaint(video);
-
-                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                        try {
-                            const dataUrl = canvas.toDataURL('image/webp', 0.5);
-                            if (isUniformCanvas(ctx, canvas)) blankFrames++;
-                            frames.push(dataUrl);
-                        } catch (err) {
-                            console.warn("[VaultProcessor] Canvas tainted, CORS block on video source.");
-                        }
-                    }
-
-                    // A preview made entirely of blank frames is worse than none: it
-                    // looks captured, so nothing ever retries it.
-                    if (frames.length > 0 && blankFrames === frames.length) {
-                        console.error(`[VaultProcessor] All ${frames.length} captured frames were blank; discarding preview for`, mediaUrl);
-                        clearTimeout(timeoutId);
-                        if (objectUrl) URL.revokeObjectURL(objectUrl);
-                        if (hls) hls.destroy();
+                    // Require more than a token frame or two. A preview built from a
+                    // couple of stills is what a stalling seek loop produces, and
+                    // storing it means nothing ever retries this item.
+                    if (capture.frames.length < MIN_USABLE_FRAMES) {
+                        console.error(
+                            `[VaultProcessor] Only ${capture.frames.length} usable frames (need ${MIN_USABLE_FRAMES}); discarding preview for`,
+                            mediaUrl,
+                        );
                         return resolve(null);
                     }
-                    if (blankFrames > 0) {
-                        console.warn(`[VaultProcessor] ${blankFrames}/${frames.length} captured frames were blank for`, mediaUrl);
-                    }
 
-                    clearTimeout(timeoutId);
-                    if (objectUrl) URL.revokeObjectURL(objectUrl);
-                    if (hls) hls.destroy();
-
-                    if (frames.length > 0) {
-                        const payload = {
-                            isFrames: true,
-                            frames: frames
-                        };
-                        const jsonBlob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
-                        console.log("[VaultProcessor] WebP frames preview generated:", jsonBlob.size, "bytes");
-                        resolve(jsonBlob);
-                    } else {
-                        console.error("[VaultProcessor] No frames captured");
-                        resolve(null);
-                    }
+                    const payload = { isFrames: true, frames: capture.frames };
+                    const jsonBlob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+                    console.log("[VaultProcessor] WebP frames preview generated:", jsonBlob.size, "bytes");
+                    resolve(jsonBlob);
                 } catch (e) {
                     console.error("[VaultProcessor] Processing loop failed:", e);
                     clearTimeout(timeoutId);
