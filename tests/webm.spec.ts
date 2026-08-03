@@ -2,7 +2,7 @@ import { test, expect } from './extension.fixture';
 
 test.describe('WebM Preview Generation', () => {
   test('should generate a webm preview for a captured video in Chromium', async ({ page, context, extensionBaseUrl }) => {
-    // FFmpeg WASM can be slow
+    // Canvas frame capture seeks through the whole video, so allow headroom
     test.setTimeout(90000);
 
     // This test uses chrome.* APIs and is Chromium-specific.
@@ -41,7 +41,7 @@ test.describe('WebM Preview Generation', () => {
 
     // 4. Now wait for the preview to be generated in Dexie
     console.log('Checking Dexie for preview blob...');
-    // Preview generation might take some time (FFmpeg WASM)
+    // Preview generation seeks and captures 10 frames, so allow headroom
     await expect.poll(async () => {
         return await page.evaluate(async (key) => {
             // @ts-ignore - db is global in dashboard

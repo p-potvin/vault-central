@@ -1,116 +1,22 @@
 /**
- * processor.ts — Offscreen document that orchestrates FFmpeg preview generation.
+ * processor.ts — Offscreen document that generates video previews.
  *
- * FFmpeg's @ffmpeg/core is compiled with Emscripten and uses new Function() in
- * its JS glue code.  Chrome MV3 forbids 'unsafe-eval' in extension_pages CSP,
- * so we cannot run FFmpeg directly here.
+ * A preview is 10 WebP stills sampled across the video (10%–90% of its
+ * duration) and stored as a single JSON payload; PreviewThumb flips through
+ * them on hover. Everything runs on a plain <video> + <canvas> here in the
+ * offscreen document — no WASM, no sandboxed page.
  *
- * Solution: we load a sandboxed extension page (sandbox.html) as a hidden iframe.
- * Sandboxed pages are exempt from the extension's CSP — they can freely use
- * new Function() / eval().  We communicate with the sandbox exclusively via
- * window.postMessage, passing data as transferable ArrayBuffers.
- *
- * Protocol (→ sandbox, ← sandbox):
- *   → { type:'vc_init',    id, jsBytes, wasmBytes }  (clone, not transfer)
- *   ← { type:'vc_sandbox_result', id, bytes:null }   (FFmpeg ready)
- *   → { type:'vc_process', id, videoBytes, duration } (transfer videoBytes)
- *   ← { type:'vc_sandbox_result', id, bytes }        (transfer result)
- *   ← { type:'vc_sandbox_result', id, error }        (on failure)
+ * This used to drive FFmpeg WASM inside a sandboxed extension page (needed
+ * because Emscripten's glue code calls new Function(), which MV3's
+ * extension_pages CSP forbids). That path was replaced by native canvas
+ * capture and left behind as dead code carrying a 30 MB ffmpeg-core.wasm;
+ * it was removed on Sun, 02 Aug 2026. Restoring it means bringing back
+ * sandbox.ts, the sandbox manifest entry, and the ffmpeg-core copy target.
  */
 
 import browser from 'webextension-polyfill';
 import { savePreview } from '../lib/vault-client';
 import Hls from 'hls.js';
-
-// ────────────────────────────────────────────────────────────
-// Sandbox iframe management
-// ────────────────────────────────────────────────────────────
-
-type PendingEntry = { resolve: (v: any) => void; reject: (e: any) => void };
-
-let _sandboxIframe: HTMLIFrameElement | null = null;
-let _ffmpegCoreBytes: { js: ArrayBuffer; wasm: ArrayBuffer } | null = null;
-let _sandboxReady = false;
-let _initPromise: Promise<void> | null = null;
-const _pending = new Map<string, PendingEntry>();
-
-window.addEventListener('message', (event) => {
-    const msg = event.data;
-    if (!msg || msg.type !== 'vc_sandbox_result') return;
-    const entry = _pending.get(msg.id);
-    if (!entry) return;
-    _pending.delete(msg.id);
-    if (msg.error) entry.reject(new Error(msg.error));
-    else entry.resolve(msg.bytes ?? null);
-});
-
-function createSandboxIframe(): Promise<HTMLIFrameElement> {
-    return new Promise((resolve) => {
-        const iframe = document.createElement('iframe');
-        iframe.src = browser.runtime.getURL('src/offscreen/sandbox.html');
-        iframe.style.cssText = 'position:absolute;width:0;height:0;border:0';
-        document.body.appendChild(iframe);
-        iframe.addEventListener('load', () => {
-            _sandboxIframe = iframe;
-            resolve(iframe);
-        }, { once: true });
-    });
-}
-
-async function initSandbox(): Promise<void> {
-    const iframe = await createSandboxIframe();
-
-    // Fetch FFmpeg core files (only once per offscreen document lifetime).
-    if (!_ffmpegCoreBytes) {
-        const [js, wasm] = await Promise.all([
-            fetch(browser.runtime.getURL('ffmpeg-core/ffmpeg-core.js')).then(r => r.arrayBuffer()),
-            fetch(browser.runtime.getURL('ffmpeg-core/ffmpeg-core.wasm')).then(r => r.arrayBuffer()),
-        ]);
-        _ffmpegCoreBytes = { js, wasm };
-    }
-
-    // Send init message.  Do NOT transfer the buffers — processor must keep
-    // its copy so it can re-initialize a new sandbox if the iframe is torn down.
-    await new Promise<void>((resolve, reject) => {
-        const id = '_init_' + Date.now();
-        const timeoutId = setTimeout(() => {
-            _pending.delete(id);
-            reject(new Error('[VaultProcessor] Sandbox init timed out'));
-        }, 60_000);
-
-        _pending.set(id, {
-            resolve: () => { clearTimeout(timeoutId); _sandboxReady = true; resolve(); },
-            reject: (e) => { clearTimeout(timeoutId); reject(e); },
-        });
-
-        console.log("[VaultProcessor] Sending vc_init to sandbox iframe...");
-        iframe.contentWindow!.postMessage(
-            { type: 'vc_init', id, jsBytes: _ffmpegCoreBytes!.js, wasmBytes: _ffmpegCoreBytes!.wasm },
-            '*',
-        );
-    });
-}
-
-/**
- * Returns a ready sandbox iframe, initialising it exactly once even under
- * concurrent callers.
- */
-async function ensureSandbox(): Promise<HTMLIFrameElement> {
-    if (_sandboxReady && _sandboxIframe && document.body.contains(_sandboxIframe)) {
-        return _sandboxIframe;
-    }
-    // Reset ready flag if iframe disappeared (e.g., offscreen doc recycled).
-    _sandboxReady = false;
-    if (!_initPromise) {
-        _initPromise = initSandbox().catch((e) => {
-            // Allow retry on next call.
-            _initPromise = null;
-            throw e;
-        });
-    }
-    await _initPromise;
-    return _sandboxIframe!;
-}
 
 // ────────────────────────────────────────────────────────────
 // Video processing

@@ -54,7 +54,7 @@
 
 ## 🧠 Phase 5: Vault Intelligence (Advanced Previews) [COMPLETED]
 - [x] **Binary Storage**: Dexie.js (IndexedDB) for storing high-fidelity preview Blobs.
-- [x] **Offscreen Processor**: FFmpeg WASM implementation via \chrome.offscreen\.
+- [x] **Offscreen Processor**: canvas frame capture via \chrome.offscreen\ (FFmpeg WASM removed Sun, 02 Aug 2026 — it had been unreachable since the switch to native capture).
 - [ ] **YouTube-style Preview**: 10 chunks of 2s muted WebM playback on hover.
 - [x] **Automated Processing**: Background job triggered immediately on save.
 - [ ] **Fault Tolerance**: Manual recovery job triggered on hover if >30s elapsed since save.

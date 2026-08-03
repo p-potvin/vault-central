@@ -1,11 +1,11 @@
 {
   "name": "vault-central",
-  "version": "3.4.5",
-  "description": "VaultWares Vault Central — a privacy-first browser extension that instantly saves videos and links under your cursor into an AES-256-encrypted local vault, complete with a fully themed dashboard, HLS stream interception, FFmpeg preview generation, and optional PIN lock.",
+  "version": "3.5.0",
+  "description": "VaultWares Vault Central — a privacy-first browser extension that instantly saves videos and links under your cursor into an AES-256-encrypted local vault, complete with a fully themed dashboard, HLS stream interception, canvas-based preview generation, and optional PIN lock.",
   "main": "content.js",
   "scripts": {
     "dev": "vite",
-    "build": "python scripts/generate-themes.py && tsc && vite build && npx esbuild src/scripts/content.ts --bundle --outfile=dist/content.js --format=iife --target=es2020 --minify && npx esbuild background/scripts/background.ts --bundle --outfile=dist/background-worker.js --format=iife --target=es2020 --minify && npx esbuild src/offscreen/processor.ts --bundle --outfile=dist/src/offscreen/processor.js --format=iife --target=es2020 --minify && npx esbuild src/offscreen/sandbox.ts --bundle --outfile=dist/src/offscreen/sandbox.js --format=iife --target=es2020 --minify && npx esbuild src/scripts/scraper-player.ts --bundle --outfile=dist/scraper-player.js --format=iife --target=es2020 --minify && node package-extension.cjs",
+    "build": "python scripts/generate-themes.py && tsc && vite build && npx esbuild src/scripts/content.ts --bundle --outfile=dist/content.js --format=iife --target=es2020 --minify && npx esbuild background/scripts/background.ts --bundle --outfile=dist/background-worker.js --format=iife --target=es2020 --minify && npx esbuild src/offscreen/processor.ts --bundle --outfile=dist/src/offscreen/processor.js --format=iife --target=es2020 --minify && npx esbuild src/scripts/scraper-player.ts --bundle --outfile=dist/scraper-player.js --format=iife --target=es2020 --minify && node package-extension.cjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview"
@@ -66,9 +66,6 @@
     "zod": "^4.3.6"
   },
   "dependencies": {
-    "@ffmpeg/core": "^0.12.10",
-    "@ffmpeg/ffmpeg": "^0.12.15",
-    "@ffmpeg/util": "^0.12.2",
     "@noble/hashes": "^2.2.0",
     "@noble/post-quantum": "^0.6.1",
     "@tanstack/react-query": "^5.95.0",

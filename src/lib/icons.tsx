@@ -21,25 +21,29 @@ function createExtensionSafeIcon(IconComponent: React.ComponentType<LucideProps>
 // --- Vault Dashboard Icons ---
 
 // Dashboard/Sidebar
-export const VaultWaresIcon = forwardRef<SVGSVGElement, LucideProps>((props, ref) => {
-  const { size = 26, className, ...rest } = props;
-  return (
-    <svg
+/**
+ * The Vault Central brand mark. Was a hand-drawn inline <svg> of the old
+ * VaultWares "V"; now just renders the shipped icon so the brand lives in one
+ * place (icons/) instead of being duplicated as path data. The `vault-central-logo`
+ * class is a stable hook for styling — the raster has no addressable internals.
+ *
+ * Path is relative to the extension root, which is where dashboard-v2.html and
+ * pin-entry.html both live.
+ */
+export const VaultCentralLogo = forwardRef<HTMLImageElement, { size?: number; className?: string; alt?: string }>(
+  ({ size = 26, className = '', alt = 'Vault Central' }, ref) => (
+    <img
       ref={ref}
-      viewBox="0 0 120 120"
+      src="icons/vault-central-64.png"
       width={size}
       height={size}
-      className={className}
-      {...rest}
-      style={undefined}
-    >
-      <path d="M20 15 L38 15 L60 82 L82 15 L100 15 L67 108 L53 108 Z" fill="var(--vault-accent, #CC9B21)" />
-      <ellipse cx="60" cy="58" rx="12" ry="11" fill="none" stroke="currentColor" strokeWidth="2.5" className="opacity-80" />
-      <circle cx="60" cy="58" r="4" fill="var(--vault-accent, #CC9B21)" />
-    </svg>
-  );
-});
-VaultWaresIcon.displayName = 'VaultWaresIcon';
+      alt={alt}
+      className={`vault-central-logo ${className}`.trim()}
+      draggable={false}
+    />
+  ),
+);
+VaultCentralLogo.displayName = 'VaultCentralLogo';
 export const ViewModeIcon = createExtensionSafeIcon(LucideIcons.SlidersHorizontal); // for view mode
 export const ThemeIcon = createExtensionSafeIcon(LucideIcons.Palette); // for theme
 export const SettingsIcon = createExtensionSafeIcon(LucideIcons.Settings); // for settings/advanced

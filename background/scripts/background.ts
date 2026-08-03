@@ -855,7 +855,7 @@ async function setupOffscreenDocument(): Promise<boolean> {
         await (browser as any).offscreen.createDocument({
             url: offscreenUrl,
             reasons: ['DOM_PARSER', 'AUDIO_PLAYBACK', 'BLOBS' as any],
-            justification: 'FFmpeg WASM processing for video previews'
+            justification: 'Canvas-based video preview generation'
         });
         logger.log("[setupOffscreenDocument] Offscreen document created. Waiting 800ms to allow initialization...");
         await new Promise((resolve) => setTimeout(resolve, 800));

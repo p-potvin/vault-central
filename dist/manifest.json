@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Vault Central | VaultWares",
   "short_name": "Vault Central",
-  "version": "3.4.5",
+  "version": "3.5.0",
   "description": "A browser extension to save and revisit your favorite videos from around the web. Fully encrypted locally so only you can ever access it. Losing your PIN is not recommended.",
   "browser_specific_settings": {
     "gecko": {
@@ -26,10 +26,7 @@
     "<all_urls>"
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' * data: blob:;"
-  },
-  "sandbox": {
-    "pages": ["src/offscreen/sandbox.html"]
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' * data: blob:;"
   },
   "action": {
     "default_title": "Access Vault Central",
@@ -70,10 +67,7 @@
         "dashboard.js",
         "pin.js",
         "vault-themes.js",
-        "vault-themes.css",
-        "ffmpeg-core/ffmpeg-core.js",
-        "ffmpeg-core/ffmpeg-core.wasm",
-        "ffmpeg-core/ffmpeg-worker.js"
+        "vault-themes.css"
       ],
       "matches": [
         "<all_urls>"

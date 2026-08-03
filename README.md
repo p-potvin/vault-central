@@ -15,7 +15,7 @@ Vault Central is a privacy-first browser extension that lets you instantly save 
 | 🎯 **One-Keystroke Capture** | `Alt+X` saves the closest video or link under the cursor — thumbnail, metadata, and raw stream URL |
 | 🔍 **HLS Interception** | Silently opens a minimized background tab, intercepts `.m3u8` / `.mp4` network requests, and resolves the real stream before saving |
 | 🖼️ **Rich Metadata** | Extracts title, description, author, duration, views, tags, and thumbnail via LD+JSON and DOM scraping |
-| 🎬 **FFmpeg Preview Clips** | Automatically generates a 10-frame WebM preview using FFmpeg WASM and stores it in IndexedDB via Dexie.js |
+| 🎬 **Hover Preview Clips** | Samples 10 WebP stills across the video on a canvas and stores them in IndexedDB via Dexie.js; the grid flips through them on hover |
 | 🎨 **12 Built-in Themes** | Solarized Light/Dark plus 10 vaultwares-themes skins; upload your own CSS from the settings panel |
 | 🔒 **Optional PIN Lock** | 4- or 6-digit AES-256 PIN encrypts IndexedDB blobs and locks the dashboard after a configurable idle timeout |
 | 🔔 **Live Site Indicators** | Injects a subtle heart icon on already-saved thumbnails; toast notifications confirm saves in real time |
@@ -117,7 +117,7 @@ vault-central/
 
 - **TypeScript 5.9+** — `src/types/css.d.ts` declares `module '*.css'` to satisfy the TS2882 side-effect import check required for CSS imports in `dashboard-entry.tsx` and `pin-entry.tsx`.
 - **vaultwares-themes submodule** — must be initialised (`git submodule update --init`) before running the build; `generate-themes.py` fails otherwise.
-- **FFmpeg WASM** — loaded via `chrome.offscreen` in the background worker; no server-side processing.
+- **Offscreen preview generation** — a `chrome.offscreen` document seeks a `<video>` and captures frames to a `<canvas>`; no WASM, no server-side processing.
 
 ---
 
@@ -137,7 +137,7 @@ vault-central/
 │   │    score network URLs (m3u8 > mp4 > webm)       │
 │   │    inject scraper → LD+JSON + player activation │
 │   └─ storeVaultItem()  → Dexie IndexedDB            │
-│         └─ FFmpeg WASM offscreen preview generation │
+│         └─ offscreen canvas preview generation      │
 └──────────────────────────────────────────────────────┘
                                                        │
 ┌──────────────── Dashboard (dashboard-v2.html) ───────┘

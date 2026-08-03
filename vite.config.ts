@@ -35,16 +35,6 @@ export default defineConfig({
           dest: 'src/offscreen',
           rename: { stripBase: true },
         },
-        {
-          src: 'src/offscreen/sandbox.html',
-          dest: 'src/offscreen',
-          rename: { stripBase: true },
-        },
-        {
-          src: 'node_modules/@ffmpeg/core/dist/esm/*',
-          dest: 'ffmpeg-core',
-          rename: { stripBase: true },
-        },
       ],
     }),
 ],

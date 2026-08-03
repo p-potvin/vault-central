@@ -551,9 +551,7 @@ export const VaultDashboard: React.FC = () => {
       <header style={{ backgroundColor: 'var(--vault-card-bg)' }} className="flex-none h-16 flex items-center justify-between px-4 md:px-6 z-20 backdrop-blur-md border-b border-vault-border shadow-sm relative">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-3">
-            <div className="text-vault-accent">
-              <Icons.VaultWaresIcon size={26} strokeWidth={2.5} />
-            </div>
+            <Icons.VaultCentralLogo size={26} />
             <div className="leading-tight">
               <h1 className="text-xl font-bold tracking-tight flex items-center gap-1">
                 Vault<span className="text-vault-accent font-light">Central</span>
