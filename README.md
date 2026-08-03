@@ -1,4 +1,4 @@
-![VaultWares](https://img.shields.io/badge/VaultWares-Privacy--First-blue?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0xMiAxTDMgNXY2YzAgNS41NSAzLjg0IDEwLjc0IDkgMTIgNS4xNi0xLjI2IDktNi40NSA5LTEyVjVsLTktNHoiLz48L3N2Zz4=) ![Version](https://img.shields.io/badge/version-3.2.0-green?style=for-the-badge) ![License](https://img.shields.io/badge/license-ISC-lightgrey?style=for-the-badge) ![Chrome](https://img.shields.io/badge/Chrome-Supported-yellow?style=for-the-badge&logo=googlechrome) ![Firefox](https://img.shields.io/badge/Firefox-Supported-orange?style=for-the-badge&logo=firefox)
+![VaultWares](icons/vault-central-logo.png) ![License](https://img.shields.io/badge/license-ISC-lightgrey?style=for-the-badge) ![Chrome](https://img.shields.io/badge/Chrome-Supported-yellow?style=for-the-badge&logo=googlechrome) ![Firefox](https://img.shields.io/badge/Firefox-Supported-orange?style=for-the-badge&logo=firefox)
 
 # 🛡️ Vault Central — by VaultWares
 
@@ -15,14 +15,12 @@ Vault Central is a privacy-first browser extension that lets you instantly save 
 | 🎯 **One-Keystroke Capture** | `Alt+X` saves the closest video or link under the cursor — thumbnail, metadata, and raw stream URL |
 | 🔍 **HLS Interception** | Silently opens a minimized background tab, intercepts `.m3u8` / `.mp4` network requests, and resolves the real stream before saving |
 | 🖼️ **Rich Metadata** | Extracts title, description, author, duration, views, tags, and thumbnail via LD+JSON and DOM scraping |
-| 🎬 **Hover Preview Clips** | Samples 10 WebP stills across the video on a canvas and stores them in IndexedDB via Dexie.js; the grid flips through them on hover |
-| 🎨 **12 Built-in Themes** | Solarized Light/Dark plus 10 vaultwares-themes skins; upload your own CSS from the settings panel |
+| 🎬 **Hover Preview Clips** | Samples 30 WebP stills across the video on a canvas and stores them in IndexedDB via Dexie.js; the grid flips through them on hover |
 | 🔒 **Optional PIN Lock** | 4- or 6-digit AES-256 PIN encrypts IndexedDB blobs and locks the dashboard after a configurable idle timeout |
 | 🔔 **Live Site Indicators** | Injects a subtle heart icon on already-saved thumbnails; toast notifications confirm saves in real time |
 | 📊 **Smart Dashboard** | Group by hostname, multi-field filter/sort, five view modes (Biggest → Details), infinite scroll, and per-section pagination |
 | 🚫 **Zero External Tracking** | Everything lives in browser-local storage — no telemetry, no sync server, no analytics |
 | ⚡ **Performance Optimized** | MutationObserver DOM scanning and URL domain parsing have been optimized to eliminate scroll jank |
-
 
 ---
 
@@ -31,15 +29,15 @@ Vault Central is a privacy-first browser extension that lets you instantly save 
 ### Prerequisites
 
 - **Node.js** ≥ 18 LTS — [Download](https://nodejs.org/)
-- **Python** ≥ 3.10 (for theme generation) — [Download](https://www.python.org/)
 - **A supported browser**: Chrome, Brave, Edge, or Firefox
 
 ### 1 — Clone & Install
 
 ```bash
-git clone https://github.com/p-potvin/vault-central.git
+git clone https://github.com/p-potvin/vault-central --recursive
 cd vault-central
-git submodule update --init   # pulls vaultwares-themes
+# in case you forgot the --recursive flag
+# git submodule update --init
 npm install
 ```
 
@@ -50,6 +48,7 @@ npm run build
 ```
 
 The build pipeline runs:
+
 1. `python scripts/generate-themes.py` — compiles vaultwares-themes CSS tokens
 2. `tsc && vite build` — transpiles TypeScript and bundles the React UI
 3. `esbuild` — bundles `content.ts` and `background.ts` as standalone IIFE scripts
