@@ -29,18 +29,15 @@ export default {
       fontFamily: {
         sans: ['"Segoe UI Semilight"', '"Segoe UI"', 'Inter', 'system-ui', 'sans-serif'],
       },
-      spacing: {
-        /* 8px grid per STYLE.md */
-        '0.5': '4px',
-        '1': '8px',
-        '1.5': '12px',
-        '2': '16px',
-        '3': '24px',
-        '4': '32px',
-        '5': '40px',
-        '6': '48px',
-        '8': '64px',
-      },
+      /* NOTE (Mon, 03 Aug 2026): there used to be a `spacing` override here that
+       * remapped 0.5/1/1.5/2/3/4/5/6/8 to 4/8/12/16/24/32/40/48/64px in the name of
+       * an "8px grid". Tailwind's default scale is already a 4px grid, so this
+       * doubled every padding, margin and gap in the app — and, worse, it only
+       * covered *some* keys. `h-5` became 40px while `w-9` stayed 36px, which is
+       * why the Master PIN toggle rendered as a circle instead of a pill.
+       * Do not reintroduce it. Use the default scale; it is the 8px grid at even
+       * numbers (p-2 = 8px, p-4 = 16px, p-6 = 24px).
+       */
       borderRadius: {
         '3xl': '1.5rem',
         '4xl': '2rem',

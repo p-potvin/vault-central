@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import browser from 'webextension-polyfill';
 import { getPinSettings, savePinSettings, isVaultLocked } from './lib/storage-vault';
 import { vaultUnlock } from './lib/vault-client';
+import { extractDigit, maskedValue, MASKED_PIN_INPUT_PROPS } from './lib/pin-mask';
 import { VAULT_THEMES, getThemeClass } from './lib/themes';
 import * as Icons from './lib/icons';
 import './styles/globals.css';
@@ -38,15 +39,16 @@ const PinPopup: React.FC = () => {
   }, []);
 
   const handleChange = (index: number, value: string) => {
-    if (!/^\d*$/.test(value)) return; // Only numbers
-    
+    const digit = extractDigit(value);
+    if (digit === null) return; // Not a digit — ignore the keystroke
+
     const newPin = [...pin];
-    newPin[index] = value.slice(-1); // Only take last char
+    newPin[index] = digit;
     setPin(newPin);
     setError(false);
 
     // Focus next box
-    if (value && index < pin.length - 1) {
+    if (digit && index < pin.length - 1) {
       inputsRef.current[index + 1]?.focus();
     }
 
@@ -138,11 +140,9 @@ const PinPopup: React.FC = () => {
           <input
             key={idx}
             ref={el => { inputsRef.current[idx] = el; }}
-            type="password"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            maxLength={1}
-            value={digit}
+            {...MASKED_PIN_INPUT_PROPS}
+            maxLength={2}
+            value={maskedValue(digit)}
             onChange={e => handleChange(idx, e.target.value)}
             onKeyDown={e => handleKeyDown(idx, e)}
             className={`

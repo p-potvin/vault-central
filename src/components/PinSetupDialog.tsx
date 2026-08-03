@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import * as Icons from '../lib/icons';
 import { cn } from '../lib/utils';
 import { vaultSetup } from '../lib/vault-client';
+import { extractDigit, maskedValue, MASKED_PIN_INPUT_PROPS } from '../lib/pin-mask';
 
 interface PinSetupDialogProps {
   isOpen: boolean;
@@ -57,9 +58,10 @@ export const PinSetupDialog: React.FC<PinSetupDialogProps> = ({
   };
 
   const handlePinSetupChange = (index: number, value: string) => {
-    if (!/^\d*$/.test(value)) return;
+    const digit = extractDigit(value);
+    if (digit === null) return;
     const newBoxes = [...pinSetupBoxes];
-    newBoxes[index] = value.slice(-1);
+    newBoxes[index] = digit;
     setPinSetupBoxes(newBoxes);
     setPinSetupError(false);
 
@@ -132,11 +134,9 @@ export const PinSetupDialog: React.FC<PinSetupDialogProps> = ({
             <input
               key={`${pinSetupLength}-${idx}`}
               ref={el => { pinSetupRefs.current[idx] = el; }}
-              type="password"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              maxLength={1}
-              value={digit}
+              {...MASKED_PIN_INPUT_PROPS}
+              maxLength={2}
+              value={maskedValue(digit)}
               disabled={isSubmitting}
               onChange={e => handlePinSetupChange(idx, e.target.value)}
               onKeyDown={e => handlePinSetupKeyDown(idx, e)}

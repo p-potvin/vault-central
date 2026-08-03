@@ -564,14 +564,14 @@ export const VaultDashboard: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="relative group flex items-center">
+          <div className="relative group flex items-center h-8">
             {/* Field selector — icon overlay on native select */}
-            <div className="relative flex-none">
+            <div className="relative flex-none h-full">
               <Icons.SortIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 text-vault-muted/70 pointer-events-none" size={13} />
               <select
                 value={searchField}
                 onChange={(e) => setSearchField(e.target.value as keyof VideoData)}
-                className="bg-vault-cardBg border border-vault-border border-r-0 rounded-l-full pl-8 pr-4 py-2 text-sm text-vault-text focus:border-vault-accent focus:z-10 outline-none appearance-none cursor-pointer"
+                className="h-full bg-vault-cardBg border border-vault-border border-r-0 rounded-l-full pl-7 pr-3 text-xs text-vault-text focus:border-vault-accent focus:z-10 outline-none appearance-none cursor-pointer"
               >
                 <option value="title">Title</option>
                 <option value="author">Author</option>
@@ -583,14 +583,14 @@ export const VaultDashboard: React.FC = () => {
                 <option value="tags">Tags</option>
               </select>
             </div>
-            <div className="relative flex-1">
-              <Icons.SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-vault-muted group-focus-within:text-vault-accent transition-colors" size={16} />
+            <div className="relative flex-1 h-full">
+              <Icons.SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 text-vault-muted group-focus-within:text-vault-accent transition-colors" size={14} />
               <input
                 type="text"
                 placeholder={`Search in ${searchField}...`}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-12 pr-4 py-2 w-64 bg-vault-cardBg border border-vault-border rounded-r-full outline-none focus:border-vault-accent focus:z-10 text-sm transition-all"
+                className="h-full pl-8 pr-3 w-56 bg-vault-cardBg border border-vault-border rounded-r-full outline-none focus:border-vault-accent focus:z-10 text-xs transition-all"
               />
             </div>
           </div>
@@ -661,10 +661,11 @@ export const VaultDashboard: React.FC = () => {
               setSidebarOpen(newState);
               localStorage.setItem('vault-sidebar-open', newState.toString());
             }}
-            className="w-4 bg-vault-cardBg/50 hover:bg-vault-cardBg border-r border-vault-border flex flex-col items-center justify-center cursor-pointer transition-colors group z-30"
+            style={{ width: 7 }}
+            className="flex-none bg-vault-cardBg/50 hover:bg-vault-cardBg border-r border-vault-border flex flex-col items-center justify-center cursor-pointer transition-colors group z-30"
             title={isSidebarOpen ? "Collapse Sidebar" : "Expand Sidebar"}
           >
-            <div className="w-1 h-8 rounded-full bg-vault-border group-hover:bg-vault-accent transition-colors" />
+            <div style={{ width: 3, height: 28 }} className="rounded-full bg-vault-border group-hover:bg-vault-accent transition-colors" />
           </div>
         </div>
 

@@ -238,9 +238,9 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
-        <div className="flex items-center justify-between p-4 border-b border-vault-border bg-vault-cardBg">
-          <h2 className="text-lg font-bold text-vault-text flex items-center gap-2">
-            <Icons.SettingsIcon size={20} className="text-vault-accent" /> Advanced Options & Export
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-vault-border bg-vault-cardBg">
+          <h2 className="text-base font-bold text-vault-text flex items-center gap-2">
+            <Icons.SettingsIcon size={16} className="text-vault-accent" /> Advanced Options & Export
           </h2>
           <button 
             onClick={onClose} 
@@ -251,32 +251,32 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 overflow-y-auto max-h-[70vh] flex flex-col gap-8">
+        <div className="p-5 overflow-y-auto max-h-[75vh] flex flex-col gap-6">
            
            {/* Export / Import */}
            <section>
-             <h3 className="text-sm font-black uppercase text-vault-muted mb-4 border-b border-vault-border pb-2 tracking-widest">Data Portability</h3>
+             <h3 className="text-xs font-black uppercase text-vault-muted mb-3 border-b border-vault-border pb-1.5 tracking-widest">Data Portability</h3>
              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-               <div className="bg-vault-cardBg border border-vault-border rounded p-4 flex flex-col gap-3">
+               <div className="bg-vault-cardBg border border-vault-border rounded p-3 flex flex-col gap-2">
                  <div className="flex items-center gap-2 text-vault-text font-bold">
                    <Icons.ExportIcon size={18} className="text-vault-accent"/> Export Vault JSON
                  </div>
                  <p className="text-xs text-vault-muted leading-relaxed flex-1">
                    Download a metadata-only JSON backup of tags, references, and saved item records.
                  </p>
-                 <button onClick={handleExportVault} className="vault-btn py-2 text-xs font-bold w-full bg-vault-accent/10 text-vault-accent border-vault-accent/30 hover:bg-vault-accent hover:text-vault-bg transition-colors">
+                 <button onClick={handleExportVault} className="vault-btn py-1.5 text-xs font-bold w-full bg-vault-accent/10 text-vault-accent border-vault-accent/30 hover:bg-vault-accent hover:text-vault-bg transition-colors">
                    Generate Backup
                  </button>
                </div>
 
-               <div className="bg-vault-cardBg border border-vault-border rounded p-4 flex flex-col gap-3">
+               <div className="bg-vault-cardBg border border-vault-border rounded p-3 flex flex-col gap-2">
                   <div className="flex items-center gap-2 text-vault-text font-bold">
                     <Icons.ImportIcon size={18} className="text-vault-accent"/> Import Vault Backup
                   </div>
                   <p className="text-xs text-vault-muted leading-relaxed flex-1">
                     Restore a previously exported Vault JSON file. Note: Pre-existing duplicate URLs will be skipped.
                   </p>
-                  <label className="vault-btn py-2 text-xs font-bold w-full bg-vault-accent/10 text-vault-accent border-vault-accent/30 hover:bg-vault-accent hover:text-vault-bg transition-colors text-center cursor-pointer">
+                  <label className="vault-btn py-1.5 text-xs font-bold w-full bg-vault-accent/10 text-vault-accent border-vault-accent/30 hover:bg-vault-accent hover:text-vault-bg transition-colors text-center cursor-pointer">
                      Select JSON File
                      <input type="file" accept=".json" onChange={handleImportVault} className="hidden" />
                   </label>
@@ -351,14 +351,14 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                    />
                    <button
                      onClick={() => void handleSaveBackupSettings()}
-                     className="vault-btn py-2 px-4 text-xs font-bold bg-vault-cardBg text-vault-text border-vault-border hover:border-vault-accent hover:text-vault-accent transition-colors"
+                     className="vault-btn flex-none whitespace-nowrap py-1.5 px-3 text-xs font-bold bg-vault-cardBg text-vault-text border-vault-border hover:border-vault-accent hover:text-vault-accent transition-colors"
                    >
                      Save Folder
                    </button>
                    <button
                      onClick={() => void handleRunFullBackup()}
                      disabled={isBackupBusy}
-                     className="vault-btn py-2 px-5 text-xs font-bold bg-vault-accent/10 text-vault-accent border-vault-accent/30 hover:bg-vault-accent hover:text-vault-bg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                     className="vault-btn flex-none whitespace-nowrap py-1.5 px-3 text-xs font-bold bg-vault-accent/10 text-vault-accent border-vault-accent/30 hover:bg-vault-accent hover:text-vault-bg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                    >
                      {isBackupBusy ? "Backing Up..." : "Run Full Backup"}
                    </button>
@@ -393,7 +393,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                  <h4 className="text-red-400 font-bold flex items-center gap-2"><Icons.AlertIcon size={16}/> Wipe Vault Data</h4>
                  <p className="text-xs text-red-400/70 mt-1">Permanently obliterate all bookmarks, metadata, and locally stored previews.</p>
                </div>
-               <button onClick={onWipeVault} className="vault-btn py-2 px-4 shadow-[0_0_15px_-3px_var(--vault-signal-alert)] text-xs font-black uppercase tracking-widest bg-red-600 hover:bg-red-500 text-white border border-red-400/60 whitespace-nowrap">
+               <button onClick={onWipeVault} className="vault-btn flex-none py-1.5 px-3 text-[11px] font-black uppercase tracking-widest bg-red-600 hover:bg-red-500 text-white border border-red-400/60 whitespace-nowrap">
                  Wipe Database
                </button>
              </div>

@@ -155,15 +155,18 @@ describe('Dashboard Component', () => {
     (storageVault.getSavedVideos as any).mockResolvedValue(mockVideos);
     const { container } = render(<VaultDashboard />);
     
-    // The sidebar has visible classes when open
+    // Assert the visible/collapsed state rather than the exact width utility —
+    // the sidebar's width is a design decision and should be free to change.
     const sidebar = container.querySelector('aside');
-    expect(sidebar).toHaveClass('w-64');
+    expect(sidebar).toHaveClass('visible');
+    expect(sidebar).not.toHaveClass('invisible');
 
     // Click the toggle bar (the div with Expand/Collapse Sidebar title)
     const toggleBar = screen.getByTitle(/Collapse Sidebar/i);
     fireEvent.click(toggleBar);
 
     await waitFor(() => {
+      expect(sidebar).toHaveClass('invisible');
       expect(sidebar).toHaveClass('w-0');
     });
   });

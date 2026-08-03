@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { vaultUnlock } from '../lib/vault-client';
 import { cn } from '../lib/utils';
+import { extractDigit, maskedValue, MASKED_PIN_INPUT_PROPS } from '../lib/pin-mask';
 import * as Icons from '../lib/icons';
 
 interface LockedBannerProps {
@@ -39,12 +40,13 @@ export const LockedBanner: React.FC<LockedBannerProps> = ({ visible, pinLength, 
   };
 
   const onChange = (idx: number, v: string) => {
-    if (!/^\d*$/.test(v)) return;
+    const digit = extractDigit(v);
+    if (digit === null) return;
     const next = [...pin];
-    next[idx] = v.slice(-1);
+    next[idx] = digit;
     setPin(next);
     setError(false);
-    if (v && idx < pinLength - 1) inputs.current[idx + 1]?.focus();
+    if (digit && idx < pinLength - 1) inputs.current[idx + 1]?.focus();
     const full = next.join('');
     if (full.length === pinLength) verify(full);
   };
@@ -72,11 +74,9 @@ export const LockedBanner: React.FC<LockedBannerProps> = ({ visible, pinLength, 
             <input
               key={idx}
               ref={el => { inputs.current[idx] = el; }}
-              type="password"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              maxLength={1}
-              value={digit}
+              {...MASKED_PIN_INPUT_PROPS}
+              maxLength={2}
+              value={maskedValue(digit)}
               disabled={busy}
               onChange={e => onChange(idx, e.target.value)}
               onKeyDown={e => onKeyDown(idx, e)}
