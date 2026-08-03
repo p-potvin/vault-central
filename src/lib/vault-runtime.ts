@@ -14,6 +14,7 @@ import {
   setupVault as cryptoSetupVault,
   unlockVault as cryptoUnlockVault,
   encryptBlobWithUnlocked,
+  encryptBlobWithPublicKey,
   decryptBlob,
   envelopeToBytes,
   envelopeFromBytes,
@@ -21,6 +22,7 @@ import {
   type VaultMaterial,
   type KemAlgorithm,
 } from './crypto-vault';
+import { installWorkerKdf } from './argon-kdf-host';
 import {
   bytesToBase64,
   base64ToBytes,
@@ -41,6 +43,14 @@ import { VaultMaterialPersisted } from '../types/schemas';
 
 let unlocked: UnlockedVault | null = null;
 let autoLockTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Push Argon2id off this thread where the platform allows it. Safe to call at
+ * module load: it only swaps crypto-vault's KDF hook, and falls back silently to
+ * inline derivation in contexts without Worker (Chrome MV3 service workers).
+ */
+const workerKdfInstalled = installWorkerKdf();
+console.info(`[vault-runtime] Argon2id derivation runs ${workerKdfInstalled ? 'in a Worker' : 'inline on this thread'}.`);
 
 function clearAutoLockTimer() {
   if (autoLockTimer) {
@@ -209,9 +219,17 @@ export async function vaultStatus(): Promise<{
 }
 
 /**
- * Save a preview blob. Encrypts via the unlocked envelope when PIN is
- * enabled; stores plaintext when PIN is disabled. Throws when PIN is
- * enabled but the vault is locked — caller must unlock first.
+ * Save a preview blob. Stores plaintext when the PIN is disabled, otherwise an
+ * envelope.
+ *
+ * A locked vault is no longer a dead end. Wrapping the per-blob DEK only needs
+ * the ML-KEM public key, which lives in the clear inside VaultMaterial, so new
+ * previews can be written while locked and simply stay unreadable until the next
+ * unlock. Previously this threw, and a capture that happened to land while the
+ * vault was locked lost its preview permanently with nothing scheduled to retry.
+ *
+ * 'aes-only' vaults still require an unlock: with no asymmetric key, the DEK can
+ * only be wrapped with the KEK, which exists only while unlocked.
  */
 export async function savePreviewBlob(videoUrl: string, blob: Blob): Promise<void> {
   const settings = await getPinSettings();
@@ -219,10 +237,23 @@ export async function savePreviewBlob(videoUrl: string, blob: Blob): Promise<voi
     await savePreviewPlain(videoUrl, blob);
     return;
   }
-  if (!unlocked) throw new Error('Vault is locked');
+
   const plainBytes = new Uint8Array(await blob.arrayBuffer());
-  const envelopeBytes = await encryptForStorage(plainBytes);
-  await savePreviewEnvelope(videoUrl, envelopeBytes, blob.type);
+
+  if (unlocked) {
+    const envelopeBytes = await encryptForStorage(plainBytes);
+    await savePreviewEnvelope(videoUrl, envelopeBytes, blob.type);
+    return;
+  }
+
+  const persisted = await getVaultMaterial();
+  const publicKey = persisted?.publicKey ? base64ToBytes(persisted.publicKey) : null;
+  if (!persisted || !publicKey || persisted.algorithm === 'aes-only') {
+    throw new Error('Vault is locked and cannot accept writes');
+  }
+
+  const env = await encryptBlobWithPublicKey(plainBytes, persisted.algorithm, publicKey);
+  await savePreviewEnvelope(videoUrl, envelopeToBytes(env), blob.type);
 }
 
 /**

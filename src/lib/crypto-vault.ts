@@ -68,11 +68,45 @@ function pickKem(algorithm: KemAlgorithm) {
 }
 
 /** Derive the master KEK from the user's PIN and the per-vault salt. */
+/**
+ * How the Argon2id KEK derivation is executed.
+ *
+ * The default runs @noble's synchronous argon2id inline. It previously returned
+ * `Promise.resolve(argon2id(...))` with a comment claiming that kept callers off
+ * the event loop — it does not. `Promise.resolve` wraps a value that has already
+ * been computed, so the whole ~1.6s derivation ran synchronously and stalled
+ * whatever thread called it (in practice, the background worker).
+ *
+ * Argon2id being slow is the entire security of a 4-digit PIN, so the cost stays.
+ * Instead the host can install a runner that computes it somewhere else —
+ * see setKdfRunner, which vault-runtime uses to push this into a Web Worker.
+ */
+export type KdfRunner = (
+  pin: string,
+  salt: Uint8Array,
+  opts: { t: number; m: number; p: number; dkLen: number },
+) => Promise<Uint8Array>;
+
+const defaultKdfRunner: KdfRunner = async (pin, salt, opts) => argon2id(pin, salt, opts);
+
+let kdfRunner: KdfRunner = defaultKdfRunner;
+
+/**
+ * Install an alternative KEK derivation runner (e.g. worker-backed).
+ * Must compute Argon2id with exactly the options it is handed — a runner that
+ * quietly weakens the parameters would silently downgrade every vault.
+ * Pass no argument to restore the inline default.
+ */
+export function setKdfRunner(runner?: KdfRunner): void {
+  kdfRunner = runner ?? defaultKdfRunner;
+}
+
 async function deriveKek(pin: string, salt: Uint8Array): Promise<Uint8Array> {
-  // argon2id is sync in @noble/hashes; we wrap in a microtask to keep the API
-  // async-shaped so callers don't accidentally block the event loop with a
-  // direct sync call.
-  return Promise.resolve(argon2id(pin, salt, ARGON2_OPTS));
+  const key = await kdfRunner(pin, salt, ARGON2_OPTS);
+  if (key.length !== ARGON2_OPTS.dkLen) {
+    throw new Error('KDF runner returned a key of the wrong length');
+  }
+  return key;
 }
 
 // WebCrypto types in TS 5 distinguish ArrayBuffer from SharedArrayBuffer-backed
@@ -188,29 +222,52 @@ export async function encryptBlob(blob: Uint8Array, material: VaultMaterial): Pr
  * Encrypt a blob using an already-unlocked vault. Required when the algorithm
  * is 'aes-only' (the KEK is the wrapping key for the DEK).
  */
-export async function encryptBlobWithUnlocked(blob: Uint8Array, vault: UnlockedVault): Promise<EncryptedEnvelope> {
+/**
+ * Encrypt using only the ML-KEM public key — no PIN, no unlocked vault.
+ *
+ * This is the asymmetric half of the design finally being used for what it is
+ * good for. A fresh DEK encrypts the blob, and the DEK is wrapped to the vault's
+ * public key; nothing secret is needed to do that. The public key is already
+ * stored in the clear inside VaultMaterial, so a locked vault can still accept
+ * new data. Only reading it back requires the PIN.
+ *
+ * Not available in 'aes-only' mode, which has no asymmetric key — there the DEK
+ * can only be wrapped with the KEK, and the KEK only exists while unlocked.
+ */
+export async function encryptBlobWithPublicKey(
+  blob: Uint8Array,
+  algorithm: KemAlgorithm,
+  publicKey: Uint8Array,
+): Promise<EncryptedEnvelope> {
+  if (algorithm === 'aes-only') {
+    throw new Error('aes-only vaults cannot encrypt while locked');
+  }
+  const kem = pickKem(algorithm);
+  if (!kem) throw new Error(`Unsupported KEM algorithm: ${algorithm}`);
+
   const dek = getRandomBytes(32);
   const payloadIv = getRandomBytes(12);
   const payload = await aesGcmEncrypt(dek, payloadIv, blob);
   const wrappedDekIv = getRandomBytes(12);
 
+  const { cipherText, sharedSecret } = kem.encapsulate(publicKey);
+  const wrappedDek = await aesGcmEncrypt(sharedSecret, wrappedDekIv, dek);
+  return { algorithm, kemCiphertext: cipherText, wrappedDek, wrappedDekIv, payload, payloadIv };
+}
+
+export async function encryptBlobWithUnlocked(blob: Uint8Array, vault: UnlockedVault): Promise<EncryptedEnvelope> {
   if (vault.algorithm === 'aes-only') {
+    const dek = getRandomBytes(32);
+    const payloadIv = getRandomBytes(12);
+    const payload = await aesGcmEncrypt(dek, payloadIv, blob);
+    const wrappedDekIv = getRandomBytes(12);
     const wrappedDek = await aesGcmEncrypt(vault.kek, wrappedDekIv, dek);
     return { algorithm: 'aes-only', wrappedDek, wrappedDekIv, payload, payloadIv };
   }
 
   if (!vault.publicKey) throw new Error('Unlocked vault is missing public key');
-  const kem = pickKem(vault.algorithm)!;
-  const { cipherText, sharedSecret } = kem.encapsulate(vault.publicKey);
-  const wrappedDek = await aesGcmEncrypt(sharedSecret, wrappedDekIv, dek);
-  return {
-    algorithm: vault.algorithm,
-    kemCiphertext: cipherText,
-    wrappedDek,
-    wrappedDekIv,
-    payload,
-    payloadIv,
-  };
+  // Identical output to the locked path — being unlocked buys nothing here.
+  return encryptBlobWithPublicKey(blob, vault.algorithm, vault.publicKey);
 }
 
 /** Decrypt an envelope back to plaintext. Requires an unlocked vault. */
