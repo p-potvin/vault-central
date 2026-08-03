@@ -1,5 +1,7 @@
 import browser from 'webextension-polyfill';
 import {
+    base64ToBytes,
+    bytesToBase64,
     getBackupSettings,
     getSavedVideos,
     recordBackupResult,
@@ -760,32 +762,37 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
             capturedWebmPreviewDataUrl = data.thumbnail;
         }
         const hasPreviewPayload = Boolean(capturedWebmPreviewDataUrl);
-        if (hasPreviewPayload) {
-            data.thumbnail = "";
-        }
-        
-        saved.push(data);
-        await saveVideos(saved);
-        logger.log("[runCapturePipeline] Saved! New vault size:", saved.length);
 
+        // Persist the preview BEFORE dropping the inline thumbnail. If the write
+        // fails (locked vault, decode error) the data URL stays on the record so
+        // the item still renders and can be recovered later.
+        let previewPersisted = false;
         if (hasPreviewPayload) {
             logger.log("[runCapturePipeline] Injected script captured preview payload. Saving to IndexedDB.");
             try {
                 const response = await fetch(capturedWebmPreviewDataUrl);
                 const blob = await response.blob();
-                try {
+                if (blob.size === 0) {
+                    logger.warn("[runCapturePipeline] Captured preview payload decoded to 0 bytes; keeping inline thumbnail.");
+                } else {
                     await savePreviewBlob(data.url, blob);
-                    logger.log("[runCapturePipeline] Successfully saved injected preview payload to Dexie.");
-                } catch (e) {
-                    // Vault may be locked — preview will be regenerated on next view
-                    logger.warn("[runCapturePipeline] Could not save preview now (vault state):", e);
+                    previewPersisted = true;
+                    logger.log("[runCapturePipeline] Successfully saved injected preview payload to Dexie:", blob.size, "bytes");
                 }
             } catch (err) {
+                // Vault may be locked — preview will be regenerated on next view
                 logger.warn("[runCapturePipeline] Failed to save injected preview payload to Dexie:", err);
             }
         }
+        if (previewPersisted) {
+            data.thumbnail = "";
+        }
 
-        if (data.rawVideoSrc && !hasPreviewPayload) {
+        saved.push(data);
+        await saveVideos(saved);
+        logger.log("[runCapturePipeline] Saved! New vault size:", saved.length);
+
+        if (data.rawVideoSrc && !previewPersisted) {
             logger.log("[runCapturePipeline] Queuing background preview generation for:", data.rawVideoSrc);
             setupOffscreenDocument().then((ready: boolean) => {
                 if (!ready) {
@@ -915,9 +922,15 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
         return destroyVault().then(() => ({ success: true }));
     }
     if (request.action === "preview.save") {
-        // request: { videoUrl, blobBytes (number[] | Uint8Array), mimeType }
-        const bytes = request.blobBytes instanceof Uint8Array ? request.blobBytes : new Uint8Array(request.blobBytes);
-        const blob = new Blob([bytes as any], { type: request.mimeType || 'application/octet-stream' });
+        // request: { videoUrl, blobB64, mimeType }
+        // Binary must arrive base64-encoded: runtime messages are JSON-serialized,
+        // so a Uint8Array would land here as a numeric-key object and rebuild empty.
+        const bytes = base64ToBytes(request.blobB64 ?? '');
+        if (bytes.length === 0) {
+            logger.error('[preview.save] refusing to store an empty preview for:', request.videoUrl);
+            return Promise.resolve({ success: false, error: 'Preview payload was empty' });
+        }
+        const blob = new Blob([bytes as BlobPart], { type: request.mimeType || 'application/octet-stream' });
         return savePreviewBlob(request.videoUrl, blob)
             .then(() => ({ success: true }))
             .catch((e: any) => {
@@ -927,9 +940,9 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
     }
     if (request.action === "preview.get") {
         return getPreviewBlob(request.videoUrl).then(async (blob) => {
-            if (!blob) return { success: true, found: false };
+            if (!blob || blob.size === 0) return { success: true, found: false };
             const bytes = new Uint8Array(await blob.arrayBuffer());
-            return { success: true, found: true, bytes, mimeType: blob.type };
+            return { success: true, found: true, blobB64: bytesToBase64(bytes), mimeType: blob.type };
         }).catch((e: any) => {
             logger.error('[preview.get] failed:', e);
             return { success: false, error: 'Preview retrieval failed' };

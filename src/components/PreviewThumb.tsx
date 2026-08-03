@@ -9,6 +9,21 @@ interface PreviewThumbProps {
   video: VideoData;
 }
 
+/**
+ * A stored preview is only usable if it actually carries payload. Truncated or
+ * zero-byte records must be treated as a miss so the retry / regeneration path
+ * runs, rather than being accepted and then silently dropped at render time.
+ */
+const MIN_PREVIEW_BYTES = 100;
+function isUsablePreview(blob: Blob | null): blob is Blob {
+  if (!blob) return false;
+  if (blob.size < MIN_PREVIEW_BYTES) {
+    console.warn('[PreviewThumb] Discarding undersized preview blob:', blob.size, 'bytes');
+    return false;
+  }
+  return true;
+}
+
 export const PreviewThumb: React.FC<PreviewThumbProps> = React.memo(({ video }) => {
   const [blob, setBlob] = useState<Blob | null>(null);
   const [previewBlob, setPreviewBlob] = useState<string | null>(null);
@@ -47,7 +62,7 @@ export const PreviewThumb: React.FC<PreviewThumbProps> = React.memo(({ video }) 
       getPreviewForVideo(video)
         .then(blob => {
           if (!active) return;
-          if (blob) {
+          if (isUsablePreview(blob)) {
             console.debug(`[PreviewThumb] blob found on attempt ${retryIndex + 1} for: ${video.url}`);
             setBlob(blob);
           } else if (retryIndex < retryDelays.length) {
@@ -132,10 +147,6 @@ export const PreviewThumb: React.FC<PreviewThumbProps> = React.memo(({ video }) 
 
   useEffect(() => {
     if (!blob) return;
-    if (blob.size < 100) {
-      console.warn('[PreviewThumb] Loaded blob is abnormally small:', blob.size, 'bytes');
-      return;
-    }
     if (blob.type === 'application/json') {
       const reader = new FileReader();
       reader.onload = () => {
@@ -180,7 +191,7 @@ export const PreviewThumb: React.FC<PreviewThumbProps> = React.memo(({ video }) 
 
     // Check if it exists in the database (may have been written since mount)
     const blob = await getPreviewForVideo(video);
-    if (blob) {
+    if (isUsablePreview(blob)) {
       setBlob(blob);
       return;
     }
@@ -210,7 +221,7 @@ export const PreviewThumb: React.FC<PreviewThumbProps> = React.memo(({ video }) 
             let attempts = 0;
             const poll = setInterval(async () => {
                 const retryBlob = await getPreviewForVideo(video);
-                if (retryBlob) {
+                if (isUsablePreview(retryBlob)) {
                     setBlob(retryBlob);
                     setIsProcessing(false);
                     clearInterval(poll);

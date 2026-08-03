@@ -8,7 +8,7 @@
  * Standard reference:
  *   vaultwares-docs/security/zero-knowledge-encryption-standard.mdx
  * Implementation:
- *   vault-themes/security/crypto-vault.ts
+ *   src/lib/crypto-vault.ts
  */
 import {
   setupVault as cryptoSetupVault,
@@ -20,7 +20,7 @@ import {
   type UnlockedVault,
   type VaultMaterial,
   type KemAlgorithm,
-} from '../../vaultwares-themes/security/crypto-vault';
+} from './crypto-vault';
 import {
   bytesToBase64,
   base64ToBytes,

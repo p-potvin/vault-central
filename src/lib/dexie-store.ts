@@ -9,7 +9,7 @@ import CryptoJS from 'crypto-js';
  * encrypted variant.
  *
  * v2 (current): preview is an envelope-encrypted Uint8Array per the
- * zero-knowledge standard (vault-themes/security/crypto-vault.ts).
+ * zero-knowledge standard (src/lib/crypto-vault.ts).
  * `schemaVersion: 2` flags the new format. The encryption itself is
  * performed by the background script's vault-runtime; dexie-store only
  * persists the envelope bytes.

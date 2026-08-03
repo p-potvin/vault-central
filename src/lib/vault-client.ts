@@ -8,6 +8,7 @@
  * via these helpers (saves a round trip).
  */
 import browser from 'webextension-polyfill';
+import { bytesToBase64, base64ToBytes } from './storage-vault';
 
 interface RuntimeResponse<T = unknown> {
   success: boolean;
@@ -40,12 +41,19 @@ export async function vaultStatus() {
   return send<{ enabled: boolean; locked: boolean; algorithm: string | null; hasMaterial: boolean }>({ action: 'vault.status' });
 }
 
+/**
+ * Binary payloads MUST cross the runtime-message boundary as base64 strings.
+ * chrome.runtime.sendMessage JSON-serializes its argument: a Uint8Array arrives
+ * as a numeric-key plain object ({"0":12,"1":34,…}), and `new Uint8Array(obj)`
+ * on that object yields a ZERO-LENGTH array — silently destroying the preview.
+ * Same reasoning as the base64 codec used for VaultMaterial in storage-vault.ts.
+ */
 export async function savePreview(videoUrl: string, blob: Blob): Promise<void> {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   const res = await send({
     action: 'preview.save',
     videoUrl,
-    blobBytes: bytes,
+    blobB64: bytesToBase64(bytes),
     mimeType: blob.type,
   });
   if (!res.success) throw new Error(res.error || 'preview save failed');
@@ -53,14 +61,18 @@ export async function savePreview(videoUrl: string, blob: Blob): Promise<void> {
 
 export async function getPreview(videoUrl: string): Promise<Blob | null> {
     console.debug('[vault-client] getPreview requested for:', videoUrl);
-    const res = await send<{ found: boolean; bytes?: number[] | Uint8Array; mimeType?: string }>({
+    const res = await send<{ found: boolean; blobB64?: string; mimeType?: string }>({
       action: 'preview.get',
       videoUrl,
     });
     console.debug('[vault-client] getPreview response for:', videoUrl, 'success:', res.success, 'found:', res.found);
-    if (!res.success || !res.found || !res.bytes) return null;
-    const bytes = res.bytes instanceof Uint8Array ? res.bytes : new Uint8Array(res.bytes);
-    return new Blob([bytes as any], { type: res.mimeType || 'application/octet-stream' });
+    if (!res.success || !res.found || !res.blobB64) return null;
+    const bytes = base64ToBytes(res.blobB64);
+    if (bytes.length === 0) {
+      console.warn('[vault-client] getPreview decoded an empty payload for:', videoUrl);
+      return null;
+    }
+    return new Blob([bytes as BlobPart], { type: res.mimeType || 'application/octet-stream' });
 }
 
 export async function deletePreview(videoUrl: string) {
