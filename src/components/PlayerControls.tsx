@@ -197,9 +197,21 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
                     }
                   }}
                   className="cursor-pointer"
+                  /**
+                   * Vertical range input. The previous `writing-mode: bt-lr` +
+                   * `-webkit-appearance: slider-vertical` combination is legacy
+                   * and non-standard: `bt-lr` is not a valid writing-mode value
+                   * at all, and Firefox never implemented slider-vertical. The
+                   * control stayed horizontal and got squeezed into a 6x70 box,
+                   * which is why the knob sat off the track.
+                   *
+                   * `writing-mode: vertical-lr` with `direction: rtl` is the
+                   * standard way, supported by Firefox 130+ and Chrome 121+.
+                   */
                   style={{
-                    writingMode: 'bt-lr',
-                    WebkitAppearance: 'slider-vertical',
+                    writingMode: 'vertical-lr',
+                    direction: 'rtl',
+                    appearance: 'auto',
                     width: '6px',
                     height: '70px',
                     accentColor: 'var(--console-active)'

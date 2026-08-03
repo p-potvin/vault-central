@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import * as LucideIcons from 'lucide-react';
 import type { LucideProps } from 'lucide-react';
 import { type VideoData } from '../types/schemas';
@@ -91,36 +91,72 @@ export function VideoPlayer({
   const [controlsVisible, setControlsVisible] = useState(true);
   const controlsTimeoutRef = useRef<any>(null);
 
-  const resetControlsTimeout = () => {
+  /**
+   * Pointer is resting on the controls themselves — never fade while that is
+   * true, otherwise the bar vanishes from under the cursor mid-interaction.
+   */
+  const pointerOverControlsRef = useRef(false);
+  /** Latest fade inputs, so the native listener below never reads a stale closure. */
+  const fadeStateRef = useRef({ isPlaying, showSpeedMenu, showSubtitlesMenu, showAutoplayMenu });
+  fadeStateRef.current = { isPlaying, showSpeedMenu, showSubtitlesMenu, showAutoplayMenu };
+
+  const CONTROLS_IDLE_MS = 2600;
+
+  const resetControlsTimeout = useCallback(() => {
     setControlsVisible(true);
-    if (controlsTimeoutRef.current) {
-      clearTimeout(controlsTimeoutRef.current);
-    }
-    const shouldFade = isPlaying && !showSpeedMenu && !showSubtitlesMenu && !showAutoplayMenu;
-    if (shouldFade) {
-      controlsTimeoutRef.current = setTimeout(() => {
-        setControlsVisible(false);
-      }, 1500);
-    }
-  };
+    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+
+    const s = fadeStateRef.current;
+    const shouldFade = s.isPlaying && !s.showSpeedMenu && !s.showSubtitlesMenu && !s.showAutoplayMenu;
+    if (!shouldFade) return;
+
+    controlsTimeoutRef.current = setTimeout(() => {
+      if (pointerOverControlsRef.current) {
+        resetControlsTimeout();
+        return;
+      }
+      setControlsVisible(false);
+    }, CONTROLS_IDLE_MS);
+  }, []);
 
   useEffect(() => {
     resetControlsTimeout();
     return () => {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     };
-  }, [isPlaying, showSpeedMenu, showSubtitlesMenu, showAutoplayMenu]);
+  }, [isPlaying, showSpeedMenu, showSubtitlesMenu, showAutoplayMenu, resetControlsTimeout]);
 
-  const handleMouseMove = () => {
-    resetControlsTimeout();
-  };
+  /**
+   * Bound natively on the shell rather than via React's onMouseMove. The <video>
+   * fills the shell and sits above it, and relying on synthetic bubbling through
+   * it meant moves over the picture did not always reset the timer — the bar
+   * would fade out while the mouse was still moving. A capture-phase listener on
+   * the container sees every move regardless of what is on top.
+   */
+  useEffect(() => {
+    const shell = containerRef.current;
+    if (!shell) return;
 
-  const handleMouseLeave = () => {
-    const shouldFade = isPlaying && !showSpeedMenu && !showSubtitlesMenu && !showAutoplayMenu;
-    if (shouldFade) {
-      setControlsVisible(false);
-    }
-  };
+    const onActivity = () => resetControlsTimeout();
+    const onLeave = () => {
+      const s = fadeStateRef.current;
+      if (s.isPlaying && !s.showSpeedMenu && !s.showSubtitlesMenu && !s.showAutoplayMenu) {
+        setControlsVisible(false);
+      }
+    };
+
+    shell.addEventListener('pointermove', onActivity, { capture: true, passive: true });
+    shell.addEventListener('pointerdown', onActivity, { capture: true, passive: true });
+    shell.addEventListener('wheel', onActivity, { capture: true, passive: true });
+    shell.addEventListener('pointerleave', onLeave);
+
+    return () => {
+      shell.removeEventListener('pointermove', onActivity, { capture: true } as any);
+      shell.removeEventListener('pointerdown', onActivity, { capture: true } as any);
+      shell.removeEventListener('wheel', onActivity, { capture: true } as any);
+      shell.removeEventListener('pointerleave', onLeave);
+    };
+  }, [resetControlsTimeout]);
 
   // Synchronize volume and muted properties of the video element
   useEffect(() => {
@@ -647,32 +683,28 @@ export function VideoPlayer({
             : "w-[90vw] max-w-5xl rounded-lg aspect-video"
         )}
         onClick={e => e.stopPropagation()}
-        onMouseMove={handleMouseMove}
-        onMouseLeave={handleMouseLeave}
         style={{ 
           fontFamily: '"JetBrains Mono", ui-monospace, monospace',
           cursor: (controlsVisible || !isPlaying || isPiP) ? 'default' : 'none'
         }}
       >
-        {/* Title Bar (Hidden in PiP) */}
+        {/* The title bar and its frosted strip used to live here. Removed
+          * Mon, 03 Aug 2026 — the title is already on the card you clicked, and a
+          * translucent band across the top of the picture is a distraction while
+          * watching. Only the close affordance was worth keeping, so it floats. */}
         {!isPiP && (
-          <div className={cn(
-            "absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-1.5 bg-[var(--console-surface)]/90 backdrop-blur-sm border-b border-[var(--console-border)] select-none transition-opacity duration-300 ease-in-out z-30",
-            controlsVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-          )}>
-            <span className="text-[11px] text-[var(--console-text)] font-mono uppercase tracking-wider line-clamp-1 max-w-[80vw]">
-              {(video.title || 'Untitled Stream').toUpperCase()}
-            </span>
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={onClose}
-                className="p-1 text-[var(--console-text)] hover:text-white transition-colors"
-                title="Close"
-              >
-                <XIcon size={14} />
-              </button>
-            </div>
-          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close player"
+            title="Close"
+            className={cn(
+              "absolute top-2 right-2 z-30 flex items-center justify-center h-7 w-7 rounded-full",
+              "bg-black/55 text-white/85 hover:bg-black/80 hover:text-white transition-all duration-200",
+              controlsVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+            )}
+          >
+            <XIcon size={14} />
+          </button>
         )}
 
         {/* Video Surface Area */}

@@ -198,7 +198,7 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
                           <div className="absolute top-2 left-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2">
                             <button 
                               onClick={(e) => { e.stopPropagation(); handleEdit(fav); }} 
-                              className="thumb-action p-1.5 bg-black/60 hover:bg-vault-accent text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" 
+                              className="thumb-action h-6 w-6 flex items-center justify-center leading-none bg-black/60 hover:bg-vault-accent text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" 
                               title="Edit Metadata"
                             >
                               <Icons.EditIcon size={12} />
@@ -207,7 +207,7 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
                           <div className="absolute top-2 right-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2">
                             <button 
                               onClick={(e) => { e.stopPropagation(); handleDelete(fav.url); }} 
-                              className="thumb-action p-1.5 bg-black/60 hover:bg-red-500 text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" 
+                              className="thumb-action h-6 w-6 flex items-center justify-center leading-none bg-black/60 hover:bg-red-500 text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" 
                               title="Delete Item"
                             >
                               <Icons.DeleteIcon size={12} />
@@ -278,6 +278,10 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
                       <div className={viewSize === 1 ? "flex-1 mr-4" : ""}>
                         <h3 className={cn(
                           "font-bold mb-1 leading-snug cursor-pointer hover:text-vault-accent transition-colors",
+                          // Underlined so the title reads as the card's anchor rather than
+                          // blending into the domain line beneath it. Offset so descenders
+                          // clear the rule.
+                          "underline decoration-vault-accent/40 decoration-1 underline-offset-4 hover:decoration-vault-accent",
                           viewSize === 1 ? "text-base line-clamp-1" : "text-[16px] line-clamp-2"
                         )}>
                           {fav.title || 'Untitled Reference'}

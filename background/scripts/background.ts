@@ -9,6 +9,7 @@ import {
     saveVideos
 } from '../../src/lib/storage-vault';
 import { deletePreview, clearPreviews as dbClearPreviews } from '../../src/lib/dexie-store';
+import { generatePreview } from '../../src/lib/preview-generator';
 import {
     savePreviewBlob,
     getPreviewBlob,
@@ -794,21 +795,11 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
 
         if (data.rawVideoSrc && !previewPersisted) {
             logger.log("[runCapturePipeline] Queuing background preview generation for:", data.rawVideoSrc);
-            setupOffscreenDocument().then((ready: boolean) => {
-                if (!ready) {
-                    logger.warn("[runCapturePipeline] Preview processor unavailable; cannot generate background preview.");
-                    return;
-                }
-                browser.runtime.sendMessage({
-                    action: "generate_preview_process",
-                    data: {
-                        previewKey: data.url,
-                        sourceUrl: data.rawVideoSrc,
-                        duration: typeof data.duration === 'number' ? data.duration : 60
-                    }
-                }).catch((e) => {
-                    logger.warn("[runCapturePipeline] generate_preview message failed:", e);
-                });
+            void requestPreviewGeneration({
+                previewKey: data.url,
+                sourceUrl: data.rawVideoSrc,
+            }).catch((e) => {
+                logger.warn("[runCapturePipeline] preview generation failed:", e);
             });
         }
 
@@ -819,31 +810,63 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
     }
 }
 
-async function setupOffscreenDocument(): Promise<boolean> {
-    const offscreenUrl = 'src/offscreen/processor.html';
-    logger.log("[setupOffscreenDocument] Setting up offscreen document:", offscreenUrl);
-    
-    if (!(browser as any).offscreen) {
-        logger.warn("[setupOffscreenDocument] browser.offscreen API not available. Attempting iframe fallback.");
-        if (typeof document !== 'undefined' && document.body) {
-            let frame = document.getElementById('vault-processor-frame') as HTMLIFrameElement;
-            if (!frame) {
-                logger.log("[setupOffscreenDocument] Creating fallback iframe processor.");
-                frame = document.createElement('iframe');
-                frame.id = 'vault-processor-frame';
-                frame.src = browser.runtime.getURL(offscreenUrl);
-                document.body.appendChild(frame);
-                await new Promise((r) => frame.onload = r);
-                logger.log("[setupOffscreenDocument] Fallback iframe loaded.");
-            } else {
-                logger.log("[setupOffscreenDocument] Fallback iframe already exists.");
+/**
+ * True when this background context can build previews itself.
+ *
+ * Firefox has no browser.offscreen and does not need one: MV3 background scripts
+ * run as an event page with a real DOM, so <video> and <canvas> work right here.
+ * The old code treated the missing API as a failure and loaded processor.html
+ * into a hidden iframe — an extra document, an extra message hop, and an extra
+ * lifecycle to get wrong, all to reach a DOM this context already had.
+ */
+function canGeneratePreviewsInPlace(): boolean {
+    return typeof document !== 'undefined' && typeof HTMLVideoElement !== 'undefined';
+}
+
+/**
+ * Ask for a preview and store it. Runs generation right here when the context
+ * has a DOM (Firefox event page), otherwise delegates to the offscreen document
+ * (Chrome service worker).
+ */
+async function requestPreviewGeneration(data: { previewKey: string; sourceUrl: string; frameCount?: number }): Promise<{ success: boolean; error?: string }> {
+    if (!(browser as any).offscreen && canGeneratePreviewsInPlace()) {
+        try {
+            const { blob, capture, reason } = await generatePreview(data.sourceUrl, data.frameCount);
+            if (capture) {
+                logger.log(`[requestPreviewGeneration] Capture: ${capture.frames.length}/${capture.attempted} usable (${capture.timedOut} seek timeouts, ${capture.blank} blank, ${capture.tainted} tainted)`);
             }
-            return true;
-        } else {
-            logger.warn("[setupOffscreenDocument] No document.body available for iframe fallback. Preview generation unavailable.");
-            return false;
+            if (!blob) {
+                logger.warn('[requestPreviewGeneration] No preview stored:', reason);
+                return { success: false, error: reason || 'Preview generation returned no blob' };
+            }
+            await savePreviewBlob(data.previewKey, blob);
+            logger.log('[requestPreviewGeneration] Preview stored:', blob.size, 'bytes');
+            return { success: true };
+        } catch (e: any) {
+            logger.error('[requestPreviewGeneration] In-place generation failed:', e);
+            return { success: false, error: 'Preview generation failed' };
         }
     }
+
+    const ready = await setupOffscreenDocument();
+    if (!ready) return { success: false, error: 'Preview processor unavailable' };
+    return browser.runtime.sendMessage({ action: 'generate_preview_process', data }) as any;
+}
+
+async function setupOffscreenDocument(): Promise<boolean> {
+    const offscreenUrl = 'src/offscreen/processor.html';
+
+    if (!(browser as any).offscreen) {
+        // Not an error — see canGeneratePreviewsInPlace.
+        if (canGeneratePreviewsInPlace()) {
+            logger.log("[setupOffscreenDocument] No offscreen API (expected on Firefox); generating previews in the background page.");
+            return true;
+        }
+        logger.warn("[setupOffscreenDocument] No offscreen API and no DOM in this context. Preview generation unavailable.");
+        return false;
+    }
+
+    logger.log("[setupOffscreenDocument] Setting up offscreen document:", offscreenUrl);
 
     try {
         const contexts = await (browser.runtime as any).getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [browser.runtime.getURL(offscreenUrl)] });
@@ -879,15 +902,7 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
         return Promise.resolve(true);
     }
     if (request.action === "generate_preview") {
-        return setupOffscreenDocument().then(async (ready: boolean) => {
-            if (!ready) {
-                return { success: false, error: "Preview processor unavailable" };
-            }
-            return browser.runtime.sendMessage({
-                action: "generate_preview_process",
-                data: request.data
-            });
-        });
+        return requestPreviewGeneration(request.data);
     }
     if (request.action === "generate_preview_process") return undefined;
 

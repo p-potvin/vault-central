@@ -1,8 +1,6 @@
 import browser from 'webextension-polyfill';
 import { captureFrames } from '../lib/frame-capture';
-
-/** Matches the offscreen processor: fewer than this and the capture stalled. */
-const MIN_USABLE_FRAMES = 4;
+import { DEFAULT_FRAME_COUNT, MIN_USABLE_FRAMES } from '../lib/preview-generator';
 async function run() {
     const params = new URLSearchParams(window.location.search);
     const videoUrl = params.get('src');
@@ -34,7 +32,7 @@ async function run() {
         // one, which supersedes the pending seek — so on a slow source the element
         // never settled (a 34-minute video that never got past ~2 minutes) and all
         // but one or two frames were captured from a stale or empty decoder.
-        const capture = await captureFrames(video, { frameCount: 10 });
+        const capture = await captureFrames(video, { frameCount: DEFAULT_FRAME_COUNT });
         console.log(
             `[ScraperPlayer] Capture: ${capture.frames.length}/${capture.attempted} usable` +
             ` (${capture.timedOut} seek timeouts, ${capture.blank} blank, ${capture.tainted} tainted)`
