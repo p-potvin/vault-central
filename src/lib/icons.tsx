@@ -34,7 +34,7 @@ export const VaultCentralLogo = forwardRef<HTMLImageElement, { size?: number; cl
   ({ size = 26, className = '', alt = 'Vault Central' }, ref) => (
     <img
       ref={ref}
-      src="icons/vault-central-64.png"
+      src="icons/vault-central-128.png"
       width={size}
       height={size}
       alt={alt}

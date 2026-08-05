@@ -19,19 +19,15 @@ export const MIN_USABLE_FRAMES = 4;
 /**
  * Frames sampled per preview.
  *
- * Measured from real captures at 426x240, WebP q0.5: a frame is ~4.5 KB raw and
- * ~6.7 KB once base64'd into the JSON payload (data URLs cost 4/3). Observed
- * 10-frame payloads were 47-92 KB.
- *
- *    30 frames ~ 200 KB per video
- *    60 frames ~ 400 KB per video
- *
- * At 60 frames and the 150ms hover cadence the loop runs ~9s, which is what
- * makes the preview read as motion rather than a slideshow. 400 KB x 1000 videos
- * is ~400 MB; the manifest holds "unlimitedStorage", so Firefox exempts the
- * extension from quota eviction and the practical ceiling is free disk.
+ * Ten points spread across the video, played back slowly (see PREVIEW_FRAME_MS
+ * in PreviewThumb). Storage was never the constraint — a frame is ~4.5 KB raw,
+ * ~6.7 KB once base64'd into the payload, so even 60 frames would be ~400 KB
+ * against a multi-gigabyte quota. Ten simply looks better: sample points minutes
+ * apart are different scenes, not motion, so more of them just makes the
+ * slideshow faster, not smoother. Fewer frames held longer reads as a deliberate
+ * scrub through the video.
  */
-export const DEFAULT_FRAME_COUNT = 60;
+export const DEFAULT_FRAME_COUNT = 10;
 
 const LOAD_TIMEOUT_MS = 90_000;
 

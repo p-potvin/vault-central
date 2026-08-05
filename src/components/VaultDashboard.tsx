@@ -575,7 +575,7 @@ export const VaultDashboard: React.FC = () => {
                 Vault<span className="text-vault-accent font-light">Central</span>
               </h1>
               <p className="text-[9px] text-vault-muted font-medium tracking-wider uppercase">
-                Secure Media Vault // <a href="https://vaultwares.com" target="_blank" rel="noreferrer" className="hover:text-vault-accent underline transition-colors">VaultWares.com</a>
+                Secure Media Vault // <a href="https://vaultwares.ca" target="_blank" rel="noreferrer" className="hover:text-vault-accent underline transition-colors">VaultWares.ca</a>
               </p>
             </div>
           </div>

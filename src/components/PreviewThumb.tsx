@@ -15,6 +15,16 @@ interface PreviewThumbProps {
  * runs, rather than being accepted and then silently dropped at render time.
  */
 const MIN_PREVIEW_BYTES = 100;
+
+/**
+ * How long each sampled frame is held on hover.
+ *
+ * The frames are minutes apart in the source, so they are distinct scenes rather
+ * than consecutive motion. Flipping them quickly (this was 150ms) reads as a
+ * flicker; holding each one long enough to register turns the same ten stills
+ * into a deliberate scrub through the video. 10 x 450ms is a ~4.5s loop.
+ */
+const PREVIEW_FRAME_MS = 450;
 function isUsablePreview(blob: Blob | null): blob is Blob {
   if (!blob) return false;
   if (blob.size < MIN_PREVIEW_BYTES) {
@@ -143,7 +153,7 @@ export const PreviewThumb: React.FC<PreviewThumbProps> = React.memo(({ video }) 
     const interval = setInterval(() => {
        frameIdx = (frameIdx + 1) % frameSequence.length;
        setCurrentFrame(frameIdx);
-     }, 150); // ~7 fps
+     }, PREVIEW_FRAME_MS);
     return () => clearInterval(interval);
   }, [frameSequence, isHovering]);
 

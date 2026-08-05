@@ -832,18 +832,21 @@ function canGeneratePreviewsInPlace(): boolean {
  *
  * Triggered when the dashboard opens, so the work happens while the user is
  * already looking at their library rather than on a timer they cannot see.
- * Deliberately conservative:
- *   - only items whose link is signed (canExpire); static URLs never expire, so
- *     re-extracting them would be pure waste
- *   - strictly sequential with a gap between items. Each refresh opens a
- *     background tab and scrapes a page; firing those in parallel is exactly the
- *     kind of request burst the rate-limiting protocol forbids
- *   - capped per sweep, so a large library drains over several openings instead
- *     of hammering a host in one go
- *   - failures are logged and skipped, never retried inside the same sweep
+ * Only items whose link is signed (canExpire) are visited; static URLs never
+ * expire, so re-extracting them would be pure waste.
+ *
+ * Runs back to back with no pacing delay and no per-sweep cap: the candidate set
+ * is already narrow, and the 30-minute gate is what bounds the work. Still
+ * strictly sequential — each refresh opens a tab and scrapes a page, and running
+ * those concurrently would mean N tabs at once, which is both a request burst and
+ * unusable for the user.
+ *
+ * Caveat worth keeping in view: extraction is not yet invisible. Each item
+ * briefly surfaces a scraper window, so a sweep over many items is something the
+ * user will notice.
+ *
+ * Failures are logged and skipped, never retried inside the same sweep.
  */
-const STALE_SWEEP_MAX_ITEMS = 8;
-const STALE_SWEEP_GAP_MS = 4000;
 let staleSweepRunning = false;
 
 async function runStaleLinkSweep(force = false): Promise<{ started: boolean; refreshed: number; checked: number; reason?: string }> {
@@ -864,13 +867,11 @@ async function runStaleLinkSweep(force = false): Promise<{ started: boolean; ref
     let candidates: any[] = [];
     try {
         const all = await getSavedVideos(true);
-        candidates = selectRefreshCandidates(all as any).slice(0, STALE_SWEEP_MAX_ITEMS);
+        candidates = selectRefreshCandidates(all as any);
         logger.log(`[staleSweep] ${candidates.length} expiring link(s) to refresh (of ${all.length} items).`);
 
         for (let i = 0; i < candidates.length; i++) {
             const item = candidates[i];
-            if (i > 0) await new Promise(r => setTimeout(r, STALE_SWEEP_GAP_MS));
-
             try {
                 const result = await doTabExtraction(item.url);
                 if (!result?.src) {
