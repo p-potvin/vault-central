@@ -17,7 +17,9 @@ global.chrome = {
   },
   runtime: {
     id: 'test-env-id',
-    sendMessage: vi.fn(),
+    // The real API always returns a Promise; returning undefined here made any
+    // caller that awaited or chained on it blow up only under test.
+    sendMessage: vi.fn(() => Promise.resolve(undefined)),
     onMessage: {
       addListener: vi.fn(),
       removeListener: vi.fn(),

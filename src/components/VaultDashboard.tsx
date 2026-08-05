@@ -193,6 +193,24 @@ export const VaultDashboard: React.FC = () => {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
+  /**
+   * Tell the background the dashboard is open so it can refresh expiring media
+   * links. The background decides whether a sweep is actually due (at most once
+   * per 30 minutes) and runs it sequentially in the background — nothing here
+   * waits on it, and no UI reflects it.
+   */
+  useEffect(() => {
+    // try/catch rather than .catch(): sendMessage can also throw synchronously
+    // when the background is not up yet, and this must never break mount.
+    (async () => {
+      try {
+        await browser.runtime.sendMessage({ action: 'dashboard_opened' });
+      } catch {
+        /* background may be starting up; the next open will try again */
+      }
+    })();
+  }, []);
+
   // Browser Sync State
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSyncBusy, setIsSyncBusy] = useState(false);

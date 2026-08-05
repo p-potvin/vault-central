@@ -10,6 +10,7 @@ import {
 } from '../../src/lib/storage-vault';
 import { deletePreview, clearPreviews as dbClearPreviews } from '../../src/lib/dexie-store';
 import { generatePreview } from '../../src/lib/preview-generator';
+import { isExpiringMediaUrl, isSweepDue, selectRefreshCandidates } from '../../src/lib/stale-links';
 import {
     savePreviewBlob,
     getPreviewBlob,
@@ -748,6 +749,9 @@ async function runCapturePipeline(data: any, tabId?: number, windowId?: number):
         }
 
         data.rawVideoSrc = finalSrc;
+        // Only signed links can go stale, so record that now and let the sweep
+        // skip everything else rather than re-extracting the whole library.
+        data.canExpire = isExpiringMediaUrl(finalSrc);
         logger.log("[runCapturePipeline] Final rawVideoSrc:", data.rawVideoSrc, "| final thumbnail length:", data.thumbnail?.length ?? 0);
 
         const saved = await getSavedVideos(true);
@@ -824,6 +828,78 @@ function canGeneratePreviewsInPlace(): boolean {
 }
 
 /**
+ * Re-extract expiring media links, at most once per STALE_SWEEP_INTERVAL_MS.
+ *
+ * Triggered when the dashboard opens, so the work happens while the user is
+ * already looking at their library rather than on a timer they cannot see.
+ * Deliberately conservative:
+ *   - only items whose link is signed (canExpire); static URLs never expire, so
+ *     re-extracting them would be pure waste
+ *   - strictly sequential with a gap between items. Each refresh opens a
+ *     background tab and scrapes a page; firing those in parallel is exactly the
+ *     kind of request burst the rate-limiting protocol forbids
+ *   - capped per sweep, so a large library drains over several openings instead
+ *     of hammering a host in one go
+ *   - failures are logged and skipped, never retried inside the same sweep
+ */
+const STALE_SWEEP_MAX_ITEMS = 8;
+const STALE_SWEEP_GAP_MS = 4000;
+let staleSweepRunning = false;
+
+async function runStaleLinkSweep(force = false): Promise<{ started: boolean; refreshed: number; checked: number; reason?: string }> {
+    if (staleSweepRunning) return { started: false, refreshed: 0, checked: 0, reason: 'already running' };
+
+    const stored: any = await browser.storage.local.get(STORAGE_KEYS.LAST_STALE_SWEEP);
+    const lastSweepAt = stored?.[STORAGE_KEYS.LAST_STALE_SWEEP];
+    if (!force && !isSweepDue(lastSweepAt)) {
+        return { started: false, refreshed: 0, checked: 0, reason: 'not due' };
+    }
+
+    staleSweepRunning = true;
+    // Stamp up front: a sweep that dies halfway must not cause another attempt
+    // on the very next dashboard open.
+    await browser.storage.local.set({ [STORAGE_KEYS.LAST_STALE_SWEEP]: Date.now() });
+
+    let refreshed = 0;
+    let candidates: any[] = [];
+    try {
+        const all = await getSavedVideos(true);
+        candidates = selectRefreshCandidates(all as any).slice(0, STALE_SWEEP_MAX_ITEMS);
+        logger.log(`[staleSweep] ${candidates.length} expiring link(s) to refresh (of ${all.length} items).`);
+
+        for (let i = 0; i < candidates.length; i++) {
+            const item = candidates[i];
+            if (i > 0) await new Promise(r => setTimeout(r, STALE_SWEEP_GAP_MS));
+
+            try {
+                const result = await doTabExtraction(item.url);
+                if (!result?.src) {
+                    logger.warn('[staleSweep] No fresh src for', item.url);
+                    continue;
+                }
+                const current = await getSavedVideos(true);
+                const idx = current.findIndex((v: any) => v.url === item.url);
+                if (idx === -1) continue;
+                (current[idx] as any).rawVideoSrc = result.src;
+                (current[idx] as any).canExpire = isExpiringMediaUrl(result.src);
+                (current[idx] as any).lastLinkRefreshAt = Date.now();
+                await saveVideos(current);
+                refreshed++;
+            } catch (err) {
+                logger.warn('[staleSweep] Refresh failed for', item.url, err);
+            }
+        }
+        logger.log(`[staleSweep] Done. Refreshed ${refreshed}/${candidates.length}.`);
+    } catch (err) {
+        logger.error('[staleSweep] Sweep aborted:', err);
+    } finally {
+        staleSweepRunning = false;
+    }
+
+    return { started: true, refreshed, checked: candidates.length };
+}
+
+/**
  * Ask for a preview and store it. Runs generation right here when the context
  * has a DOM (Firefox event page), otherwise delegates to the offscreen document
  * (Chrome service worker).
@@ -892,6 +968,14 @@ browser.runtime.onMessage.addListener((request: any, sender: any) => {
     logger.log("[onMessage] Received action:", request.action, "| from tab:", sender?.tab?.id, "url:", sender?.tab?.url?.substring(0, 80));
     if (request.action === "extract_fresh_m3u8") return doTabExtraction(request.url).then((res: ExtractionResult | null) => ({ src: res?.src || null }));
     if (request.action === "open_dashboard") { openDashboard(); return Promise.resolve(true); }
+    if (request.action === "dashboard_opened") {
+        // Fire and forget: the dashboard must not wait on a sweep to render.
+        void runStaleLinkSweep();
+        return Promise.resolve({ success: true });
+    }
+    if (request.action === "refresh_stale_links_now") {
+        return runStaleLinkSweep(true);
+    }
     if (request.action === "process_capture") return runCapturePipeline(request.data, sender?.tab?.id, sender?.tab?.windowId);
     if (request.action === "capture-video" || request.type === "capture-video") {
         // Mirror the keyboard-shortcut command path: forward to the sending

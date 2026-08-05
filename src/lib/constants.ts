@@ -3,7 +3,8 @@ export const STORAGE_KEYS = {
   PIN_SETTINGS: 'pinSettings',
   VAULT_MATERIAL: 'vaultMaterial',
   CUSTOM_THEME: 'customTheme',
-  ACTIVE_TAB_ID: 'activeDashboardTabId'
+  ACTIVE_TAB_ID: 'activeDashboardTabId',
+  LAST_STALE_SWEEP: 'lastStaleLinkSweepAt'
 } as const;
 
 export const VAULT_CONFIG = {

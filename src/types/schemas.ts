@@ -27,6 +27,14 @@ export const VideoDataSchema = z.object({
   size: z.string().nullable().optional(),
   length: z.union([z.string(), z.number()]).nullable().optional(),
   previewStatus: z.enum(['pending', 'processing', 'success', 'failed']).optional(),
+  /**
+   * Whether this item's rawVideoSrc is a signed link that will expire.
+   * Set at capture time from the URL shape; an explicit value here always beats
+   * the heuristic, so a manual correction survives later sweeps.
+   */
+  canExpire: z.boolean().optional(),
+  /** When the link was last successfully re-extracted. */
+  lastLinkRefreshAt: z.number().optional(),
 });
 
 export type VideoData = z.infer<typeof VideoDataSchema>;
