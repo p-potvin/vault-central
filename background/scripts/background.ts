@@ -11,6 +11,7 @@ import {
 import { deletePreview, clearPreviews as dbClearPreviews } from '../../src/lib/dexie-store';
 import { generatePreview } from '../../src/lib/preview-generator';
 import { isExpiringMediaUrl, isSweepDue, selectRefreshCandidates } from '../../src/lib/stale-links';
+import { canExtractDirectVideoInPlace, extractDirectVideo } from '../../src/lib/direct-video-extract';
 import {
     savePreviewBlob,
     getPreviewBlob,
@@ -140,6 +141,31 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
     let scraperMessageListener: ((message: any, sender: browser.Runtime.MessageSender) => void) | null = null;
 
     const isDirectVideo = /\.(mp4|webm|flv|mkv|mov|m4v|avi)(\?|$)/.test(targetUrl.toLowerCase());
+
+    /**
+     * A direct media URL has nothing to scrape — the URL is the source, and all
+     * that remains is loading it and sampling frames. That only ever needed a
+     * scraper *window* because the work lived in scraper-player.html; the page is
+     * ours, so no framing restriction forces it out of process. Where this
+     * context has a DOM (Firefox's event page), do it here and skip the window
+     * entirely, which is what makes stale-link refreshes silent.
+     *
+     * Site pages still need a real window: they set X-Frame-Options /
+     * frame-ancestors, and Firefox offers extensions no hidden window.
+     */
+    if (isDirectVideo && canExtractDirectVideoInPlace()) {
+        logger.log("[doTabExtraction] Direct media URL; extracting in place (no window).");
+        try {
+            const result = await extractDirectVideo(targetUrl, ctx.originTitle || 'Captured Media');
+            logger.log("[doTabExtraction] In-place extraction succeeded for:", targetUrl);
+            return result;
+        } catch (err) {
+            // Fall through to the windowed path rather than failing the capture:
+            // a source that resists a background fetch may still work in a page.
+            logger.warn("[doTabExtraction] In-place extraction failed; falling back to a scraper window.", err);
+        }
+    }
+
     const finalUrl = isDirectVideo
         ? browser.runtime.getURL('scraper-player.html') + "?src=" + encodeURIComponent(targetUrl) + "&originTitle=" + encodeURIComponent(ctx.originTitle || '')
         : targetUrl;
