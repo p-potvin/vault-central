@@ -16,6 +16,8 @@ interface VideoGridProps {
   pages: Record<string, number>;
   setGroupPage: (groupName: string, delta: number) => void;
   viewSize: number;
+  /** Current grouping, so the card can avoid repeating what the section already says. */
+  groupBy: string;
   isolatedGroup: string | null;
   setIsolatedGroup: (groupName: string | null) => void;
   setPlayingVideo: (video: VideoData | null) => void;
@@ -56,6 +58,7 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
   pages,
   setGroupPage,
   viewSize,
+  groupBy,
   isolatedGroup,
   setIsolatedGroup,
   setPlayingVideo,
@@ -92,18 +95,23 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
         return (
           <section key={groupName} className="space-y-4">
             {/* Section Header */}
-            <div className="flex items-center justify-between">
-              <div 
-                className={cn("flex items-center gap-3", !isolatedGroup && "cursor-pointer group")}
+            <div className="flex items-center justify-between gap-4">
+              {/* Hostname is the organising principle of this page, so the header
+                * reads as a band across the content rather than a floating label.
+                * The rule carries the eye to the pagination on the right. */}
+              <div
+                className={cn("flex items-center gap-3 min-w-0 flex-1", !isolatedGroup && "cursor-pointer group")}
                 onClick={() => !isolatedGroup && setIsolatedGroup(groupName)}
+                title={isolatedGroup ? undefined : `Show only ${groupName}`}
               >
-                <h2 className="text-base font-semibold text-vault-text inline-flex items-center gap-2.5 tracking-tight transition-colors group-hover:text-vault-accent">
+                <h2 className="text-[15px] font-semibold text-vault-text inline-flex items-center gap-2.5 tracking-tight transition-colors group-hover:text-vault-accent shrink-0">
                   <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-vault-accent shrink-0" />
                   {groupName}
                 </h2>
-                <span className="text-xs bg-vault-cardBg border border-vault-border px-2 py-0.5 rounded-full text-vault-muted font-bold">
+                <span className="text-[11px] font-bold text-vault-muted tabular-nums shrink-0">
                   {groupItems.length}
                 </span>
+                <span aria-hidden className="h-px flex-1 bg-vault-border" />
               </div>
 
               {/* Pagination Controls (Only on non-isolated view and if multiple pages) */}
@@ -245,35 +253,30 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
 
                   {/* DETAILS AREA */}
                   <div className={cn("z-10 relative flex flex-col flex-1", viewSize === 1 ? "flex-row items-center justify-between w-full min-h-[60px]" : "p-4")}>
-                    <div className={cn("flex justify-between items-start mb-2", viewSize === 1 && "mb-0 items-center")}>
-                      <div className="flex gap-2 items-center">
-                        <span className={cn(
-                          "text-[10px] uppercase font-bold tracking-widest text-vault-bg bg-vault-muted px-2 py-0.5 rounded-sm",
-                          viewSize === 1 && "flex items-center justify-center h-5"
-                        )}>
-                          {viewSize > 1 ? `#${idx + 1 + (currentPage * itemsPerPage)}` : 'V-ID'}
-                        </span>
+                    {/* The "#N" chip that used to lead this row is gone. It numbered
+                      * the item's position on the *current page*, so it changed as you
+                      * paged and meant nothing outside that — yet it was rendered as a
+                      * filled high-contrast chip, making it the loudest thing on every
+                      * card. In Details view it was worse: a literal "V-ID" placeholder. */}
+                    {viewSize <= 2 && (
+                      <div className={cn("flex justify-end gap-1 mb-2", viewSize === 1 && "mb-0 items-center")}>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleEdit(fav); }}
+                          className="vault-btn h-6 w-6 flex items-center justify-center leading-none border-none hover:bg-vault-cardBg"
+                          title="Edit"
+                        >
+                          <Icons.EditIcon size={14} className="text-vault-muted hover:text-vault-accent" />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDelete(fav.url); }}
+                          className="vault-btn h-6 w-6 flex items-center justify-center leading-none border-none hover:bg-vault-cardBg"
+                          title="Delete"
+                        >
+                          <Icons.DeleteIcon size={14} className="text-vault-muted hover:text-red-500" />
+                        </button>
                       </div>
-                      {viewSize <= 2 && (
-                        <div className="flex gap-1 ml-auto">
-                          <button 
-                            onClick={(e) => { e.stopPropagation(); handleEdit(fav); }} 
-                            className="vault-btn p-1 flex items-center justify-center border-none hover:bg-vault-cardBg" 
-                            title="Edit"
-                          >
-                            <Icons.EditIcon size={14} className="text-vault-muted hover:text-vault-accent" />
-                          </button>
-                          <button 
-                            onClick={(e) => { e.stopPropagation(); handleDelete(fav.url); }} 
-                            className="vault-btn p-1 flex items-center justify-center border-none hover:bg-vault-cardBg" 
-                            title="Delete"
-                          >
-                            <Icons.DeleteIcon size={14} className="text-vault-muted hover:text-red-500" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                    
+                    )}
+
                     <div className={cn("flex-1", viewSize === 1 ? "flex items-center justify-between w-full ml-4" : "flex flex-col")}>
                       <div className={viewSize === 1 ? "flex-1 mr-4" : ""}>
                         <h3 className={cn(
@@ -286,9 +289,11 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
                         )}>
                           {fav.title || 'Untitled Reference'}
                         </h3>
-                        <p className="text-[13px] text-vault-muted truncate max-w-[250px] font-mono opacity-80" title={fav.url}>
-                          {(fav.domain && fav.domain !== 'Unknown') ? fav.domain : getDomainFromUrl(fav.url, true)}
-                        </p>
+                        {groupBy !== 'Hostname' && (
+                          <p className="text-[13px] text-vault-muted truncate font-mono opacity-80" title={fav.url}>
+                            {(fav.domain && fav.domain !== 'Unknown') ? fav.domain : getDomainFromUrl(fav.url, true)}
+                          </p>
+                        )}
                       </div>
                       
                       {viewSize > 1 && (
@@ -331,16 +336,21 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
                       "flex items-center justify-between border-vault-border pt-3 mt-auto",
                       viewSize === 1 ? "border-none ml-4 gap-4 mt-0 pt-0" : "border-t"
                     )}>
-                      <span className="text-[13px] font-semibold text-vault-muted tracking-wider">
+                      <span className="text-[12px] text-vault-muted tracking-wide">
                         {dateFormatter.format(fav.timestamp)}
                       </span>
-                      <a 
-                        href={fav.url} 
-                        target="_blank" 
+                      {/* Demoted from a filled accent button. The thumbnail already
+                        * opens the item, so this is the secondary route — and one
+                        * saturated gold block per card, five per row, drowned out the
+                        * previews the page exists to show. It earns colour on hover. */}
+                      <a
+                        href={fav.url}
+                        target="_blank"
                         rel="noreferrer"
-                        className="text-[12px] font-bold text-vault-bg bg-vault-accent hover:bg-vault-accentHover transition-colors flex items-center gap-1 px-3 py-1.5 rounded-sm"
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-[12px] font-semibold text-vault-muted hover:text-vault-accent transition-colors flex items-center gap-0.5"
                       >
-                        OPEN <Icons.ChevronRightIcon size={12} strokeWidth={3} className="group-hover:translate-x-0.5 transition-transform" />
+                        Open <Icons.ChevronRightIcon size={12} strokeWidth={3} className="transition-transform group-hover:translate-x-0.5" />
                       </a>
                     </div>
                   </div>

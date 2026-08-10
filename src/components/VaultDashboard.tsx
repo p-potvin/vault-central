@@ -689,12 +689,13 @@ export const VaultDashboard: React.FC = () => {
 
         {/* MAIN ITEM WINDOW */}
         <main ref={mainRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 md:p-6 bg-vault-bg/50 scroll-smooth">
-          <div className="max-w-[1920px] mx-auto space-y-10">
+          <div className="max-w-[1920px] mx-auto space-y-8">
             <VideoGrid
               groupsToRender={groupsToRender}
               pages={pages}
               setGroupPage={setGroupPage}
               viewSize={viewSize}
+              groupBy={groupBy}
               isolatedGroup={isolatedGroup}
               setIsolatedGroup={setIsolatedGroup}
               setPlayingVideo={setPlayingVideo}
@@ -705,13 +706,15 @@ export const VaultDashboard: React.FC = () => {
             />
 
             {filtered.length === 0 && (
-              <div className="py-24 text-center border border-dashed border-vault-border rounded-xl bg-vault-cardBg/30 flex flex-col items-center justify-center">
-                <Icons.DebugIcon size={48} className="text-vault-border mb-4" />
-                <p className="text-vault-muted text-sm font-semibold tracking-widest uppercase mb-2">
-                  No encrypted items found
+              <div className="py-20 text-center border border-dashed border-vault-border rounded-xl bg-vault-cardBg/30 flex flex-col items-center justify-center">
+                <Icons.VaultCentralLogo size={40} className="opacity-25 mb-4" />
+                <p className="text-vault-text text-sm font-semibold mb-1.5">
+                  {search ? 'Nothing matches that search' : 'Your vault is empty'}
                 </p>
-                <p className="text-xs text-vault-muted opacity-60">
-                   Try scanning a new target domain or clearing your filters
+                <p className="text-xs text-vault-muted">
+                  {search
+                    ? 'Try a different term, or switch the field you are searching in.'
+                    : 'Hover a video anywhere on the web and press Alt+X to save it here.'}
                 </p>
               </div>
             )}
