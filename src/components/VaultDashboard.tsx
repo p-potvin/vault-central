@@ -842,10 +842,13 @@ export const VaultDashboard: React.FC = () => {
             try {
               const response = (await browser.runtime.sendMessage({
                 action: "extract_fresh_m3u8",
-                url: playingVideo.url
-              })) as { src: string | null };
-              
-              if (response && response.src) {
+                url: playingVideo.url,
+                currentSrc: playingVideo.rawVideoSrc ?? null
+              })) as { src: string | null; rejected?: string };
+
+              if (response?.rejected === 'preview') {
+                setToastMessage({ msg: "Only a preview clip was found — keeping the current link.", type: "error" });
+              } else if (response && response.src) {
                 const updated = { ...playingVideo, rawVideoSrc: response.src };
                 setPlayingVideo(updated);
                 

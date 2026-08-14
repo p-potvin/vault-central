@@ -10,7 +10,7 @@ import {
 } from '../../src/lib/storage-vault';
 import { deletePreview, clearPreviews as dbClearPreviews } from '../../src/lib/dexie-store';
 import { generatePreview } from '../../src/lib/preview-generator';
-import { isExpiringMediaUrl, isSweepDue, selectRefreshCandidates } from '../../src/lib/stale-links';
+import { isExpiringMediaUrl, isSafeLinkReplacement, isSweepDue, selectRefreshCandidates } from '../../src/lib/stale-links';
 import { canExtractDirectVideoInPlace, extractDirectVideo } from '../../src/lib/direct-video-extract';
 import {
     savePreviewBlob,
@@ -596,6 +596,13 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                                 let s = 0;
                                 if (/\.(mp4|webm|mkv|flv|mov|m3u8|ts)(\?|$)/.test(u)) s += 1000;
                                 if (/(video|player|embed|watch|clip|media|vod)/.test(u)) s += 200;
+                                // Tube sites serve a short hover clip next to the real
+                                // file; both are .mp4, so without this the clip can win
+                                // and the saved link is a few seconds of preview.
+                                let path = u;
+                                try { path = new URL(url as string).pathname.toLowerCase(); } catch { /* keep full string */ }
+                                if (/(preview|trailer|sample|teaser|snippet)/.test(path)) s -= 2000;
+                                if (/\/thumbs?\/|\/(seek|sprite|storyboard|timeline)\//.test(path)) s -= 2000;
                                 return s;
                             };
                             const distanceToCenter = (rect: DOMRect): number => {
@@ -938,6 +945,10 @@ async function runStaleLinkSweep(force = false): Promise<{ started: boolean; ref
                 const current = await getSavedVideos(true);
                 const idx = current.findIndex((v: any) => v.url === item.url);
                 if (idx === -1) continue;
+                if (!isSafeLinkReplacement((current[idx] as any).rawVideoSrc, result.src)) {
+                    logger.warn('[staleSweep] Refusing to replace a working source with a preview clip for', item.url, '->', result.src);
+                    continue;
+                }
                 (current[idx] as any).rawVideoSrc = result.src;
                 (current[idx] as any).canExpire = isExpiringMediaUrl(result.src);
                 (current[idx] as any).lastLinkRefreshAt = Date.now();
@@ -1025,7 +1036,14 @@ async function setupOffscreenDocument(): Promise<boolean> {
 browser.runtime.onMessage.addListener((request: any, sender: any) => {
     logger.log("[onMessage] Received action:", request.action, "| from tab:", sender?.tab?.id, "url:", sender?.tab?.url?.substring(0, 80));
     if (request.action === "extract_fresh_m3u8") {
-        return doTabExtraction(request.url, { linkOnly: true }).then((res: ExtractionResult | null) => ({ src: res?.src || null }));
+        return doTabExtraction(request.url, { linkOnly: true }).then((res: ExtractionResult | null) => {
+            const src = res?.src || null;
+            if (!isSafeLinkReplacement(request.currentSrc, src)) {
+                logger.warn('[extract_fresh_m3u8] Extracted a preview clip; keeping the existing source.', src);
+                return { src: null, rejected: 'preview' };
+            }
+            return { src };
+        });
     }
     if (request.action === "open_dashboard") { openDashboard(); return Promise.resolve(true); }
     if (request.action === "dashboard_opened") {

@@ -96,3 +96,31 @@ describe('isSweepDue', () => {
     expect(isSweepDue(now - STALE_SWEEP_INTERVAL_MS * 3, now)).toBe(true);
   });
 });
+
+describe('looksLikePreviewMedia / isSafeLinkReplacement', () => {
+  it('spots the hover clip a tube site serves next to the real file', async () => {
+    const { looksLikePreviewMedia } = await import('./stale-links');
+    expect(looksLikePreviewMedia('https://cdn.test/preview/abc.mp4')).toBe(true);
+    expect(looksLikePreviewMedia('https://cdn.test/media/abc_trailer.mp4')).toBe(true);
+    expect(looksLikePreviewMedia('https://cdn.test/thumbs/abc.mp4')).toBe(true);
+    expect(looksLikePreviewMedia('https://cdn.test/videos/abc.mp4')).toBe(false);
+  });
+
+  it('ignores the query, where tokens carry arbitrary words', async () => {
+    const { looksLikePreviewMedia } = await import('./stale-links');
+    expect(looksLikePreviewMedia('https://cdn.test/videos/abc.mp4?t=preview123')).toBe(false);
+  });
+
+  it('refuses to trade a working source for a preview clip', async () => {
+    const { isSafeLinkReplacement } = await import('./stale-links');
+    const real = 'https://cdn.test/videos/abc.mp4';
+    const clip = 'https://cdn.test/preview/abc.mp4';
+
+    expect(isSafeLinkReplacement(real, clip)).toBe(false);
+    expect(isSafeLinkReplacement(real, 'https://cdn.test/videos/abc.mp4?token=new')).toBe(true);
+    // Nothing stored yet, or already a preview: anything is an improvement.
+    expect(isSafeLinkReplacement(null, clip)).toBe(true);
+    expect(isSafeLinkReplacement(clip, clip)).toBe(true);
+    expect(isSafeLinkReplacement(real, null)).toBe(false);
+  });
+});

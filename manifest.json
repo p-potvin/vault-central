@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Vault Central | VaultWares",
   "short_name": "Vault Central",
-  "version": "3.13.0",
+  "version": "3.14.0",
   "description": "A browser extension to save and revisit your favorite videos from around the web. Fully encrypted locally so only you can ever access it. Losing your PIN is not recommended.",
   "browser_specific_settings": {
     "gecko": {

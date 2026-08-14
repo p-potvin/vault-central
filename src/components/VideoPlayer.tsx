@@ -476,6 +476,10 @@ export function VideoPlayer({
   };
 
   const handleLoadedMetadata = () => {
+    // Autoplay on every source change, including a link refresh. The element's
+    // autoPlay attribute only covers the initial mount, so a refreshed src used
+    // to load and then wait for a manual press.
+    void videoRef.current?.play().catch(() => {});
     if (videoRef.current) {
       setDuration(videoRef.current.duration);
     }

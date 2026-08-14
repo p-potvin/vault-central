@@ -37,7 +37,7 @@ const viewClasses: Record<number, string> = {
 };
 
 const CARD_CLASS: Record<number, string> = {
-  1: "flex-row items-center gap-2 h-[60px] px-3 py-1 border-b border-vault-border rounded-none shadow-none hover:bg-vault-cardBg/50",
+  1: "flex-row items-center gap-2 h-[42px] px-3 py-0 border-b border-vault-border rounded-none shadow-none hover:bg-vault-cardBg/50",
   2: "flex-row items-stretch p-0 h-[115px]",
   3: "flex-col h-[230px]",
   4: "flex-col h-[290px]",
@@ -280,7 +280,7 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
                       <div className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-white/5 rounded-[inherit]" />
 
                       {/* Internal Thumbnail Actions */}
-                      {viewSize > 2 && (
+                      {viewSize >= 2 && (
                         <>
                           <div className="absolute top-2 left-2 z-30 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-2">
                             <button 
@@ -326,13 +326,13 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
                   )}
 
                   {/* DETAILS AREA */}
-                  <div className={cn("z-10 relative flex flex-col flex-1", viewSize === 1 ? "flex-row items-center justify-between w-full min-h-[60px]" : "px-4 pt-4 pb-5")}>
+                  <div className={cn("z-10 relative flex flex-col flex-1", viewSize === 1 ? "flex-row items-center justify-between w-full min-h-0" : "px-4 pt-4 pb-5")}>
                     {/* The "#N" chip that used to lead this row is gone. It numbered
                       * the item's position on the *current page*, so it changed as you
                       * paged and meant nothing outside that — yet it was rendered as a
                       * filled high-contrast chip, making it the loudest thing on every
                       * card. In Details view it was worse: a literal "V-ID" placeholder. */}
-                    {viewSize <= 2 && (
+                    {viewSize === 1 && (
                       <div className={cn("flex justify-end gap-1 mb-2", viewSize === 1 && "mb-0 items-center")}>
                         <button
                           onClick={(e) => { e.stopPropagation(); handleEdit(fav); }}
@@ -376,11 +376,15 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
                       
                       {viewSize > 1 && (
                         <div className="mt-3 space-y-1 mb-2 flex-1">
-                          {fav.author && (
+                          {viewSize === 4 ? (
+                            <p className="text-[13px] text-vault-text line-clamp-1">
+                              <span className="text-vault-muted">Saved:</span> {dateFormatter.format(fav.timestamp)}
+                            </p>
+                          ) : fav.author ? (
                             <p className="text-[13px] text-vault-text line-clamp-1">
                               <span className="text-vault-muted">By:</span> {fav.author}
                             </p>
-                          )}
+                          ) : null}
                           {fav.actors && fav.actors.length > 0 && (
                             <p className="text-[13px] text-vault-accent line-clamp-1 opacity-90">
                               <span className="text-vault-muted">With:</span> {fav.actors.join(', ')}

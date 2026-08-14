@@ -81,3 +81,45 @@ export function isSweepDue(lastSweepAtMs: number | null | undefined, now = Date.
   if (typeof lastSweepAtMs !== 'number' || !isFinite(lastSweepAtMs)) return true;
   return now - lastSweepAtMs >= STALE_SWEEP_INTERVAL_MS;
 }
+
+/**
+ * Tube sites serve a short hover clip alongside the real file, usually under a
+ * path or filename saying so. Both are .mp4, so a scorer that only rewards the
+ * extension will happily pick the clip — which is how a refresh replaced a good
+ * rawVideoSrc with a few seconds of preview and lost the real link.
+ *
+ * Used both to penalise these during extraction and to refuse them as a
+ * replacement for a source that already works.
+ */
+const PREVIEW_MEDIA_PATTERNS: RegExp[] = [
+  /preview/i,
+  /trailer/i,
+  /sample/i,
+  /teaser|snippet/i,
+  /\/thumbs?\//i,
+  /\/(seek|sprite|storyboard|timeline)\//i,
+];
+
+export function looksLikePreviewMedia(rawUrl: string | null | undefined): boolean {
+  if (!rawUrl) return false;
+  let probe = rawUrl;
+  try {
+    const u = new URL(rawUrl);
+    probe = u.pathname; // ignore query: tokens often contain arbitrary words
+  } catch { /* fall back to the whole string */ }
+  return PREVIEW_MEDIA_PATTERNS.some(re => re.test(probe));
+}
+
+/**
+ * Should a refreshed link replace the stored one?
+ *
+ * A refresh exists to recover from expiry, so trading a working source for a
+ * preview clip is strictly a loss. When the current source does not look like a
+ * preview and the candidate does, keep what we have.
+ */
+export function isSafeLinkReplacement(current: string | null | undefined, candidate: string | null | undefined): boolean {
+  if (!candidate) return false;
+  if (candidate === current) return true;
+  if (!current) return true;
+  return !(looksLikePreviewMedia(candidate) && !looksLikePreviewMedia(current));
+}
