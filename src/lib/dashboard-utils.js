@@ -15,6 +15,25 @@ export function computePerRow(viewSize) {
     return PER_ROW_BY_VIEW_SIZE[viewSize] ?? 1;
 }
 /**
+ * Rows shown per page, by view size. The grid used a flat 2 rows for every size,
+ * which is sensible for big cards and absurd for the 60px Details rows — two
+ * items per page. Scales with how much vertical room a card actually takes.
+ */
+const ROWS_BY_VIEW_SIZE = {
+    1: 18, // Details — 60px rows
+    2: 6,  // List
+    3: 3,  // Small
+    4: 2,  // Medium
+    5: 2,  // Large
+    6: 2,  // Biggest
+};
+export function computeRowsPerPage(viewSize) {
+    return ROWS_BY_VIEW_SIZE[viewSize] ?? 2;
+}
+export function computeItemsPerPage(viewSize) {
+    return computePerRow(viewSize) * computeRowsPerPage(viewSize);
+}
+/**
  * Format duration to H:MM:SS or MM:SS format.
  */
 export function formatDuration(d) {

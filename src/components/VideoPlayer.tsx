@@ -727,7 +727,17 @@ export function VideoPlayer({
               preload="auto"
               className="w-full h-full object-contain"
               playsInline
-              onClick={togglePlay}
+              onClick={(e) => {
+                // In PiP the click means "bring this back", not "pause". It used
+                // to do both: togglePlay ran here and the event then bubbled to
+                // the surface handler that restores, so restoring always paused.
+                if (isPiP) {
+                  e.stopPropagation();
+                  setIsPiP(false);
+                  return;
+                }
+                togglePlay();
+              }}
               onPlay={() => setIsPlaying(true)}
               onPause={() => setIsPlaying(false)}
               onTimeUpdate={handleTimeUpdate}

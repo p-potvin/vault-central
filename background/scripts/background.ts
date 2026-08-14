@@ -128,6 +128,38 @@ interface ExtractionContext {
     originTitle?: string;
     originTabId?: number;
     originWindowId?: number;
+    /**
+     * Refreshing a dead link only needs a working URL. Sampling frames again
+     * means downloading the whole video and redoing work whose result is already
+     * stored and still valid, so link-only skips it.
+     */
+    linkOnly?: boolean;
+}
+
+/**
+ * Push the scraper window out of the user's way and put focus back where it was.
+ *
+ * Firefox will not create an unfocused popup reliably (anti-popup heuristics), so
+ * the window is created focused and demoted immediately: minimised, then focus
+ * returned to the origin if the caller named one, otherwise to whichever normal
+ * window was last focused.
+ */
+async function restoreFocusAfterScraper(ctx: ExtractionContext, scraperWindowId: number | undefined): Promise<void> {
+    if (scraperWindowId !== undefined) {
+        try { await browser.windows.update(scraperWindowId, { state: 'minimized', focused: false }); } catch { /* best effort */ }
+    }
+    if (ctx.originWindowId !== undefined) {
+        try { await browser.windows.update(ctx.originWindowId, { focused: true }); } catch { /* best effort */ }
+    } else {
+        try {
+            const wins = await browser.windows.getAll({ windowTypes: ['normal'] as any });
+            const target = wins.find(w => w.id !== scraperWindowId);
+            if (target?.id !== undefined) await browser.windows.update(target.id, { focused: true });
+        } catch { /* best effort */ }
+    }
+    if (ctx.originTabId !== undefined) {
+        try { await browser.tabs.update(ctx.originTabId, { active: true }); } catch { /* best effort */ }
+    }
 }
 
 async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): Promise<ExtractionResult | null> {
@@ -153,6 +185,13 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
      * Site pages still need a real window: they set X-Frame-Options /
      * frame-ancestors, and Firefox offers extensions no hidden window.
      */
+    if (isDirectVideo && ctx.linkOnly) {
+        // The URL *is* the source; there is nothing to re-derive and no reason to
+        // fetch the media again.
+        logger.log("[doTabExtraction] Direct media URL in link-only mode; returning as-is.");
+        return { src: targetUrl, metadata: { title: ctx.originTitle || '', thumbnail: '', duration: 0, author: '', views: '', tags: [], likes: '', date: '' } };
+    }
+
     if (isDirectVideo && canExtractDirectVideoInPlace()) {
         logger.log("[doTabExtraction] Direct media URL; extracting in place (no window).");
         try {
@@ -294,26 +333,18 @@ async function doTabExtraction(targetUrl: string, ctx: ExtractionContext = {}): 
                     void injectMocks(scraperTabId);
                 }
 
-                // Immediately switch focus back to original tab/window to minimize disruption
-                if (ctx.originWindowId !== undefined) {
-                    try { await browser.windows.update(ctx.originWindowId, { focused: true }); } catch (e) {}
-                }
-                if (ctx.originTabId !== undefined) {
-                    try { await browser.tabs.update(ctx.originTabId, { active: true }); } catch (e) {}
-                }
+                // Hand focus straight back. Previously this only ran when the
+                // caller supplied an origin window/tab — a link refresh from the
+                // dashboard supplies neither, so the scraper popup kept focus and
+                // sat in front of the user for the whole extraction.
+                await restoreFocusAfterScraper(ctx, scraperWindowId);
             } catch (popupErr) {
                 logger.warn("[doTabExtraction] windows.create failed (popup blocker?). Falling back to tabs.create with active:true:", popupErr);
                 const scraperTab = await browser.tabs.create({ url: finalUrl, active: true });
                 scraperTabId = scraperTab.id;
                 logger.log("[doTabExtraction] Scraper tab fallback (active:true) created. tabId:", scraperTabId);
                 
-                // Immediately switch focus back to original tab/window
-                if (ctx.originWindowId !== undefined) {
-                    try { await browser.windows.update(ctx.originWindowId, { focused: true }); } catch (e) {}
-                }
-                if (ctx.originTabId !== undefined) {
-                    try { await browser.tabs.update(ctx.originTabId, { active: true }); } catch (e) {}
-                }
+                await restoreFocusAfterScraper(ctx, undefined);
             }
 
             globalTimeoutId = setTimeout(() => {
@@ -899,7 +930,7 @@ async function runStaleLinkSweep(force = false): Promise<{ started: boolean; ref
         for (let i = 0; i < candidates.length; i++) {
             const item = candidates[i];
             try {
-                const result = await doTabExtraction(item.url);
+                const result = await doTabExtraction(item.url, { linkOnly: true });
                 if (!result?.src) {
                     logger.warn('[staleSweep] No fresh src for', item.url);
                     continue;
@@ -993,7 +1024,9 @@ async function setupOffscreenDocument(): Promise<boolean> {
 }
 browser.runtime.onMessage.addListener((request: any, sender: any) => {
     logger.log("[onMessage] Received action:", request.action, "| from tab:", sender?.tab?.id, "url:", sender?.tab?.url?.substring(0, 80));
-    if (request.action === "extract_fresh_m3u8") return doTabExtraction(request.url).then((res: ExtractionResult | null) => ({ src: res?.src || null }));
+    if (request.action === "extract_fresh_m3u8") {
+        return doTabExtraction(request.url, { linkOnly: true }).then((res: ExtractionResult | null) => ({ src: res?.src || null }));
+    }
     if (request.action === "open_dashboard") { openDashboard(); return Promise.resolve(true); }
     if (request.action === "dashboard_opened") {
         // Fire and forget: the dashboard must not wait on a sweep to render.

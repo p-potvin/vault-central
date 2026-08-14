@@ -4,7 +4,7 @@ import { cn } from '../lib/utils';
 import { VideoData } from '../types/schemas';
 import { PreviewThumb } from './PreviewThumb';
 import {
-  computePerRow,
+  computeItemsPerPage,
   formatDuration,
   isDisplayableImageThumbnail,
   getDomainFromUrl,
@@ -122,9 +122,7 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
 
       {groupsToRender.map(([groupName, groupItems]) => {
         const currentPage = pages[groupName] || 0;
-        const maxRows = 2;
-        const perRow = computePerRow(viewSize);
-        const itemsPerPage = isolatedGroup ? groupItems.length : perRow * maxRows;
+        const itemsPerPage = isolatedGroup ? groupItems.length : computeItemsPerPage(viewSize);
         
         const displayItems = isolatedGroup 
           ? groupItems 
@@ -219,9 +217,13 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
             </div>
 
             {/* Section Grid */}
+            {/* Not the `hidden` attribute: it only sets `display: none` at UA
+              * priority, and the `grid` class below overrides it — the icon
+              * flipped but the cards stayed. Skipping the render also drops the
+              * PreviewThumb subscriptions for a collapsed hostname. */}
+            {!isCollapsed && (
             <div
               id={sectionId}
-              hidden={isCollapsed}
               className={cn(
                 "grid gap-4 md:gap-6",
                 viewClasses[viewSize]
@@ -435,6 +437,7 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
                 </div>
               ))}
             </div>
+            )}
           </section>
         );
       })}
