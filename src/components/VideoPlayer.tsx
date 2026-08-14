@@ -57,8 +57,12 @@ export function VideoPlayer({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(() => {
-    const saved = localStorage.getItem('vault-player-volume');
-    return saved ? parseFloat(saved) : 1.0;
+    // Validate: parseFloat on a corrupt entry yields NaN, and assigning NaN to
+    // videoEl.volume is ignored or throws depending on the engine, leaving the
+    // element at whatever it had. Anything outside 0..1 is equally unusable.
+    const saved = parseFloat(localStorage.getItem('vault-player-volume') ?? '');
+    if (!isFinite(saved) || saved < 0 || saved > 1) return 1.0;
+    return saved;
   });
   const [isMuted, setIsMuted] = useState(() => {
     return localStorage.getItem('vault-player-muted') === 'true';

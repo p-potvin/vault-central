@@ -43,6 +43,9 @@ export const PreviewThumb: React.FC<PreviewThumbProps> = React.memo(({ video }) 
   const [isProcessing, setIsProcessing] = useState(false);
   const wasHovering = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  /** Latest enter handler, so the card listener below never calls a stale closure. */
+  const enterHandlerRef = useRef<() => void>(() => {});
 
   const markPreviewAsFailed = async (videoUrl: string) => {
     try {
@@ -221,8 +224,33 @@ export const PreviewThumb: React.FC<PreviewThumbProps> = React.memo(({ video }) 
     }
   };
 
+  enterHandlerRef.current = () => { void handleMouseEnter(); };
+
+  /**
+   * Follow the hover of the whole card, not just the thumbnail.
+   *
+   * The preview only used to animate while the pointer was over the image, so
+   * the lower half of a card felt inert. Listening on the card ancestor keeps
+   * that state here instead of lifting it into VideoGrid, where a per-card
+   * hover flag would re-render every card in the grid on every pointer move.
+   */
+  useEffect(() => {
+    const card = rootRef.current?.closest('.vault-card');
+    if (!card) return;
+
+    const onEnter = () => enterHandlerRef.current();
+    const onLeave = () => setIsHovering(false);
+    card.addEventListener('mouseenter', onEnter);
+    card.addEventListener('mouseleave', onLeave);
+    return () => {
+      card.removeEventListener('mouseenter', onEnter);
+      card.removeEventListener('mouseleave', onLeave);
+    };
+  }, []);
+
   return (
-    <div 
+    <div
+      ref={rootRef}
       className="absolute inset-0 z-20 overflow-hidden bg-black"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setIsHovering(false)}

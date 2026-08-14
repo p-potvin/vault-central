@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import * as Icons from '../lib/icons';
 import { cn } from '../lib/utils';
 import { VideoData } from '../types/schemas';
@@ -46,11 +46,11 @@ const CARD_CLASS: Record<number, string> = {
 };
 
 const THUMB_CLASS: Record<number, string> = {
-  2: "relative w-2/5 flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border",
-  3: "relative w-full h-[130px] flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb border-b border-vault-border rounded-t-lg",
-  4: "relative w-full h-[163px] flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb border-b border-vault-border rounded-t-lg",
-  5: "relative w-[38%] flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border",
-  6: "relative w-2/5 flex-none bg-vault-cardBg/50 overflow-hidden cursor-pointer group/thumb rounded-l-lg border-r border-vault-border",
+  2: "relative w-2/5 flex-none bg-vault-cardBg/50 overflow-hidden rounded-l-lg border-r border-vault-border",
+  3: "relative w-full h-[130px] flex-none bg-vault-cardBg/50 overflow-hidden border-b border-vault-border rounded-t-lg",
+  4: "relative w-full h-[163px] flex-none bg-vault-cardBg/50 overflow-hidden border-b border-vault-border rounded-t-lg",
+  5: "relative w-[38%] flex-none bg-vault-cardBg/50 overflow-hidden rounded-l-lg border-r border-vault-border",
+  6: "relative w-2/5 flex-none bg-vault-cardBg/50 overflow-hidden rounded-l-lg border-r border-vault-border",
 };
 
 export const VideoGrid: React.FC<VideoGridProps> = ({
@@ -67,11 +67,51 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
   handleEdit,
   handleDelete,
 }) => {
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('vault-collapsed-groups') || '{}');
+    } catch {
+      return {};
+    }
+  });
+
+  /**
+   * Opening is now a card-level action. Interactive children (action buttons,
+   * the Open link) opt out so they are not shadowed by it.
+   */
+  const openItem = useCallback((fav: VideoData, target: HTMLElement) => {
+    if (target.closest('.thumb-action, a, button')) return;
+
+    if (fav.type === 'video' && fav.rawVideoSrc) {
+      setPlayingVideo(fav);
+      setVideoError(false);
+      setIsRefreshing(false);
+      return;
+    }
+    if (typeof window !== 'undefined' && (window as any).__TEST_MODE__) {
+      (window as any).__MOCK_WINDOW_OPEN__?.(fav.url);
+    } else {
+      window.open(fav.url, '_blank');
+    }
+  }, [setPlayingVideo, setVideoError, setIsRefreshing]);
+
+  const toggleCollapsed = useCallback((groupName: string) => {
+    setCollapsed(prev => {
+      const next = { ...prev, [groupName]: !prev[groupName] };
+      try {
+        localStorage.setItem('vault-collapsed-groups', JSON.stringify(next));
+      } catch { /* storage full or blocked — collapsing still works this session */ }
+      return next;
+    });
+  }, []);
+
   return (
     <>
       {isolatedGroup && (
         <div className="mb-6">
-          <button 
+          <button
+            type="button"
+            title="Back to all groups"
             onClick={() => setIsolatedGroup(null)}
             className="vault-btn flex items-center gap-2"
           >
@@ -91,33 +131,70 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
           : groupItems.slice(currentPage * itemsPerPage, (currentPage + 1) * itemsPerPage);
         
         const totalPages = Math.ceil(groupItems.length / itemsPerPage);
+        // An isolated group is the whole view, so collapsing it would leave an
+        // empty page with no way back except the header.
+        const isCollapsed = !isolatedGroup && !!collapsed[groupName];
+        const sectionId = `vault-group-${encodeURIComponent(groupName)}`;
 
         return (
           <section key={groupName} className="space-y-4">
             {/* Section Header */}
             <div className="flex items-center justify-between gap-4">
               {/* Hostname is the organising principle of this page, so the header
-                * reads as a band across the content rather than a floating label.
-                * The rule carries the eye to the pagination on the right. */}
-              <div
-                className={cn("flex items-center gap-3 min-w-0 flex-1", !isolatedGroup && "cursor-pointer group")}
-                onClick={() => !isolatedGroup && setIsolatedGroup(groupName)}
-                title={isolatedGroup ? undefined : `Show only ${groupName}`}
-              >
-                <h2 className="text-[15px] font-semibold text-vault-text inline-flex items-center gap-2.5 tracking-tight transition-colors group-hover:text-vault-accent shrink-0">
-                  <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-vault-accent shrink-0" />
-                  {groupName}
-                </h2>
+                * reads as a band across the content. Two separate targets: the name
+                * isolates the group, the rule collapses it — keeping them apart means
+                * neither action can be triggered by aiming at the other. */}
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <button
+                  type="button"
+                  onClick={() => !isolatedGroup && setIsolatedGroup(groupName)}
+                  disabled={!!isolatedGroup}
+                  title={isolatedGroup ? `Showing only ${groupName}` : `Show only ${groupName}`}
+                  className={cn(
+                    "group inline-flex items-center gap-2.5 shrink-0 rounded-sm",
+                    !isolatedGroup && "cursor-pointer",
+                    isolatedGroup && "cursor-default",
+                  )}
+                >
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "shrink-0 bg-vault-accent transition-all duration-200",
+                      // Collapsed reads as a plus (more to reveal); expanded as a
+                      // minus. The dot it replaced conveyed nothing.
+                      isCollapsed
+                        ? "w-2.5 h-2.5 [clip-path:polygon(40%_0,60%_0,60%_40%,100%_40%,100%_60%,60%_60%,60%_100%,40%_100%,40%_60%,0_60%,0_40%,40%_40%)]"
+                        : "w-2.5 h-[2px] rounded-full",
+                    )}
+                  />
+                  <h2 className="text-[15px] font-semibold text-vault-text tracking-tight transition-colors group-hover:text-vault-accent group-disabled:text-vault-text">
+                    {groupName}
+                  </h2>
+                </button>
                 <span className="text-[11px] font-bold text-vault-muted tabular-nums shrink-0">
                   {groupItems.length}
                 </span>
-                <span aria-hidden className="h-px flex-1 bg-vault-border" />
+                <button
+                  type="button"
+                  onClick={() => toggleCollapsed(groupName)}
+                  aria-expanded={!isCollapsed}
+                  aria-controls={sectionId}
+                  title={isCollapsed ? `Expand ${groupName}` : `Collapse ${groupName}`}
+                  // Thin rule, generous hit area: the line is 1px but the button is
+                  // full height so it is actually clickable.
+                  className="group flex-1 h-6 flex items-center cursor-pointer min-w-[24px]"
+                >
+                  <span aria-hidden className="h-px w-full bg-vault-border transition-colors group-hover:bg-vault-accent/60" />
+                </button>
               </div>
 
               {/* Pagination Controls (Only on non-isolated view and if multiple pages) */}
-              {!isolatedGroup && totalPages > 1 && (
+              {!isolatedGroup && !isCollapsed && totalPages > 1 && (
                 <div className="flex items-center gap-2 bg-vault-cardBg/60 border border-vault-border/50 rounded-full px-2 py-1 shadow-sm">
-                  <button 
+                  <button
+                    type="button"
+                    aria-label={`Previous page of ${groupName}`}
+                    title="Previous page"
                     onClick={() => setGroupPage(groupName, -1)}
                     disabled={currentPage === 0}
                     className="vault-btn p-1 h-8 w-8 flex items-center justify-center rounded-full border border-vault-border bg-vault-cardBg text-vault-text hover:bg-vault-accent/10 hover:border-vault-accent disabled:opacity-30 disabled:cursor-not-allowed transition-all"
@@ -127,7 +204,10 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
                   <span className="text-xs font-mono font-black text-vault-text min-w-[48px] text-center">
                     {currentPage + 1} <span className="opacity-40">/</span> {totalPages}
                   </span>
-                  <button 
+                  <button
+                    type="button"
+                    aria-label={`Next page of ${groupName}`}
+                    title="Next page"
                     onClick={() => setGroupPage(groupName, 1)}
                     disabled={currentPage >= totalPages - 1}
                     className="vault-btn p-1 h-8 w-8 flex items-center justify-center rounded-full border border-vault-border bg-vault-cardBg text-vault-text hover:bg-vault-accent/10 hover:border-vault-accent disabled:opacity-30 disabled:cursor-not-allowed transition-all"
@@ -139,40 +219,37 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
             </div>
 
             {/* Section Grid */}
-            <div className={cn(
-              "grid gap-4 md:gap-6",
-              viewClasses[viewSize]
-            )}>
+            <div
+              id={sectionId}
+              hidden={isCollapsed}
+              className={cn(
+                "grid gap-4 md:gap-6",
+                viewClasses[viewSize]
+              )}
+            >
               {displayItems.map((fav, idx) => (
-                <div 
-                  key={`${fav.url}-${idx}`} 
+                <div
+                  key={`${fav.url}-${idx}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${fav.type === 'video' ? 'Play' : 'Open'} ${fav.title || 'untitled item'}`}
+                  title={fav.title || fav.url}
+                  onClick={(e) => openItem(fav, e.target as HTMLElement)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      openItem(fav, e.target as HTMLElement);
+                    }
+                  }}
                   className={cn(
-                    "vault-card group relative flex overflow-hidden",
+                    "vault-card group relative flex overflow-hidden cursor-pointer",
+                    "focus-visible:outline-none",
                     CARD_CLASS[viewSize]
                   )}
                 >
                   {/* THUMBNAIL AREA */}
                   {viewSize >= 2 && (
-                    <div 
-                      onClick={(e) => {
-                        if ((e.target as HTMLElement).closest('.thumb-action')) return;
-
-                        if (fav.type === 'video' && fav.rawVideoSrc) {
-                          setPlayingVideo(fav);
-                          setVideoError(false);
-                          setIsRefreshing(false);
-                        } else {
-                          if (typeof window !== 'undefined' && (window as any).__TEST_MODE__) {
-                            if ((window as any).__MOCK_WINDOW_OPEN__) {
-                              (window as any).__MOCK_WINDOW_OPEN__(fav.url);
-                            }
-                          } else {
-                            window.open(fav.url, '_blank');
-                          }
-                        }
-                      }}
-                      className={THUMB_CLASS[viewSize]}
-                    >
+                    <div className={THUMB_CLASS[viewSize]}>
                       {fav.type === 'video' ? (
                         <PreviewThumb video={fav} />
                       ) : (
@@ -181,7 +258,7 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
                             src={fav.thumbnail}
                             alt={fav.title}
                             loading="lazy"
-                            className="w-full h-full object-cover transition-transform duration-500 group-hover/thumb:scale-105"
+                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                             onError={(e) => {
                               const target = e.currentTarget;
                               const fallbackSrc = 'data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="%23333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Crect x="3" y="3" width="18" height="18" rx="2" ry="2"%3E%3C/rect%3E%3Ccircle cx="8.5" cy="8.5" r="1.5"%3E%3C/circle%3E%3Cpolyline points="21 15 16 10 5 21"%3E%3C/polyline%3E%3C/svg%3E';
@@ -203,20 +280,22 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
                       {/* Internal Thumbnail Actions */}
                       {viewSize > 2 && (
                         <>
-                          <div className="absolute top-2 left-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2">
+                          <div className="absolute top-2 left-2 z-30 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-2">
                             <button 
                               onClick={(e) => { e.stopPropagation(); handleEdit(fav); }} 
                               className="thumb-action h-6 w-6 flex items-center justify-center leading-none bg-black/60 hover:bg-vault-accent text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" 
-                              title="Edit Metadata"
+                              title="Edit metadata"
+                              aria-label={`Edit metadata for ${fav.title || 'untitled item'}`}
                             >
                               <Icons.EditIcon size={12} />
                             </button>
                           </div>
-                          <div className="absolute top-2 right-2 z-30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex flex-col gap-2">
+                          <div className="absolute top-2 right-2 z-30 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-2">
                             <button 
                               onClick={(e) => { e.stopPropagation(); handleDelete(fav.url); }} 
                               className="thumb-action h-6 w-6 flex items-center justify-center leading-none bg-black/60 hover:bg-red-500 text-white rounded shadow-lg backdrop-blur-md transition-all hover:scale-110" 
-                              title="Delete Item"
+                              title="Delete item"
+                              aria-label={`Delete ${fav.title || 'untitled item'}`}
                             >
                               <Icons.DeleteIcon size={12} />
                             </button>
@@ -226,33 +305,26 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
 
                       {/* Duration Badge */}
                       {fav.duration && (
-                        <div className="absolute bottom-2 right-2 bg-black/80 text-white text-[10px] font-mono font-bold px-1.5 py-0.5 rounded shadow z-20">
+                        <div title="Duration" className="absolute bottom-2 right-2 bg-black/80 text-white text-[10px] font-mono font-bold px-1.5 py-0.5 rounded shadow z-20">
                           {formatDuration(fav.duration)}
                         </div>
                       )}
 
                       {/* Hover overlay */}
                       <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-                        <div className="absolute inset-0 bg-black/0 group-hover/thumb:bg-black/15 transition-colors duration-200" />
-                        <div className="relative w-11 h-11 rounded-full bg-white/90 opacity-0 group-hover/thumb:opacity-100 flex items-center justify-center shadow-lg transition-opacity duration-200">
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/15 transition-colors duration-200" />
+                        <div className="relative w-11 h-11 rounded-full bg-white/90 opacity-0 group-hover:opacity-100 flex items-center justify-center shadow-lg transition-opacity duration-200">
                           {fav.type === 'video'
                             ? <Icons.PlayIcon fill="currentColor" className="text-vault-bg ml-0.5" size={18} />
                             : <Icons.ChevronRightIcon className="text-vault-bg" size={18} />}
                         </div>
                       </div>
                       
-                      {/* Type chip */}
-                      <div className="absolute bottom-2 left-2 z-20 opacity-0 group-hover/thumb:opacity-100 transition-opacity duration-200 pointer-events-none">
-                        <div className="flex items-center gap-1.5 bg-black/55 px-2 py-0.5 rounded-full text-[10px] font-medium text-white/90 backdrop-blur-sm tracking-tight">
-                          <span className="w-1 h-1 rounded-full bg-vault-accent" />
-                          {fav.type === 'video' ? 'Video' : 'Link'}
-                        </div>
-                      </div>
                     </div>
                   )}
 
                   {/* DETAILS AREA */}
-                  <div className={cn("z-10 relative flex flex-col flex-1", viewSize === 1 ? "flex-row items-center justify-between w-full min-h-[60px]" : "p-4")}>
+                  <div className={cn("z-10 relative flex flex-col flex-1", viewSize === 1 ? "flex-row items-center justify-between w-full min-h-[60px]" : "px-4 pt-4 pb-5")}>
                     {/* The "#N" chip that used to lead this row is gone. It numbered
                       * the item's position on the *current page*, so it changed as you
                       * paged and meant nothing outside that — yet it was rendered as a
@@ -263,14 +335,18 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
                         <button
                           onClick={(e) => { e.stopPropagation(); handleEdit(fav); }}
                           className="vault-btn h-6 w-6 flex items-center justify-center leading-none border-none hover:bg-vault-cardBg"
-                          title="Edit"
+                          type="button"
+                          title="Edit metadata"
+                          aria-label={`Edit metadata for ${fav.title || 'untitled item'}`}
                         >
                           <Icons.EditIcon size={14} className="text-vault-muted hover:text-vault-accent" />
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); handleDelete(fav.url); }}
                           className="vault-btn h-6 w-6 flex items-center justify-center leading-none border-none hover:bg-vault-cardBg"
-                          title="Delete"
+                          type="button"
+                          title="Delete item"
+                          aria-label={`Delete ${fav.title || 'untitled item'}`}
                         >
                           <Icons.DeleteIcon size={14} className="text-vault-muted hover:text-red-500" />
                         </button>
@@ -348,6 +424,8 @@ export const VideoGrid: React.FC<VideoGridProps> = ({
                         target="_blank"
                         rel="noreferrer"
                         onClick={(e) => e.stopPropagation()}
+                        title={`Open ${fav.url} in a new tab`}
+                        aria-label={`Open ${fav.title || 'item'} in a new tab`}
                         className="text-[12px] font-semibold text-vault-muted hover:text-vault-accent transition-colors flex items-center gap-0.5"
                       >
                         Open <Icons.ChevronRightIcon size={12} strokeWidth={3} className="transition-transform group-hover:translate-x-0.5" />
