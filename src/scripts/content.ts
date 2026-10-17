@@ -126,13 +126,13 @@ if (browser.storage && browser.storage.onChanged) {
  * Scans the page for saved videos and marks them
  */
 async function highlightVaultItems() {
-    console.log(`${LOG_PREFIX} highlightVaultItems: scanning page for saved URLs...`);
+    //console.log(`${LOG_PREFIX} highlightVaultItems: scanning page for saved URLs...`);
     try {
         if (!cachedSavedUrls) {
             const storage = await browser.storage.local.get(STORAGE_KEYS.SAVED_VIDEOS);
             const savedVideos = (storage[STORAGE_KEYS.SAVED_VIDEOS] || []) as VideoData[];
             cachedSavedUrls = new Set(savedVideos.map((v: VideoData) => v.url));
-            console.log(`${LOG_PREFIX} highlightVaultItems: populated cache with ${cachedSavedUrls.size} items.`);
+            //console.log(`${LOG_PREFIX} highlightVaultItems: populated cache with ${cachedSavedUrls.size} items.`);
         }
         
         if (cachedSavedUrls.size === 0) return;
@@ -150,7 +150,7 @@ async function highlightVaultItems() {
                 marked++;
             }
         });
-        console.log(`${LOG_PREFIX} highlightVaultItems: marked ${marked} links out of ${links.length} newly found on page.`);
+        //console.log(`${LOG_PREFIX} highlightVaultItems: marked ${marked} links out of ${links.length} newly found on page.`);
     } catch (e) {
         console.error(`${LOG_PREFIX} Highlight failure:`, e);
     }
@@ -334,7 +334,7 @@ function scoreUrl(url: string | null | undefined): number {
     }
 
     // 2. Known Video Platforms / Manifests
-    if (/(youtube\.com\/watch|youtu\.be|vimeo\.com|tiktok\.com|twitch\.tv|pornhub|xvideos)/.test(lowerUrl)) {
+    if (/(youtube\.com\/watch|youtu\.be|vimeo\.com|tiktok\.com|twitch\.tv)/.test(lowerUrl)) {
         score += 500;
     }
 
@@ -654,20 +654,20 @@ if (location.search.includes('__vaultTest=1')) {
 const observer = new MutationObserver(() => {
     if (mutationTimeout) clearTimeout(mutationTimeout);
     mutationTimeout = setTimeout(() => {
-        console.log(`${LOG_PREFIX} MutationObserver: DOM changed. Rescanning for saved items...`);
+        //console.log(`${LOG_PREFIX} MutationObserver: DOM changed. Rescanning for saved items...`);
         highlightVaultItems();
     }, 1200);
 });
 
 if (document.body) {
     observer.observe(document.body, { childList: true, subtree: true });
-    console.log(`${LOG_PREFIX} MutationObserver attached. Running initial highlightVaultItems.`);
+    //console.log(`${LOG_PREFIX} MutationObserver attached. Running initial highlightVaultItems.`);
     highlightVaultItems();
 } else {
     window.addEventListener("DOMContentLoaded", () => {
         if (document.body) {
             observer.observe(document.body, { childList: true, subtree: true });
-            console.log(`${LOG_PREFIX} DOMContentLoaded: MutationObserver attached. Running initial highlightVaultItems.`);
+            //console.log(`${LOG_PREFIX} DOMContentLoaded: MutationObserver attached. Running initial highlightVaultItems.`);
             highlightVaultItems();
         }
     });
